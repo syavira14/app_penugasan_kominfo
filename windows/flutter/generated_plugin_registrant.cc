@@ -11,4 +11,6 @@
 void RegisterPlugins(flutter::PluginRegistry* registry) {
   GeolocatorWindowsRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("GeolocatorWindows"));
+
+void RegisterPlugins(flutter::PluginRegistry* registry) {
 }

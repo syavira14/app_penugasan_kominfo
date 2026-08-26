@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../auth/welcome_page.dart';
+import 'staff_navbar.dart';
 
 class AppColors {
   static const Color biruTua = Color(0xFF0011CC);
@@ -165,6 +167,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       appBar: AppBar(
         backgroundColor: AppColors.biruTua,
         foregroundColor: AppColors.putih,
+        automaticallyImplyLeading: false,
         title: const Text(
           'Profil Staff',
           style: TextStyle(fontWeight: FontWeight.w700),
@@ -327,9 +330,37 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   ),
                 ),
               ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (_) => const WelcomePage()),
+                    (_) => false,
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade50,
+                  foregroundColor: Colors.redAccent,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                icon: const Icon(Icons.logout, size: 20),
+                label: const Text(
+                  'Keluar Akun',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
           ],
         ),
       ),
+        bottomNavigationBar: const StaffBottomNavigationBar(currentIndex: 4),
     );
   }
 }

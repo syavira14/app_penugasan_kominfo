@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../admin/dashboard_admin_page.dart' hide AppColors;
-import '../staff/staff_dashboard_page.dart' hide AppColors;
+import '../staff/staff_dashboard.dart';
 
 /// ============================================================
 /// LOGIN PAGE — Sistem Penjadwalan Penugasan Pegawai

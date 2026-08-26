@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'staff_navbar.dart';
 
 class StaffKalenderPage extends StatefulWidget {
   const StaffKalenderPage({super.key});
@@ -341,6 +342,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
           ),
         ],
       ),
+      bottomNavigationBar: const StaffBottomNavigationBar(currentIndex: 3),
     );
   }
 }

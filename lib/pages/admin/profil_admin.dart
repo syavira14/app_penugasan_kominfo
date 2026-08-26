@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'admin_navbar.dart';
+import '../auth/welcome_page.dart';
 
 class ProfilAdminPage extends StatefulWidget {
   const ProfilAdminPage({super.key});
@@ -167,7 +169,11 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                     ),
                   ),
                   onPressed: () {
-                    // Logika Keluar/Logout
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (_) => const WelcomePage()),
+                      (_) => false,
+                    );
                   },
                   icon: const Icon(
                     Icons.logout,
@@ -189,6 +195,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
           ],
         ),
       ),
+      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 3),
     );
   }
 

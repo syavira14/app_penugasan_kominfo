@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../tugas/tugas_model.dart';
+import 'staff_navbar.dart';
 
 class AppColors {
   static const Color biruTua = Color(0xFF0011CC);
@@ -198,6 +199,7 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
       appBar: AppBar(
         backgroundColor: AppColors.biruTua,
         foregroundColor: AppColors.putih,
+        automaticallyImplyLeading: false,
         title: const Text(
           'Tugas Staff',
           style: TextStyle(fontWeight: FontWeight.w700),
@@ -387,6 +389,7 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
           ),
         ],
       ),
+      bottomNavigationBar: const StaffBottomNavigationBar(currentIndex: 1),
     );
   }
 }

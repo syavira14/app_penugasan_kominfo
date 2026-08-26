@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'admin_navbar.dart';
 
 class StatusStaffPage extends StatefulWidget {
   const StatusStaffPage({super.key});
@@ -326,6 +327,7 @@ class _StatusStaffPageState extends State<StatusStaffPage> {
           ],
         ),
       ),
+      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 2),
     );
   }
 }

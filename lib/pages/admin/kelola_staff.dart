@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'admin_navbar.dart';
+import 'status_staff.dart';
 
 class KelolaStaffPage extends StatefulWidget {
   const KelolaStaffPage({super.key});
@@ -310,24 +312,32 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                       const Divider(height: 12, thickness: 1),
 
                       // Status Aktif
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 3),
-                        decoration: BoxDecoration(
-                          color: isTersedia
-                              ? Colors.green.shade50
-                              : Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(6),
+                      GestureDetector(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const StatusStaffPage(),
+                          ),
                         ),
-                        child: Text(
-                          "Status : ${staff['status']}",
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 3),
+                          decoration: BoxDecoration(
                             color: isTersedia
-                                ? Colors.green.shade800
-                                : Colors.orange.shade800,
+                                ? Colors.green.shade50
+                                : Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            "Status : ${staff['status']}",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: isTersedia
+                                  ? Colors.green.shade800
+                                  : Colors.orange.shade800,
+                            ),
                           ),
                         ),
                       ),
@@ -394,6 +404,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
           ],
         ),
       ),
+      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 2),
     );
   }
 }

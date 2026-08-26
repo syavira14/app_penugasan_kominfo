@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../tugas/kelola_tugas_page.dart';
+import 'admin_navbar.dart';
+import 'kelola_staff.dart';
+import 'profil_admin.dart';
 
 /// ============================================================
 /// DASHBOARD ADMIN — Sistem Penjadwalan Penugasan Pegawai
@@ -71,6 +74,7 @@ class DashboardAdminPage extends StatelessWidget {
             expandedHeight: 120,
             backgroundColor: AppColors.biruTua,
             elevation: 0,
+            automaticallyImplyLeading: false,
             flexibleSpace: FlexibleSpaceBar(
               titlePadding: const EdgeInsets.only(left: 20, bottom: 16),
               title: const Text(
@@ -101,12 +105,24 @@ class DashboardAdminPage extends StatelessWidget {
                   // TODO: arahkan ke halaman notifikasi
                 },
               ),
-              const Padding(
-                padding: EdgeInsets.only(right: 16),
-                child: CircleAvatar(
-                  radius: 16,
-                  backgroundColor: AppColors.putih,
-                  child: Icon(Icons.person, color: AppColors.biruTua, size: 18),
+              Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ProfilAdminPage(),
+                    ),
+                  ),
+                  child: const CircleAvatar(
+                    radius: 16,
+                    backgroundColor: AppColors.putih,
+                    child: Icon(
+                      Icons.person,
+                      color: AppColors.biruTua,
+                      size: 18,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -261,6 +277,12 @@ class DashboardAdminPage extends StatelessWidget {
                     _QuickAction(
                       icon: Icons.people_alt_rounded,
                       label: 'Kelola\nPegawai',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const KelolaStaffPage(),
+                        ),
+                      ),
                     ),
                     _QuickAction(
                       icon: Icons.calendar_month_rounded,
@@ -369,52 +391,7 @@ class DashboardAdminPage extends StatelessWidget {
           ),
         ],
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 0,
-        selectedItemColor: AppColors.biruTua,
-        unselectedItemColor: AppColors.abuTeks,
-        type: BottomNavigationBarType.fixed,
-        onTap: (index) {
-          if (index == 1) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const KelolaTugasPage()),
-            );
-            return;
-          }
-
-          if (index != 0) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Halaman ini belum tersedia.'),
-                backgroundColor: AppColors.biruTua,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            );
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard_rounded),
-            label: 'Dashboard',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.assignment_rounded),
-            label: 'Tugas',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.people_alt_rounded),
-            label: 'Pegawai',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline_rounded),
-            label: 'Profil',
-          ),
-        ],
-      ),
+      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 0),
     );
   }
 }

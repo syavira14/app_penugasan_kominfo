@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'staff_navbar.dart';
 
 class RiwayatTugasPage extends StatefulWidget {
   const RiwayatTugasPage({super.key});
@@ -381,6 +382,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
           ),
         ],
       ),
+      bottomNavigationBar: const StaffBottomNavigationBar(currentIndex: 2),
     );
   }
 }

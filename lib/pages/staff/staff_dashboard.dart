@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'staff_navbar.dart';
 
 class StaffDashboardPage extends StatefulWidget {
   const StaffDashboardPage({super.key});
@@ -203,6 +204,7 @@ class _StaffDashboardPageState extends State<StaffDashboardPage> {
           ],
         ),
       ),
+      bottomNavigationBar: const StaffBottomNavigationBar(currentIndex: 0),
     );
   }
 

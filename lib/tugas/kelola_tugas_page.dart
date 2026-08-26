@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../pages/admin/admin_navbar.dart';
 import 'tugas_model.dart';
 import 'detail_tugas_admin_page.dart';
 
@@ -203,6 +204,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
       appBar: AppBar(
         backgroundColor: AppColors.biruTua,
         elevation: 0,
+        automaticallyImplyLeading: false,
         title: const Text(
           'Kelola Tugas',
           style: TextStyle(fontWeight: FontWeight.w700),
@@ -332,6 +334,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
         label: const Text('Tambah Tugas', style: TextStyle(color: AppColors.putih)),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 1),
     );
   }
 }

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "780975294852",
+    "project_id": "simtas-kominfo",
+    "storage_bucket": "simtas-kominfo.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:780975294852:android:f30016304bd10772eb35d1",
+        "android_client_info": {
+          "package_name": "com.example.app_penugasan_kominfo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCPfkhrHVmRi4aiu-OVXh4xP-iiuXhVdTU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

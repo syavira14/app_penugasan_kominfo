@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart'; // Tambahkan ini
+import 'firebase_options.dart'; // Tambahkan ini
 import 'pages/auth/welcome_page.dart';
 
-void main() {
+void main() async {
+  // Wajib ditambahkan agar binding Flutter siap sebelum memanggil Firebase
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Inisialisasi Firebase
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
   runApp(const MyApp());
 }
 

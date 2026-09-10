@@ -1,14 +1,9 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
+// Sesuaikan path import ini dengan struktur folder projek kamu
+import '../../services/auth_service.dart';
 import '../admin/dashboard_admin_page.dart';
 import '../staff/staff_dashboard.dart';
-
-/// ============================================================
-/// LOGIN PAGE — SIMTAS
-/// Sistem Manajemen Penugasan Pegawai
-/// Dinas Komunikasi dan Informatika
-/// ============================================================
 
 class AppColors {
   static const Color biruTua = Color(0xFF0D1B2A);
@@ -36,6 +31,9 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _identifierController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  final FocusNode _passwordFocusNode = FocusNode();
+  final AuthService _authService = AuthService();
+
   bool _obscurePassword = true;
   bool _isLoading = false;
 
@@ -43,31 +41,63 @@ class _LoginPageState extends State<LoginPage> {
   void dispose() {
     _identifierController.dispose();
     _passwordController.dispose();
+    _passwordFocusNode.dispose();
     super.dispose();
   }
 
-  void _handleLogin() {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
+  void _handleLogin() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    FocusScope.of(context).unfocus();
 
     setState(() {
       _isLoading = true;
     });
 
-    // Simulasi proses login
-    Future.delayed(const Duration(seconds: 1), () {
+    try {
+      // Autentikasi via Firebase
+      final userData = await _authService.loginWithEmail(
+        email: _identifierController.text,
+        password: _passwordController.text,
+      );
+
       if (!mounted) return;
 
       setState(() {
         _isLoading = false;
       });
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const StaffDashboardPage()),
+      // Deteksi Role Otomatis dari Firestore
+      String userRole = userData?['role'] ?? 'Staff';
+
+      // Navigasi Otomatis Berdasarkan Role
+      if (userRole == 'Admin') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DashboardAdminPage()),
+        );
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const StaffDashboardPage()),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      // Notifikasi Pesan Kesalahan
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceAll('Exception: ', '')),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
       );
-    });
+    }
   }
 
   void _handleForgotPassword() {
@@ -79,7 +109,7 @@ class _LoginPageState extends State<LoginPage> {
             SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Fitur reset kata sandi akan aktif setelah terhubung ke Firebase Auth.',
+                'Fitur reset kata sandi dikirim via link email Firebase.',
               ),
             ),
           ],
@@ -93,8 +123,6 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-
     return Scaffold(
       backgroundColor: AppColors.latar,
       body: SafeArea(
@@ -109,7 +137,6 @@ class _LoginPageState extends State<LoginPage> {
                 width: double.infinity,
                 child: Stack(
                   children: [
-                    // Background Gradient
                     Container(
                       width: double.infinity,
                       height: 250,
@@ -129,20 +156,15 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                     ),
-
-                    // Custom Waves Canvas
                     Positioned.fill(
                       child: CustomPaint(painter: _BackgroundWavePainter()),
                     ),
-
-                    // Konten Header
                     Positioned.fill(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 24),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            // Glassmorphism Logo Container
                             Container(
                               padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
@@ -152,13 +174,6 @@ class _LoginPageState extends State<LoginPage> {
                                   color: Colors.white.withOpacity(0.3),
                                   width: 1.5,
                                 ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.1),
-                                    blurRadius: 20,
-                                    offset: const Offset(0, 10),
-                                  ),
-                                ],
                               ),
                               child: Container(
                                 width: 56,
@@ -191,7 +206,6 @@ class _LoginPageState extends State<LoginPage> {
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.85),
                                 fontSize: 12,
-                                fontWeight: FontWeight.w400,
                               ),
                             ),
                           ],
@@ -203,7 +217,7 @@ class _LoginPageState extends State<LoginPage> {
               ),
 
               // =================================================
-              // KARTU FORM LOGIN
+              // KARTU ISIAN LOGIN
               // =================================================
               Transform.translate(
                 offset: const Offset(0, -30),
@@ -243,12 +257,11 @@ class _LoginPageState extends State<LoginPage> {
                               fontSize: 13,
                             ),
                           ),
-
                           const SizedBox(height: 24),
 
-                          // INPUT NIP / EMAIL
+                          // INPUT EMAIL / NIP
                           const Text(
-                            'NIP / Email',
+                            'Email / NIP',
                             style: TextStyle(
                               color: AppColors.abuHeader,
                               fontSize: 13,
@@ -265,12 +278,17 @@ class _LoginPageState extends State<LoginPage> {
                               color: AppColors.biruTua,
                             ),
                             decoration: _inputDecoration(
-                              hint: 'Masukkan NIP atau Email',
-                              icon: Icons.badge_outlined,
+                              hint: 'Masukkan Email terdaftar',
+                              icon: Icons.email_outlined,
                             ),
+                            onFieldSubmitted: (_) {
+                              FocusScope.of(
+                                context,
+                              ).requestFocus(_passwordFocusNode);
+                            },
                             validator: (value) {
                               if (value == null || value.trim().isEmpty) {
-                                return 'NIP atau Email wajib diisi';
+                                return 'Email wajib diisi';
                               }
                               return null;
                             },
@@ -290,6 +308,7 @@ class _LoginPageState extends State<LoginPage> {
                           const SizedBox(height: 8),
                           TextFormField(
                             controller: _passwordController,
+                            focusNode: _passwordFocusNode,
                             obscureText: _obscurePassword,
                             textInputAction: TextInputAction.done,
                             style: const TextStyle(
@@ -400,7 +419,6 @@ class _LoginPageState extends State<LoginPage> {
 
                           const SizedBox(height: 20),
 
-                          // KARTU INFORMASI PENGGUNA
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
@@ -408,7 +426,7 @@ class _LoginPageState extends State<LoginPage> {
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: AppColors.abuBorder),
                             ),
-                            child: Row(
+                            child: const Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Icon(
@@ -416,10 +434,10 @@ class _LoginPageState extends State<LoginPage> {
                                   color: AppColors.biruSedang,
                                   size: 18,
                                 ),
-                                const SizedBox(width: 10),
-                                const Expanded(
+                                SizedBox(width: 10),
+                                Expanded(
                                   child: Text(
-                                    'ASN dapat masuk menggunakan NIP. Pegawai Non-ASN / Honorer dapat menggunakan Email resmi.',
+                                    'Masuk menggunakan Email resmi terdaftar. Peran/Role akses ditentukan otomatis oleh sistem.',
                                     style: TextStyle(
                                       color: AppColors.abuTeks,
                                       fontSize: 11.5,
@@ -437,20 +455,15 @@ class _LoginPageState extends State<LoginPage> {
                 ),
               ),
 
-              // FOOTER
               Padding(
                 padding: const EdgeInsets.only(bottom: 24),
-                child: Column(
-                  children: [
-                    Text(
-                      'Dinas Komunikasi dan Informatika',
-                      style: TextStyle(
-                        color: AppColors.abuTeks.withOpacity(0.8),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  'Dinas Komunikasi dan Informatika',
+                  style: TextStyle(
+                    color: AppColors.abuTeks.withOpacity(0.8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ],
@@ -485,19 +498,10 @@ class _LoginPageState extends State<LoginPage> {
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: AppColors.biruSedang, width: 1.5),
       ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Colors.redAccent),
-      ),
-      focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
-      ),
     );
   }
 }
 
-/// Painter Custom Gelombang Estetik untuk Header
 class _BackgroundWavePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {

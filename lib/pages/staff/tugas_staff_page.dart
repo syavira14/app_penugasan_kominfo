@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../tugas/tugas_model.dart';
 import 'staff_navbar.dart';
@@ -498,8 +501,28 @@ class _TaskDetailSheet extends StatelessWidget {
   Future<void> _bukaPanduanMaps(BuildContext context) async {
     if (tugas.latitude == null || tugas.longitude == null) return;
 
+    String originParam = '';
+    try {
+      final layananAktif = await Geolocator.isLocationServiceEnabled();
+      if (layananAktif) {
+        final izin = await Geolocator.checkPermission();
+        if (izin == LocationPermission.always ||
+            izin == LocationPermission.whileInUse) {
+          final posisi = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+            ),
+          );
+          originParam = '&origin=${posisi.latitude},${posisi.longitude}';
+        }
+      }
+    } catch (_) {
+      originParam = '';
+    }
+
     final uri = Uri.parse(
       'https://www.google.com/maps/dir/?api=1'
+      '$originParam'
       '&destination=${tugas.latitude},${tugas.longitude}'
       '&travelmode=driving',
     );
@@ -590,6 +613,57 @@ class _TaskDetailSheet extends StatelessWidget {
                 label: 'Petugas',
                 value: tugas.staff.join(', '),
               ),
+              if (tugas.latitude != null && tugas.longitude != null) ...[
+                const SizedBox(height: 14),
+                Container(
+                  height: 180,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.abuBorder),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.biruTua.withOpacity(0.08),
+                        blurRadius: 14,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: FlutterMap(
+                      options: MapOptions(
+                        initialCenter: LatLng(tugas.latitude!, tugas.longitude!),
+                        initialZoom: 15,
+                        interactionOptions: const InteractionOptions(
+                          flags: InteractiveFlag.all,
+                        ),
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName:
+                              'com.example.app_penugasan_kominfo',
+                        ),
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: LatLng(tugas.latitude!, tugas.longitude!),
+                              width: 54,
+                              height: 54,
+                              child: const Icon(
+                                Icons.location_pin,
+                                color: Colors.redAccent,
+                                size: 42,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 14),
               SizedBox(
                 width: double.infinity,
@@ -607,8 +681,8 @@ class _TaskDetailSheet extends StatelessWidget {
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  icon: const Icon(Icons.map_outlined, size: 18),
-                  label: const Text('Panduan Google Maps'),
+                  icon: const Icon(Icons.directions_rounded, size: 18),
+                  label: const Text('Panduan Arah'),
                 ),
               ),
             ],

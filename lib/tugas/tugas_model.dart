@@ -4,6 +4,21 @@ import 'package:flutter/material.dart';
 /// MODEL: TugasModel
 /// Dipakai bersama oleh KelolaTugasPage & DetailTugasAdminPage
 /// ============================================================
+enum TugasStatus { belumSelesai, dikerjakan, selesai }
+
+extension TugasStatusLabel on TugasStatus {
+  String get label {
+    switch (this) {
+      case TugasStatus.belumSelesai:
+        return 'Belum Selesai';
+      case TugasStatus.dikerjakan:
+        return 'Dikerjakan';
+      case TugasStatus.selesai:
+        return 'Selesai';
+    }
+  }
+}
+
 class TugasModel {
   final String id;
   final String judul;
@@ -16,8 +31,9 @@ class TugasModel {
   final List<String> staff;
   final String prioritas; // 'Rendah' | 'Sedang' | 'Tinggi'
   final bool selesai;
+  final TugasStatus status;
 
-  const TugasModel({
+  TugasModel({
     required this.id,
     required this.judul,
     required this.deskripsi,
@@ -28,8 +44,10 @@ class TugasModel {
     required this.jam,
     required this.staff,
     this.prioritas = 'Sedang',
-    this.selesai = false,
-  });
+    bool? selesai,
+    TugasStatus? status,
+  })  : selesai = selesai ?? (status == TugasStatus.selesai),
+        status = status ?? (selesai == true ? TugasStatus.selesai : TugasStatus.belumSelesai);
 
   TugasModel copyWith({
     String? judul,
@@ -42,7 +60,11 @@ class TugasModel {
     List<String>? staff,
     String? prioritas,
     bool? selesai,
+    TugasStatus? status,
   }) {
+    final nextStatus = status ?? this.status;
+    final nextSelesai = selesai ?? (nextStatus == TugasStatus.selesai);
+
     return TugasModel(
       id: id,
       judul: judul ?? this.judul,
@@ -54,7 +76,8 @@ class TugasModel {
       jam: jam ?? this.jam,
       staff: staff ?? this.staff,
       prioritas: prioritas ?? this.prioritas,
-      selesai: selesai ?? this.selesai,
+      selesai: nextSelesai,
+      status: nextStatus,
     );
   }
 }

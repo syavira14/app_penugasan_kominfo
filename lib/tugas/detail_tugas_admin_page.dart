@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../pages/admin/admin_navbar.dart';
 import 'location_picker_page.dart';
 import 'tugas_model.dart';
 
@@ -32,6 +36,8 @@ class AppColors {
   static const Color biruTua = Color(0xFF0011CC);
   static const Color biruSedang = Color(0xFF0066FF);
   static const Color cyan = Color(0xFF00CCFF);
+  static const Color oranyeWarning = Color(0xFFFF9800);
+  static const Color hijauSelesai = Color(0xFF2E8B57);
   static const Color putih = Colors.white;
   static const Color abuTeks = Color(0xFF5A6472);
   static const Color latarAbu = Color(0xFFF4F6FB);
@@ -69,6 +75,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   double? _longitude;
   bool _sedangMengambilLokasi = false;
   String _prioritas = 'Sedang';
+  TugasStatus _statusTugas = TugasStatus.belumSelesai;
   String _staffSearchQuery = '';
   final Set<String> _stafDipilih = {};
 
@@ -96,6 +103,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     _latitude = tugas?.latitude;
     _longitude = tugas?.longitude;
     _prioritas = tugas?.prioritas ?? 'Sedang';
+    _statusTugas = tugas?.status ?? TugasStatus.belumSelesai;
     if (tugas != null) _stafDipilih.addAll(tugas.staff);
   }
 
@@ -189,6 +197,21 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     });
   }
 
+  Future<void> _bukaPanduanArah() async {
+    if (_latitude == null || _longitude == null) return;
+
+    final uri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1'
+      '&destination=$_latitude,$_longitude'
+      '&travelmode=driving',
+    );
+
+    final berhasil = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!berhasil && mounted) {
+      _tampilkanPesan('Google Maps tidak bisa dibuka di perangkat ini.');
+    }
+  }
+
   void _tampilkanPesan(String pesan) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -257,7 +280,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
       jam: _jamDipilih!,
       staff: _stafDipilih.toList(),
       prioritas: _prioritas,
-      selesai: widget.tugas?.selesai ?? false,
+      status: _statusTugas,
     );
 
     Navigator.pop(context, tugasBaru);
@@ -265,411 +288,532 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.latarAbu,
-      appBar: AppBar(
-        backgroundColor: AppColors.biruTua,
-        elevation: 0,
-        title: Text(
-          _modeEdit ? 'Edit Tugas' : 'Tambah Tugas',
-          style: const TextStyle(fontWeight: FontWeight.w700),
+    return withAdminReadableText(
+      context,
+      Scaffold(
+        backgroundColor: AppColors.latarAbu,
+        appBar: AppBar(
+          backgroundColor: AppColors.biruTua,
+          elevation: 0,
+          title: Text(
+            _modeEdit ? 'Edit Tugas' : 'Tambah Tugas',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
         ),
-      ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // ---------- JUDUL TUGAS ----------
-            _LabelForm(label: 'Judul Tugas'),
-            TextFormField(
-              controller: _judulController,
-              decoration: _dekorasi(
-                hint: 'Contoh: Pemeliharaan Server Data Center',
+        body: Form(
+          key: _formKey,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              // ---------- JUDUL TUGAS ----------
+              _LabelForm(label: 'Judul Tugas'),
+              TextFormField(
+                controller: _judulController,
+                decoration: _dekorasi(
+                  hint: 'Contoh: Pemeliharaan Server Data Center',
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Judul tugas wajib diisi'
+                    : null,
               ),
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Judul tugas wajib diisi'
-                  : null,
-            ),
-            const SizedBox(height: 18),
+              const SizedBox(height: 18),
 
-            // ---------- DESKRIPSI TUGAS ----------
-            _LabelForm(label: 'Deskripsi Tugas'),
-            TextFormField(
-              controller: _deskripsiController,
-              maxLines: 4,
-              decoration: _dekorasi(
-                hint: 'Jelaskan rincian pekerjaan yang perlu dilakukan...',
+              // ---------- DESKRIPSI TUGAS ----------
+              _LabelForm(label: 'Deskripsi Tugas'),
+              TextFormField(
+                controller: _deskripsiController,
+                maxLines: 4,
+                decoration: _dekorasi(
+                  hint: 'Jelaskan rincian pekerjaan yang perlu dilakukan...',
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Deskripsi tugas wajib diisi'
+                    : null,
               ),
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Deskripsi tugas wajib diisi'
-                  : null,
-            ),
-            const SizedBox(height: 18),
+              const SizedBox(height: 18),
 
-            // ---------- TEMPAT TUGAS + GPS ----------
-            _LabelForm(label: 'Tempat Tugas'),
-            TextFormField(
-              controller: _tempatController,
-              decoration: _dekorasi(hint: 'Contoh: Kantor Dinas Kominfo Lt. 2')
-                  .copyWith(
-                    suffixIcon: _sedangMengambilLokasi
-                        ? const Padding(
-                            padding: EdgeInsets.all(12),
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
+              // ---------- TEMPAT TUGAS + GPS ----------
+              _LabelForm(label: 'Tempat Tugas'),
+              TextFormField(
+                controller: _tempatController,
+                decoration:
+                    _dekorasi(
+                      hint: 'Contoh: Kantor Dinas Kominfo Lt. 2',
+                    ).copyWith(
+                      suffixIcon: _sedangMengambilLokasi
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.biruSedang,
+                                ),
+                              ),
+                            )
+                          : IconButton(
+                              icon: const Icon(
+                                Icons.my_location_rounded,
                                 color: AppColors.biruSedang,
+                                size: 20,
+                              ),
+                              tooltip: 'Ambil lokasi saat ini',
+                              onPressed: _ambilLokasiSaatIni,
+                            ),
+                    ),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Tempat tugas wajib diisi'
+                    : null,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _pilihLokasiDariPeta,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.biruTua,
+                        side: const BorderSide(color: AppColors.abuBorder),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      icon: const Icon(Icons.map_outlined, size: 18),
+                      label: const Text(
+                        'Pilih dari Peta',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _sedangMengambilLokasi
+                          ? null
+                          : _ambilLokasiSaatIni,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.biruSedang,
+                        side: const BorderSide(color: AppColors.abuBorder),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      icon: const Icon(Icons.my_location_rounded, size: 18),
+                      label: const Text(
+                        'Lokasi Saat Ini',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (_latitude != null && _longitude != null) ...[
+                const SizedBox(height: 10),
+                Container(
+                  height: 180,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.abuBorder),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.biruTua.withOpacity(0.08),
+                        blurRadius: 14,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: FlutterMap(
+                      options: MapOptions(
+                        initialCenter: LatLng(_latitude!, _longitude!),
+                        initialZoom: 15,
+                        interactionOptions: const InteractionOptions(
+                          flags: InteractiveFlag.all,
+                        ),
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName:
+                              'com.example.app_penugasan_kominfo',
+                        ),
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: LatLng(_latitude!, _longitude!),
+                              width: 54,
+                              height: 54,
+                              child: const Icon(
+                                Icons.location_pin,
+                                color: Colors.redAccent,
+                                size: 42,
                               ),
                             ),
-                          )
-                        : IconButton(
-                            icon: const Icon(
-                              Icons.my_location_rounded,
-                              color: AppColors.biruSedang,
-                              size: 20,
-                            ),
-                            tooltip: 'Ambil lokasi saat ini',
-                            onPressed: _ambilLokasiSaatIni,
-                          ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Tempat tugas wajib diisi'
-                  : null,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.place_rounded,
+                      size: 14,
+                      color: AppColors.biruSedang,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        'Koordinat: ${_latitude!.toStringAsFixed(6)}, ${_longitude!.toStringAsFixed(6)}',
+                        style: const TextStyle(
+                          color: AppColors.abuTeks,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
                   child: OutlinedButton.icon(
-                    onPressed: _pilihLokasiDariPeta,
+                    onPressed: _bukaPanduanArah,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.biruTua,
                       side: const BorderSide(color: AppColors.abuBorder),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    icon: const Icon(Icons.map_outlined, size: 18),
+                    icon: const Icon(Icons.directions_rounded, size: 18),
                     label: const Text(
-                      'Pilih dari Peta',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _sedangMengambilLokasi
-                        ? null
-                        : _ambilLokasiSaatIni,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.biruSedang,
-                      side: const BorderSide(color: AppColors.abuBorder),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    icon: const Icon(Icons.my_location_rounded, size: 18),
-                    label: const Text(
-                      'Lokasi Saat Ini',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                      ),
+                      'Panduan Arah',
+                      style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
                 ),
               ],
-            ),
-            if (_latitude != null && _longitude != null) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 18),
+
+              // ---------- TANGGAL & JAM ----------
               Row(
                 children: [
-                  const Icon(
-                    Icons.place_rounded,
-                    size: 14,
-                    color: AppColors.biruSedang,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _LabelForm(label: 'Tanggal Penugasan'),
+                        _PemilihWaktu(
+                          icon: Icons.calendar_today_rounded,
+                          teks: _tanggalDipilih == null
+                              ? 'Pilih tanggal'
+                              : formatTanggalIndo(_tanggalDipilih!),
+                          onTap: _pilihTanggal,
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Koordinat: ${_latitude!.toStringAsFixed(6)}, ${_longitude!.toStringAsFixed(6)}',
-                    style: const TextStyle(
-                      color: AppColors.abuTeks,
-                      fontSize: 11,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _LabelForm(label: 'Jam Penugasan'),
+                        _PemilihWaktu(
+                          icon: Icons.access_time_rounded,
+                          teks: _jamDipilih == null
+                              ? 'Pilih jam'
+                              : formatJam(_jamDipilih!),
+                          onTap: _pilihJam,
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-            ],
-            const SizedBox(height: 18),
+              const SizedBox(height: 18),
 
-            // ---------- TANGGAL & JAM ----------
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _LabelForm(label: 'Tanggal Penugasan'),
-                      _PemilihWaktu(
-                        icon: Icons.calendar_today_rounded,
-                        teks: _tanggalDipilih == null
-                            ? 'Pilih tanggal'
-                            : formatTanggalIndo(_tanggalDipilih!),
-                        onTap: _pilihTanggal,
+              // ---------- STAF YANG BERTUGAS ----------
+              _LabelForm(label: 'Staf yang Bertugas'),
+              TextField(
+                controller: _staffSearchController,
+                onChanged: (value) => setState(() => _staffSearchQuery = value),
+                decoration: _dekorasi(hint: 'Ketik nama staf, contoh: Ahmad')
+                    .copyWith(
+                      prefixIcon: const Icon(
+                        Icons.search_rounded,
+                        color: AppColors.biruSedang,
+                        size: 20,
                       ),
-                    ],
+                      suffixIcon: _staffSearchQuery.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(
+                                Icons.close_rounded,
+                                color: AppColors.abuTeks,
+                                size: 18,
+                              ),
+                              onPressed: () {
+                                _staffSearchController.clear();
+                                setState(() => _staffSearchQuery = '');
+                              },
+                            ),
+                    ),
+              ),
+              if (_saranStaf.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.putih,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.abuBorder),
+                  ),
+                  child: Column(
+                    children: _saranStaf.map((nama) {
+                      final isLast = nama == _saranStaf.last;
+                      return Column(
+                        children: [
+                          ListTile(
+                            dense: true,
+                            leading: const CircleAvatar(
+                              radius: 16,
+                              backgroundColor: Color(0x1A0066FF),
+                              child: Icon(
+                                Icons.person_outline_rounded,
+                                color: AppColors.biruSedang,
+                                size: 17,
+                              ),
+                            ),
+                            title: Text(
+                              nama,
+                              style: const TextStyle(
+                                color: AppColors.biruTua,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            trailing: const Icon(
+                              Icons.add_circle_outline_rounded,
+                              color: AppColors.biruSedang,
+                              size: 20,
+                            ),
+                            onTap: () => _pilihStaf(nama),
+                          ),
+                          if (!isLast)
+                            const Divider(
+                              height: 1,
+                              indent: 56,
+                              color: AppColors.abuBorder,
+                            ),
+                        ],
+                      );
+                    }).toList(),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _LabelForm(label: 'Jam Penugasan'),
-                      _PemilihWaktu(
-                        icon: Icons.access_time_rounded,
-                        teks: _jamDipilih == null
-                            ? 'Pilih jam'
-                            : formatJam(_jamDipilih!),
-                        onTap: _pilihJam,
-                      ),
-                    ],
+              ] else if (_staffSearchQuery.trim().isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.putih,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.abuBorder),
+                  ),
+                  child: const Text(
+                    'Nama staf tidak ditemukan',
+                    style: TextStyle(color: AppColors.abuTeks, fontSize: 12.5),
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 18),
-
-            // ---------- STAF YANG BERTUGAS ----------
-            _LabelForm(label: 'Staf yang Bertugas'),
-            TextField(
-              controller: _staffSearchController,
-              onChanged: (value) => setState(() => _staffSearchQuery = value),
-              decoration: _dekorasi(hint: 'Ketik nama staf, contoh: Ahmad')
-                  .copyWith(
-                    prefixIcon: const Icon(
-                      Icons.search_rounded,
-                      color: AppColors.biruSedang,
-                      size: 20,
-                    ),
-                    suffixIcon: _staffSearchQuery.isEmpty
-                        ? null
-                        : IconButton(
-                            icon: const Icon(
-                              Icons.close_rounded,
-                              color: AppColors.abuTeks,
-                              size: 18,
-                            ),
-                            onPressed: () {
-                              _staffSearchController.clear();
-                              setState(() => _staffSearchQuery = '');
-                            },
-                          ),
-                  ),
-            ),
-            if (_saranStaf.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: AppColors.putih,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.abuBorder),
-                ),
-                child: Column(
-                  children: _saranStaf.map((nama) {
-                    final isLast = nama == _saranStaf.last;
-                    return Column(
-                      children: [
-                        ListTile(
-                          dense: true,
-                          leading: const CircleAvatar(
-                            radius: 16,
-                            backgroundColor: Color(0x1A0066FF),
-                            child: Icon(
-                              Icons.person_outline_rounded,
-                              color: AppColors.biruSedang,
-                              size: 17,
-                            ),
-                          ),
-                          title: Text(
-                            nama,
-                            style: const TextStyle(
-                              color: AppColors.biruTua,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          trailing: const Icon(
-                            Icons.add_circle_outline_rounded,
-                            color: AppColors.biruSedang,
-                            size: 20,
-                          ),
-                          onTap: () => _pilihStaf(nama),
+              if (_stafDipilih.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _stafDipilih.map((nama) {
+                    return Chip(
+                      label: Text(
+                        nama,
+                        style: const TextStyle(
+                          color: AppColors.biruTua,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
                         ),
-                        if (!isLast)
-                          const Divider(
-                            height: 1,
-                            indent: 56,
-                            color: AppColors.abuBorder,
-                          ),
-                      ],
+                      ),
+                      avatar: const Icon(
+                        Icons.check_circle_rounded,
+                        color: AppColors.biruSedang,
+                        size: 17,
+                      ),
+                      deleteIcon: const Icon(Icons.close_rounded, size: 16),
+                      onDeleted: () => _hapusStaf(nama),
+                      backgroundColor: AppColors.cyan.withOpacity(0.12),
+                      side: BorderSide(color: AppColors.cyan.withOpacity(0.35)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
                     );
                   }).toList(),
                 ),
-              ),
-            ] else if (_staffSearchQuery.trim().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.putih,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.abuBorder),
+              ],
+              if (_stafDipilih.isEmpty) ...[
+                const SizedBox(height: 8),
+                const Text(
+                  'Pilih minimal 1 staf yang bertugas.',
+                  style: TextStyle(color: AppColors.abuTeks, fontSize: 11.5),
                 ),
-                child: const Text(
-                  'Nama staf tidak ditemukan',
-                  style: TextStyle(color: AppColors.abuTeks, fontSize: 12.5),
-                ),
-              ),
-            ],
-            if (_stafDipilih.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _stafDipilih.map((nama) {
-                  return Chip(
-                    label: Text(
-                      nama,
-                      style: const TextStyle(
-                        color: AppColors.biruTua,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    avatar: const Icon(
-                      Icons.check_circle_rounded,
-                      color: AppColors.biruSedang,
-                      size: 17,
-                    ),
-                    deleteIcon: const Icon(Icons.close_rounded, size: 16),
-                    onDeleted: () => _hapusStaf(nama),
-                    backgroundColor: AppColors.cyan.withOpacity(0.12),
-                    side: BorderSide(color: AppColors.cyan.withOpacity(0.35)),
-                    shape: RoundedRectangleBorder(
+              ],
+              const SizedBox(height: 18),
+
+              // ---------- STATUS TUGAS ----------
+              _LabelForm(label: 'Status Tugas'),
+              Row(
+                children: TugasStatus.values.map((status) {
+                  final dipilih = _statusTugas == status;
+                  final Color warna = switch (status) {
+                    TugasStatus.belumSelesai => AppColors.oranyeWarning,
+                    TugasStatus.dikerjakan => AppColors.biruSedang,
+                    TugasStatus.selesai => AppColors.hijauSelesai,
+                  };
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: InkWell(
                       borderRadius: BorderRadius.circular(20),
+                      onTap: () => setState(() => _statusTugas = status),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: dipilih
+                              ? warna.withOpacity(0.12)
+                              : AppColors.putih,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: dipilih ? warna : AppColors.abuBorder,
+                          ),
+                        ),
+                        child: Text(
+                          status.label,
+                          style: TextStyle(
+                            color: dipilih ? warna : AppColors.abuTeks,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ),
                   );
                 }).toList(),
               ),
-            ],
-            if (_stafDipilih.isEmpty) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'Pilih minimal 1 staf yang bertugas.',
-                style: TextStyle(color: AppColors.abuTeks, fontSize: 11.5),
-              ),
-            ],
-            const SizedBox(height: 18),
+              const SizedBox(height: 18),
 
-            // ---------- PRIORITAS ----------
-            _LabelForm(label: 'Prioritas Tugas'),
-            Row(
-              children: ['Rendah', 'Sedang', 'Tinggi'].map((p) {
-                final dipilih = _prioritas == p;
-                final Color warna = switch (p) {
-                  'Tinggi' => const Color(0xFFFF9800),
-                  'Rendah' => AppColors.cyan,
-                  _ => AppColors.biruSedang,
-                };
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(20),
-                    onTap: () => setState(() => _prioritas = p),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: dipilih
-                            ? warna.withOpacity(0.15)
-                            : AppColors.putih,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: dipilih ? warna : AppColors.abuBorder,
+              // ---------- PRIORITAS ----------
+              _LabelForm(label: 'Prioritas Tugas'),
+              Row(
+                children: ['Rendah', 'Sedang', 'Tinggi'].map((p) {
+                  final dipilih = _prioritas == p;
+                  final Color warna = switch (p) {
+                    'Tinggi' => const Color(0xFFFF9800),
+                    'Rendah' => AppColors.cyan,
+                    _ => AppColors.biruSedang,
+                  };
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => setState(() => _prioritas = p),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
                         ),
-                      ),
-                      child: Text(
-                        p,
-                        style: TextStyle(
-                          color: dipilih ? warna : AppColors.abuTeks,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
+                        decoration: BoxDecoration(
+                          color: dipilih
+                              ? warna.withOpacity(0.15)
+                              : AppColors.putih,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: dipilih ? warna : AppColors.abuBorder,
+                          ),
+                        ),
+                        child: Text(
+                          p,
+                          style: TextStyle(
+                            color: dipilih ? warna : AppColors.abuTeks,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 32),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 32),
 
-            // ---------- TOMBOL SIMPAN & BATAL ----------
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: _simpanTugas,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.biruTua,
-                  foregroundColor: AppColors.putih,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+              // ---------- TOMBOL SIMPAN & BATAL ----------
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _simpanTugas,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.biruTua,
+                    foregroundColor: AppColors.putih,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
-                ),
-                child: Text(
-                  _modeEdit ? 'Simpan Perubahan' : 'Simpan Tugas',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+                  child: Text(
+                    _modeEdit ? 'Simpan Perubahan' : 'Simpan Tugas',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: OutlinedButton(
-                onPressed: () => Navigator.pop(context),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.abuTeks,
-                  side: const BorderSide(color: AppColors.abuBorder),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.abuTeks,
+                    side: const BorderSide(color: AppColors.abuBorder),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: const Text(
+                    'Batal',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                   ),
                 ),
-                child: const Text(
-                  'Batal',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
+        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 1),
       ),
     );
   }

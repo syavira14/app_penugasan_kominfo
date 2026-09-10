@@ -19,183 +19,190 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4F8FC),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            // --- HEADER GRADASI DENGAN FOTO PROFIL ---
-            Stack(
-              clipBehavior: Clip.none,
-              alignment: Alignment.center,
-              children: [
-                Container(
-                  height: 220,
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(20, 50, 20, 0),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Color(0xFF1B267B),
-                        Color(0xFF0066B3),
-                        Color(0xFF00A8E8),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+    return withAdminReadableText(
+      context,
+      Scaffold(
+        backgroundColor: const Color(0xFFF4F8FC),
+        body: SingleChildScrollView(
+          child: Column(
+            children: [
+              // --- HEADER GRADASI DENGAN FOTO PROFIL ---
+              Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    height: 220,
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(20, 50, 20, 0),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Color(0xFF1B267B),
+                          Color(0xFF0066B3),
+                          Color(0xFF00A8E8),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.vertical(
+                        bottom: Radius.circular(30),
+                      ),
                     ),
-                    borderRadius: BorderRadius.vertical(
-                      bottom: Radius.circular(30),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Profil Pengguna",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          "Administrator SITUGAS Kominfo",
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
+                      ],
                     ),
                   ),
-                  child: const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Profil Pengguna",
-                        style: TextStyle(
+
+                  // Avatar Foto Profil Melayang (Floating)
+                  Positioned(
+                    bottom: -45,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black12,
+                            blurRadius: 10,
+                            offset: Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: const CircleAvatar(
+                        radius: 45,
+                        backgroundColor: Color(0xFF0066B3),
+                        child: Icon(
+                          Icons.person,
+                          size: 50,
                           color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
                         ),
                       ),
-                      SizedBox(height: 4),
-                      Text(
-                        "Administrator SITUGAS Kominfo",
-                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 55),
+
+              // Nama & Jabatan Utama
+              Text(
+                namaAdmin,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1B267B),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                jabatanAdmin,
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+
+              const SizedBox(height: 25),
+
+              // --- CARD DETAIL INFORMASI ---
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      _buildInfoTile(
+                        icon: Icons.badge_outlined,
+                        label: "NIP",
+                        value: nipAdmin,
+                      ),
+                      const Divider(height: 20),
+                      _buildInfoTile(
+                        icon: Icons.email_outlined,
+                        label: "Email",
+                        value: emailAdmin,
+                      ),
+                      const Divider(height: 20),
+                      _buildInfoTile(
+                        icon: Icons.phone_android_outlined,
+                        label: "No. WhatsApp",
+                        value: noHpAdmin,
                       ),
                     ],
                   ),
                 ),
-
-                // Avatar Foto Profil Melayang (Floating)
-                Positioned(
-                  bottom: -45,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black12,
-                          blurRadius: 10,
-                          offset: Offset(0, 5),
-                        ),
-                      ],
-                    ),
-                    child: const CircleAvatar(
-                      radius: 45,
-                      backgroundColor: Color(0xFF0066B3),
-                      child: Icon(Icons.person, size: 50, color: Colors.white),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 55),
-
-            // Nama & Jabatan Utama
-            Text(
-              namaAdmin,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1B267B),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              jabatanAdmin,
-              style: const TextStyle(fontSize: 13, color: Colors.grey),
-            ),
 
-            const SizedBox(height: 25),
+              const SizedBox(height: 20),
 
-            // --- CARD DETAIL INFORMASI ---
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+              // --- TOMBOL LOGOUT ---
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade50,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    _buildInfoTile(
-                      icon: Icons.badge_outlined,
-                      label: "NIP",
-                      value: nipAdmin,
-                    ),
-                    const Divider(height: 20),
-                    _buildInfoTile(
-                      icon: Icons.email_outlined,
-                      label: "Email",
-                      value: emailAdmin,
-                    ),
-                    const Divider(height: 20),
-                    _buildInfoTile(
-                      icon: Icons.phone_android_outlined,
-                      label: "No. WhatsApp",
-                      value: noHpAdmin,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            // --- TOMBOL LOGOUT ---
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red.shade50,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  onPressed: () {
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(builder: (_) => const WelcomePage()),
-                      (_) => false,
-                    );
-                  },
-                  icon: const Icon(
-                    Icons.logout,
-                    color: Colors.redAccent,
-                    size: 20,
-                  ),
-                  label: const Text(
-                    "Keluar Akun",
-                    style: TextStyle(
+                    onPressed: () {
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(builder: (_) => const WelcomePage()),
+                        (_) => false,
+                      );
+                    },
+                    icon: const Icon(
+                      Icons.logout,
                       color: Colors.redAccent,
-                      fontWeight: FontWeight.bold,
+                      size: 20,
+                    ),
+                    label: const Text(
+                      "Keluar Akun",
+                      style: TextStyle(
+                        color: Colors.redAccent,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
 
-            const SizedBox(height: 30),
-          ],
+              const SizedBox(height: 30),
+            ],
+          ),
         ),
+        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 4),
       ),
-      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 3),
     );
   }
 

@@ -1,8 +1,18 @@
 import 'package:flutter/material.dart';
 import '../../tugas/kelola_tugas_page.dart';
 import 'dashboard_admin_page.dart';
+import 'admin_kalender.dart';
 import 'kelola_staff.dart';
 import 'profil_admin.dart';
+
+Widget withAdminReadableText(BuildContext context, Widget child) {
+  return MediaQuery(
+    data: MediaQuery.of(
+      context,
+    ).copyWith(textScaler: const TextScaler.linear(1.12)),
+    child: child,
+  );
+}
 
 class AdminBottomNavigationBar extends StatelessWidget {
   final int currentIndex;
@@ -15,15 +25,13 @@ class AdminBottomNavigationBar extends StatelessWidget {
     final Widget page = switch (index) {
       0 => const DashboardAdminPage(),
       1 => const KelolaTugasPage(),
-      2 => const KelolaStaffPage(),
-      3 => const ProfilAdminPage(),
+      2 => const AdminKalenderPage(),
+      3 => const KelolaStaffPage(),
+      4 => const ProfilAdminPage(),
       _ => const DashboardAdminPage(),
     };
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => page),
-    );
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => page));
   }
 
   @override
@@ -42,6 +50,10 @@ class AdminBottomNavigationBar extends StatelessWidget {
         BottomNavigationBarItem(
           icon: Icon(Icons.assignment_rounded),
           label: 'Tugas',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.calendar_month_rounded),
+          label: 'Kalender',
         ),
         BottomNavigationBarItem(
           icon: Icon(Icons.people_alt_rounded),

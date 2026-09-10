@@ -64,114 +64,207 @@ class DashboardAdminPage extends StatelessWidget {
     const int totalBelumSelesai = 34;
     const int totalTugas = totalSelesai + totalBelumSelesai;
 
-    return Scaffold(
-      backgroundColor: AppColors.latarAbu,
-      body: CustomScrollView(
-        slivers: [
-          // ================= APP BAR =================
-          SliverAppBar(
-            pinned: true,
-            expandedHeight: 120,
-            backgroundColor: AppColors.biruTua,
-            elevation: 0,
-            automaticallyImplyLeading: false,
-            flexibleSpace: FlexibleSpaceBar(
-              titlePadding: const EdgeInsets.only(left: 20, bottom: 16),
-              title: const Text(
-                'Dashboard Admin',
-                style: TextStyle(
-                  color: AppColors.putih,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
+    return withAdminReadableText(
+      context,
+      Scaffold(
+        backgroundColor: AppColors.latarAbu,
+        body: CustomScrollView(
+          slivers: [
+            // ================= APP BAR =================
+            SliverAppBar(
+              pinned: true,
+              expandedHeight: 160,
+              toolbarHeight: 96,
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              automaticallyImplyLeading: false,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(
+                  bottom: Radius.circular(30),
                 ),
               ),
-              background: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [AppColors.biruTua, AppColors.biruSedang],
+              flexibleSpace: FlexibleSpaceBar(
+                titlePadding: const EdgeInsets.only(left: 20, bottom: 18),
+                title: const Text(
+                  'Dashboard Admin',
+                  style: TextStyle(
+                    color: AppColors.putih,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-              ),
-            ),
-            actions: [
-              IconButton(
-                icon: const Icon(
-                  Icons.notifications_none_rounded,
-                  color: AppColors.putih,
-                ),
-                onPressed: () {
-                  // TODO: arahkan ke halaman notifikasi
-                },
-              ),
-              Padding(
-                padding: const EdgeInsets.only(right: 16),
-                child: GestureDetector(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const ProfilAdminPage(),
+                background: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF1B267B),
+                        Color(0xFF0066B3),
+                        Color(0xFF00A8E8),
+                      ],
                     ),
-                  ),
-                  child: const CircleAvatar(
-                    radius: 16,
-                    backgroundColor: AppColors.putih,
-                    child: Icon(
-                      Icons.person,
-                      color: AppColors.biruTua,
-                      size: 18,
+                    borderRadius: BorderRadius.vertical(
+                      bottom: Radius.circular(30),
                     ),
                   ),
                 ),
               ),
-            ],
-          ),
-
-          // ================= KONTEN =================
-          SliverPadding(
-            padding: const EdgeInsets.all(16),
-            sliver: SliverList(
-              delegate: SliverChildListDelegate([
-                // ---------- 3 KARTU STATISTIK ----------
-                Row(
-                  children: [
-                    Expanded(
-                      child: _StatCard(
-                        label: 'Belum Selesai',
-                        value: '$totalBelumSelesai',
-                        icon: Icons.pending_actions_rounded,
-                        color: AppColors.cyan,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const KelolaTugasPage(),
-                          ),
-                        ),
+              actions: [
+                IconButton(
+                  icon: const Icon(
+                    Icons.notifications_none_rounded,
+                    color: AppColors.putih,
+                  ),
+                  onPressed: () {
+                    // TODO: arahkan ke halaman notifikasi
+                  },
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 16),
+                  child: GestureDetector(
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ProfilAdminPage(),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _StatCard(
-                        label: 'Selesai',
-                        value: '$totalSelesai',
-                        icon: Icons.task_alt_rounded,
-                        color: AppColors.biruSedang,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const KelolaTugasPage(),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _StatCard(
-                        label: 'Total Tugas',
-                        value: '$totalTugas',
-                        icon: Icons.assignment_rounded,
+                    child: const CircleAvatar(
+                      radius: 16,
+                      backgroundColor: AppColors.putih,
+                      child: Icon(
+                        Icons.person,
                         color: AppColors.biruTua,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            // ================= KONTEN =================
+            SliverPadding(
+              padding: const EdgeInsets.all(16),
+              sliver: SliverList(
+                delegate: SliverChildListDelegate([
+                  // ---------- 3 KARTU STATISTIK ----------
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _StatCard(
+                          label: 'Belum Selesai',
+                          value: '$totalBelumSelesai',
+                          icon: Icons.pending_actions_rounded,
+                          color: AppColors.cyan,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const KelolaTugasPage(),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _StatCard(
+                          label: 'Selesai',
+                          value: '$totalSelesai',
+                          icon: Icons.task_alt_rounded,
+                          color: AppColors.biruSedang,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const KelolaTugasPage(),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _StatCard(
+                          label: 'Total Tugas',
+                          value: '$totalTugas',
+                          icon: Icons.assignment_rounded,
+                          color: AppColors.biruTua,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const KelolaTugasPage(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // ---------- DIAGRAM BATANG ----------
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: AppColors.putih,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.biruTua.withOpacity(0.06),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Total Tugas Selesai per Bulan',
+                          style: TextStyle(
+                            color: AppColors.biruTua,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          '6 bulan terakhir',
+                          style: TextStyle(
+                            color: AppColors.abuTeks,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        SizedBox(
+                          height: 280,
+                          child: _BarChart(data: _dataBulanan),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // ---------- AKSI CEPAT ----------
+                  const Text(
+                    'Aksi Cepat',
+                    style: TextStyle(
+                      color: AppColors.biruTua,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  GridView.count(
+                    crossAxisCount: 4,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    children: [
+                      _QuickAction(
+                        icon: Icons.add_task_rounded,
+                        label: 'Tambah\nTugas',
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -179,219 +272,133 @@ class DashboardAdminPage extends StatelessWidget {
                           ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 20),
-
-                // ---------- DIAGRAM BATANG ----------
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: AppColors.putih,
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.biruTua.withOpacity(0.06),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Rekap Tugas per Bulan',
-                        style: TextStyle(
-                          color: AppColors.biruTua,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      const Text(
-                        '6 bulan terakhir',
-                        style: TextStyle(
-                          color: AppColors.abuTeks,
-                          fontSize: 11.5,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        height: 180,
-                        child: _BarChart(data: _dataBulanan),
-                      ),
-                      const SizedBox(height: 18),
-                      const Divider(height: 1, color: AppColors.latarAbu),
-                      const SizedBox(height: 14),
-                      // ---------- LEGENDA ----------
-                      Row(
-                        children: const [
-                          _LegendItem(
-                            color: AppColors.biruSedang,
-                            label: 'Tugas Selesai',
+                      _QuickAction(
+                        icon: Icons.people_alt_rounded,
+                        label: 'Kelola\nPegawai',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const KelolaStaffPage(),
                           ),
-                          SizedBox(width: 20),
-                          _LegendItem(
-                            color: AppColors.cyan,
-                            label: 'Tugas Belum Selesai',
+                        ),
+                      ),
+                      _QuickAction(
+                        icon: Icons.calendar_month_rounded,
+                        label: 'Jadwal\nPenugasan',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const KelolaTugasPage(),
                           ),
-                        ],
+                        ),
+                      ),
+                      _QuickAction(
+                        icon: Icons.bar_chart_rounded,
+                        label: 'Laporan',
                       ),
                     ],
                   ),
-                ),
 
-                const SizedBox(height: 24),
+                  const SizedBox(height: 24),
 
-                // ---------- AKSI CEPAT ----------
-                const Text(
-                  'Aksi Cepat',
-                  style: TextStyle(
-                    color: AppColors.biruTua,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
+                  // ---------- TUGAS MENDEKATI TENGGAT ----------
+                  const Text(
+                    'Tugas Mendekati Tenggat Waktu',
+                    style: TextStyle(
+                      color: AppColors.biruTua,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                GridView.count(
-                  crossAxisCount: 4,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  children: [
-                    _QuickAction(
-                      icon: Icons.add_task_rounded,
-                      label: 'Tambah\nTugas',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const KelolaTugasPage(),
+                  const SizedBox(height: 12),
+                  const _DeadlineTaskTile(
+                    judul: 'Pemeliharaan Server Data Center',
+                    pegawai: 'Ahmad Fauzi',
+                    sisaHari: 1,
+                    progress: 0.8,
+                  ),
+                  const SizedBox(height: 10),
+                  const _DeadlineTaskTile(
+                    judul: 'Update Konten Portal Layanan Publik',
+                    pegawai: 'Siti Nurhaliza',
+                    sisaHari: 3,
+                    progress: 0.45,
+                  ),
+                  const SizedBox(height: 10),
+                  const _DeadlineTaskTile(
+                    judul: 'Audit Keamanan Jaringan',
+                    pegawai: 'Budi Santoso',
+                    sisaHari: 5,
+                    progress: 0.2,
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // ---------- PEGAWAI TERAKTIF ----------
+                  const Text(
+                    'Pegawai dengan Penyelesaian Tugas Terbanyak',
+                    style: TextStyle(
+                      color: AppColors.biruTua,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.putih,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.biruTua.withOpacity(0.06),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
                         ),
-                      ),
+                      ],
                     ),
-                    _QuickAction(
-                      icon: Icons.people_alt_rounded,
-                      label: 'Kelola\nPegawai',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const KelolaStaffPage(),
+                    child: Column(
+                      children: const [
+                        _EmployeeRankTile(
+                          nama: 'Ahmad Fauzi',
+                          jabatan: 'Staf IT',
+                          jumlahTugas: 24,
+                          peringkat: 1,
                         ),
-                      ),
-                    ),
-                    _QuickAction(
-                      icon: Icons.calendar_month_rounded,
-                      label: 'Jadwal\nPenugasan',
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const KelolaTugasPage(),
+                        Divider(
+                          height: 1,
+                          indent: 68,
+                          color: AppColors.latarAbu,
                         ),
-                      ),
+                        _EmployeeRankTile(
+                          nama: 'Siti Nurhaliza',
+                          jabatan: 'Staf Konten',
+                          jumlahTugas: 19,
+                          peringkat: 2,
+                        ),
+                        Divider(
+                          height: 1,
+                          indent: 68,
+                          color: AppColors.latarAbu,
+                        ),
+                        _EmployeeRankTile(
+                          nama: 'Budi Santoso',
+                          jabatan: 'Staf Jaringan',
+                          jumlahTugas: 16,
+                          peringkat: 3,
+                        ),
+                      ],
                     ),
-                    _QuickAction(
-                      icon: Icons.bar_chart_rounded,
-                      label: 'Laporan',
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 24),
-
-                // ---------- TUGAS MENDEKATI TENGGAT ----------
-                const Text(
-                  'Tugas Mendekati Tenggat Waktu',
-                  style: TextStyle(
-                    color: AppColors.biruTua,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
                   ),
-                ),
-                const SizedBox(height: 12),
-                const _DeadlineTaskTile(
-                  judul: 'Pemeliharaan Server Data Center',
-                  pegawai: 'Ahmad Fauzi',
-                  sisaHari: 1,
-                  progress: 0.8,
-                ),
-                const SizedBox(height: 10),
-                const _DeadlineTaskTile(
-                  judul: 'Update Konten Portal Layanan Publik',
-                  pegawai: 'Siti Nurhaliza',
-                  sisaHari: 3,
-                  progress: 0.45,
-                ),
-                const SizedBox(height: 10),
-                const _DeadlineTaskTile(
-                  judul: 'Audit Keamanan Jaringan',
-                  pegawai: 'Budi Santoso',
-                  sisaHari: 5,
-                  progress: 0.2,
-                ),
 
-                const SizedBox(height: 24),
-
-                // ---------- PEGAWAI TERAKTIF ----------
-                const Text(
-                  'Pegawai dengan Penyelesaian Tugas Terbanyak',
-                  style: TextStyle(
-                    color: AppColors.biruTua,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.putih,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.biruTua.withOpacity(0.06),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: const [
-                      _EmployeeRankTile(
-                        nama: 'Ahmad Fauzi',
-                        jabatan: 'Staf IT',
-                        jumlahTugas: 24,
-                        peringkat: 1,
-                      ),
-                      Divider(height: 1, indent: 68, color: AppColors.latarAbu),
-                      _EmployeeRankTile(
-                        nama: 'Siti Nurhaliza',
-                        jabatan: 'Staf Konten',
-                        jumlahTugas: 19,
-                        peringkat: 2,
-                      ),
-                      Divider(height: 1, indent: 68, color: AppColors.latarAbu),
-                      _EmployeeRankTile(
-                        nama: 'Budi Santoso',
-                        jabatan: 'Staf Jaringan',
-                        jumlahTugas: 16,
-                        peringkat: 3,
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-              ]),
+                  const SizedBox(height: 24),
+                ]),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
+        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 0),
       ),
-      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 0),
     );
   }
 }
@@ -467,45 +474,92 @@ class _StatCard extends StatelessWidget {
 /// ---------------------------------------------------------
 /// DIAGRAM BATANG (custom, tanpa dependency tambahan)
 /// ---------------------------------------------------------
-class _BarChart extends StatelessWidget {
+class _BarChart extends StatefulWidget {
   final List<MonthlyTaskData> data;
 
   const _BarChart({required this.data});
 
   @override
+  State<_BarChart> createState() => _BarChartState();
+}
+
+class _BarChartState extends State<_BarChart> {
+  int? _selectedIndex;
+
+  @override
   Widget build(BuildContext context) {
-    final int maxValue = data
-        .map((e) => e.selesai > e.belumSelesai ? e.selesai : e.belumSelesai)
+    final int maxValue = widget.data
+        .map((e) => e.selesai)
         .reduce((a, b) => a > b ? a : b);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: data.map((item) {
-        final double tinggiSelesai = (item.selesai / maxValue) * 130;
-        final double tinggiBelum = (item.belumSelesai / maxValue) * 130;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final chartWidth = widget.data.length * 88.0;
 
-        return Expanded(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _Bar(height: tinggiSelesai, color: AppColors.biruSedang),
-                  const SizedBox(width: 4),
-                  _Bar(height: tinggiBelum, color: AppColors.cyan),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                item.bulan,
-                style: const TextStyle(color: AppColors.abuTeks, fontSize: 11),
-              ),
-            ],
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: chartWidth > constraints.maxWidth
+                ? chartWidth
+                : constraints.maxWidth,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: widget.data.asMap().entries.map((entry) {
+                final index = entry.key;
+                final item = entry.value;
+                final double tinggiSelesai = (item.selesai / maxValue) * 220;
+                final bool terpilih = _selectedIndex == index;
+
+                return SizedBox(
+                  width: 88,
+                  child: GestureDetector(
+                    onTap: () => setState(
+                      () => _selectedIndex = terpilih ? null : index,
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        SizedBox(
+                          height: 28,
+                          child: terpilih
+                              ? Text(
+                                  '${item.selesai}',
+                                  style: const TextStyle(
+                                    color: AppColors.biruTua,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        _Bar(
+                          height: tinggiSelesai,
+                          color: terpilih
+                              ? AppColors.biruTua
+                              : AppColors.biruSedang,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          item.bulan,
+                          style: TextStyle(
+                            color: terpilih
+                                ? AppColors.biruTua
+                                : AppColors.abuTeks,
+                            fontSize: 14,
+                            fontWeight: terpilih
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
           ),
         );
-      }).toList(),
+      },
     );
   }
 }
@@ -519,41 +573,12 @@ class _Bar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 10,
+      width: 32,
       height: height < 4 ? 4 : height,
       decoration: BoxDecoration(
         color: color,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
       ),
-    );
-  }
-}
-
-/// ---------------------------------------------------------
-/// LEGENDA DIAGRAM
-/// ---------------------------------------------------------
-class _LegendItem extends StatelessWidget {
-  final Color color;
-  final String label;
-
-  const _LegendItem({required this.color, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: const TextStyle(color: AppColors.abuTeks, fontSize: 12),
-        ),
-      ],
     );
   }
 }

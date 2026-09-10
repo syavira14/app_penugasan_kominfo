@@ -1,251 +1,332 @@
 import 'package:flutter/material.dart';
-import 'staff_navbar.dart';
 
-class StaffDashboardPage extends StatefulWidget {
+// ---- IMPORT FILE HALAMAN SESUAI STRUKTUR PROYEKMU ----
+import 'tugas_staff_page.dart';
+import 'staff_kalender.dart';
+import 'riwayat_tugas.dart';
+import 'staff_profil_page.dart';
+
+class StaffDashboardPage extends StatelessWidget {
   const StaffDashboardPage({super.key});
 
-  @override
-  State<StaffDashboardPage> createState() => _StaffDashboardPageState();
-}
-
-class _StaffDashboardPageState extends State<StaffDashboardPage> {
-  int tugasAktif = 3;
-  int tugasSelesai = 12;
+  // Warna tetap (tidak diubah sesuai permintaan)
+  static const Color redDark = Color(0xFF1A1464);
+  static const Color redMid = Color(0xFF1D5FA0);
+  static const Color redLight = Color(0xFF4FA6DE);
+  static const Color accentGold = Color(0xFFFFC107);
+  static const Color bgLight = Color(0xFFF7F9FB);
 
   @override
   Widget build(BuildContext context) {
+    // Penyesuaian untuk Samsung Galaxy A55 (Layar 19.5:9)
+    final double screenHeight = MediaQuery.of(context).size.height;
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final double scale = (screenWidth / 375).clamp(0.85, 1.25);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F8FC),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            // --- HEADER GRADASI ---
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 50, 20, 30),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF1B267B), Color(0xFF0066B3)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+      backgroundColor: bgLight,
+      body: Stack(
+        children: [
+          // ==========================================
+          // LAYER 1: BACKGROUND GRADIENT DENGAN LENGKUNGAN
+          // ==========================================
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: ClipPath(
+              clipper: HeaderCurveClipper(),
+              child: Container(
+                width: double.infinity,
+                // Tinggi header disesuaikan agar pas di belakang kartu
+                height: screenHeight * 0.45,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [redLight, redMid, redDark],
+                  ),
                 ),
-                borderRadius: BorderRadius.vertical(
-                  bottom: Radius.circular(25),
+                child: Stack(
+                  children: [
+                    // Dekorasi lingkaran halus (Blobs)
+                    Positioned(
+                      top: -30 * scale,
+                      right: -20 * scale,
+                      child: CircleAvatar(
+                        radius: 80 * scale,
+                        backgroundColor: Colors.white.withOpacity(0.05),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+          ),
+
+          // ==========================================
+          // LAYER 2: KONTEN UTAMA
+          // ==========================================
+          SafeArea(
+            child: Column(
+              children: [
+                // --- HEADER: GREETING & NOTIF ---
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    25 * scale,
+                    15 * scale,
+                    25 * scale,
+                    0,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        "Halo, Syavira! 👋",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Halo, Jhon Steward",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22 * scale,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            "Senin, 17 Jan 2022",
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 13 * scale,
+                            ),
+                          ),
+                        ],
                       ),
-                      SizedBox(height: 4),
-                      Text(
-                        "Staff - Pranata Humas",
-                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      const Icon(
+                        Icons.notifications_none,
+                        color: Colors.white,
+                        size: 28,
                       ),
                     ],
                   ),
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundColor: Colors.white24,
-                    child: IconButton(
-                      icon: const Icon(Icons.person, color: Colors.white),
-                      onPressed: () {},
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                ),
 
-            const SizedBox(height: 20),
+                SizedBox(height: 35 * scale),
 
-            // --- 2 CARD STATISTIK DINAMIS ---
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _buildStatCard(
-                      title: "Tugas Aktif",
-                      value: "$tugasAktif",
-                      icon: Icons.pending_actions_rounded,
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF0066B3), Color(0xFF00A8E8)],
-                      ),
-                    ),
+                // --- STATS ROW ---
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 25 * scale),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildHeaderStat("08", "Tasks\nPending", scale),
+                      _buildHeaderStat("15", "Tasks\nIn Progress", scale),
+                      _buildHeaderStat("29", "Tasks\nCompleted", scale),
+                    ],
                   ),
-                  const SizedBox(width: 15),
-                  Expanded(
-                    child: _buildStatCard(
-                      title: "Total Selesai",
-                      value: "$tugasSelesai",
-                      icon: Icons.task_alt_rounded,
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF1B267B), Color(0xFF0066B3)],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                ),
 
-            const SizedBox(height: 25),
+                SizedBox(height: 40 * scale),
 
-            // --- TUGAS PRIORITAS ---
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    "Tugas Prioritas Hari Ini",
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1B267B),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.04),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                // --- MENU GRID (4 CARDS) ---
+                Expanded(
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 20 * scale),
+                    child: GridView.count(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 18 * scale,
+                      mainAxisSpacing: 18 * scale,
+                      childAspectRatio: 0.95,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              "#T048",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF0066B3),
-                              ),
+                        _buildMenuCard(
+                          title: "Tugasku",
+                          subtitle: "lorem ipsum dolor sit amet",
+                          icon: Icons.assignment_outlined,
+                          iconColor: redMid,
+                          bgColor: const Color(0xFFE8EAF6),
+                          scale: scale,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const TugasStaffPage(),
                             ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.amber.shade100,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Text(
-                                "⏳ Tenggat: 2 Jam",
-                                style: TextStyle(
-                                  color: Colors.amber,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          "Upload Poster Literasi Digital",
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          "👤 Pemberi: Bpk. Budi (Kabid)",
-                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                        _buildMenuCard(
+                          title: "Kalender",
+                          subtitle: "lorem ipsum dolor sit amet",
+                          icon: Icons.confirmation_number_outlined,
+                          iconColor: Colors.teal,
+                          bgColor: const Color(0xFFE0F2F1),
+                          scale: scale,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const StaffKalenderPage(),
+                            ),
+                          ),
                         ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF0066B3),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                        _buildMenuCard(
+                          title: "Riwayat Tugas",
+                          subtitle: "lorem ipsum dolor sit amet",
+                          icon: Icons.insert_chart_outlined,
+                          iconColor: Colors.blue,
+                          bgColor: const Color(0xFFE3F2FD),
+                          scale: scale,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const RiwayatTugasPage(),
                             ),
-                            onPressed: () {},
-                            icon: const Icon(
-                              Icons.rocket_launch,
-                              color: Colors.white,
-                              size: 16,
-                            ),
-                            label: const Text(
-                              "Kerjakan Tugas",
-                              style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                        _buildMenuCard(
+                          title: "Profil",
+                          subtitle: "lorem ipsum dolor sit amet",
+                          icon: Icons.person_outline,
+                          iconColor: Colors.purple,
+                          bgColor: const Color(0xFFF3E5F5),
+                          scale: scale,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const StaffProfilPage(),
                             ),
                           ),
                         ),
                       ],
                     ),
                   ),
-                ],
-              ),
+                ),
+
+                // --- BUTTON CREATE TICKET (Sama seperti referensi) ---
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-      bottomNavigationBar: const StaffBottomNavigationBar(currentIndex: 0),
     );
   }
 
-  Widget _buildStatCard({
+  Widget _buildHeaderStat(String val, String label, double scale) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          val,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 32 * scale,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.8),
+            fontSize: 12 * scale,
+            height: 1.2,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMenuCard({
     required String title,
-    required String value,
+    required String subtitle,
     required IconData icon,
-    required Gradient gradient,
+    required Color iconColor,
+    required Color bgColor,
+    required double scale,
+    required VoidCallback onTap,
   }) {
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(20),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(25 * scale),
         boxShadow: [
           BoxShadow(
-            color: Colors.blue.withOpacity(0.2),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: Colors.white, size: 28),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(25 * scale),
+          child: Padding(
+            padding: EdgeInsets.all(20 * scale),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding: EdgeInsets.all(8 * scale),
+                  decoration: BoxDecoration(
+                    color: bgColor,
+                    borderRadius: BorderRadius.circular(12 * scale),
+                  ),
+                  child: Icon(icon, color: iconColor, size: 28 * scale),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16 * scale,
+                      ),
+                    ),
+                    SizedBox(height: 4 * scale),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 11 * scale,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-          Text(
-            title,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-        ],
+        ),
       ),
     );
   }
+}
+
+// Clipper untuk lengkungan yang pas di Samsung Galaxy A55 (Layar Panjang)
+class HeaderCurveClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    Path path = Path();
+    double h = size.height;
+    double w = size.width;
+
+    path.lineTo(0, h * 0.75); // Titik awal lengkungan
+
+    // Membuat lengkungan halus ke bawah (U-Shape tipis)
+    var controlPoint = Offset(w / 2, h);
+    var endPoint = Offset(w, h * 0.75);
+
+    path.quadraticBezierTo(
+      controlPoint.dx,
+      controlPoint.dy,
+      endPoint.dx,
+      endPoint.dy,
+    );
+    path.lineTo(w, 0);
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
 }

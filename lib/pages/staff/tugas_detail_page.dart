@@ -18,7 +18,6 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
   @override
   void initState() {
     super.initState();
-    // ---- Bagian yang BOLEH diubah staff (riwayat pengerjaan) ----
     _statusTerpilih = widget.tugas.statusTugas;
     _keteranganController = TextEditingController(
       text: widget.tugas.keteranganHasil ?? "",
@@ -33,8 +32,6 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
   }
 
   void _simpanUpdate() {
-    // TODO: ganti dengan pemanggilan API/DB untuk UPDATE kolom
-    // status_tugas, keterangan_hasil, file_hasil pada baris id_tugas ini.
     setState(() {
       widget.tugas.statusTugas = _statusTerpilih;
       widget.tugas.keteranganHasil = _keteranganController.text;
@@ -56,7 +53,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
           final double scale = (constraints.maxWidth / 375).clamp(0.85, 1.25);
           return Column(
             children: [
-              // ---- HEADER GRADASI DENGAN LENGKUNGAN KE BAWAH (TIPIS) ----
+              // ---- HEADER GRADASI ----
               ClipPath(
                 clipper: HeaderCurveClipper(),
                 child: Container(
@@ -65,7 +62,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                     20 * scale,
                     16 * scale,
                     20 * scale,
-                    35 * scale, // Area padding ekstra untuk titik puncak kurva
+                    35 * scale,
                   ),
                   decoration: const BoxDecoration(
                     gradient: LinearGradient(
@@ -79,7 +76,6 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                     bottom: false,
                     child: Row(
                       children: [
-                        // ---- TOMBOL BACK POLOS (TANPA LINGKARAN BACKGROUND) ----
                         IconButton(
                           onPressed: () => Navigator.maybePop(context),
                           padding: EdgeInsets.zero,
@@ -102,7 +98,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                             ),
                           ),
                         ),
-                        SizedBox(width: 24 * scale), // Penyeimbang tombol back
+                        SizedBox(width: 24 * scale),
                       ],
                     ),
                   ),
@@ -119,7 +115,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                     30 * scale,
                   ),
                   children: [
-                    // ==== BAGIAN 1: INFORMASI DARI ATASAN (READ ONLY) ====
+                    // ==== BAGIAN 1: INFORMASI DARI ATASAN ====
                     _sectionLabel("Informasi Tugas (dari atasan)", scale),
                     SizedBox(height: 10 * scale),
                     _infoCard(
@@ -129,7 +125,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                           children: [
                             _badgePrioritas(tugas.prioritasTugas, scale),
                             SizedBox(width: 8 * scale),
-                            _badgeStatusValidasi(tugas.statusValidasi, scale),
+                            _badgeStatusTugas(tugas.statusTugas, scale),
                           ],
                         ),
                         SizedBox(height: 14 * scale),
@@ -152,8 +148,20 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                         ),
                         SizedBox(height: 16 * scale),
                         _baris(
+                          Icons.location_on_outlined,
+                          "Lokasi: ${tugas.lokasi}",
+                          scale,
+                        ),
+                        SizedBox(height: 8 * scale),
+                        _baris(
                           Icons.person_outline,
                           "Diberikan oleh: ${tugas.namaAtasan}",
+                          scale,
+                        ),
+                        SizedBox(height: 8 * scale),
+                        _baris(
+                          Icons.event_available,
+                          "Diberikan: ${_formatTanggal(tugas.tanggalDiberikan)}",
                           scale,
                         ),
                         SizedBox(height: 8 * scale),
@@ -164,16 +172,17 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                         ),
                         SizedBox(height: 8 * scale),
                         _baris(
-                          Icons.flag_outlined,
-                          "Batas waktu: ${_formatTanggal(tugas.batasWaktu, jam: true)}",
+                          Icons.timer_outlined,
+                          "Deadline: ${_formatTanggal(tugas.batasWaktu, jam: true)}",
                           scale,
+                          isHighlight: true,
                         ),
                       ],
                     ),
 
                     SizedBox(height: 22 * scale),
 
-                    // ==== BAGIAN 2: UPDATE RIWAYAT PENGERJAAN (EDITABLE STAFF) ====
+                    // ==== BAGIAN 2: UPDATE RIWAYAT PENGERJAAN ====
                     _sectionLabel("Update Riwayat Pengerjaan (Anda)", scale),
                     SizedBox(height: 10 * scale),
                     _infoCard(
@@ -198,14 +207,20 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                             child: DropdownButton<String>(
                               value: _statusTerpilih,
                               isExpanded: true,
-                              items: const ["Pending", "Berlangsung", "Selesai"]
-                                  .map(
-                                    (s) => DropdownMenuItem(
-                                      value: s,
-                                      child: Text(s),
-                                    ),
-                                  )
-                                  .toList(),
+                              items:
+                                  const [
+                                        "Pending",
+                                        "Berlangsung",
+                                        "Menunggu Disetujui",
+                                        "Revisi",
+                                      ]
+                                      .map(
+                                        (s) => DropdownMenuItem(
+                                          value: s,
+                                          child: Text(s),
+                                        ),
+                                      )
+                                      .toList(),
                               onChanged: (val) {
                                 if (val != null) {
                                   setState(() => _statusTerpilih = val);
@@ -253,7 +268,6 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                         SizedBox(height: 8 * scale),
                         InkWell(
                           onTap: () {
-                            // TODO: integrasikan file_picker untuk upload file_hasil
                             setState(() {
                               _namaFileDipilih = "dokumen_hasil_kerja.pdf";
                             });
@@ -329,7 +343,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                         ),
                         SizedBox(height: 8 * scale),
                         Text(
-                          "Status validasi hasil hanya dapat diubah oleh atasan.",
+                          "Status ACC/Selesai resmi hanya dapat diberikan oleh atasan.",
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 10.5 * scale,
@@ -382,16 +396,29 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
     );
   }
 
-  Widget _baris(IconData icon, String text, double scale) {
+  Widget _baris(
+    IconData icon,
+    String text,
+    double scale, {
+    bool isHighlight = false,
+  }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 15 * scale, color: Colors.grey[500]),
+        Icon(
+          icon,
+          size: 15 * scale,
+          color: isHighlight ? Colors.redAccent : Colors.grey[500],
+        ),
         SizedBox(width: 8 * scale),
         Expanded(
           child: Text(
             text,
-            style: TextStyle(fontSize: 12.5 * scale, color: Colors.grey[700]),
+            style: TextStyle(
+              fontSize: 12.5 * scale,
+              color: isHighlight ? Colors.redAccent : Colors.grey[700],
+              fontWeight: isHighlight ? FontWeight.bold : FontWeight.normal,
+            ),
           ),
         ),
       ],
@@ -408,7 +435,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
         warna = Colors.orange;
         break;
       default:
-        warna = Colors.blueGrey;
+        warna = Colors.green;
     }
     return Container(
       padding: EdgeInsets.symmetric(
@@ -430,17 +457,21 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
     );
   }
 
-  Widget _badgeStatusValidasi(String status, double scale) {
+  Widget _badgeStatusTugas(String status, double scale) {
     Color warna;
     switch (status) {
-      case "Diterima":
-        warna = Colors.green;
+      case "Berlangsung":
+        warna = Colors.orange.shade800;
         break;
-      case "Ditolak":
-        warna = Colors.red;
+      case "Menunggu Disetujui":
+        warna = Colors.blue.shade700;
         break;
+      case "Revisi":
+        warna = Colors.purple.shade700;
+        break;
+      case "Pending":
       default:
-        warna = kBiruSedang;
+        warna = Colors.blueGrey;
     }
     return Container(
       padding: EdgeInsets.symmetric(
@@ -452,7 +483,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
         borderRadius: BorderRadius.circular(10 * scale),
       ),
       child: Text(
-        "Validasi: $status",
+        status.toUpperCase(),
         style: TextStyle(
           color: warna,
           fontSize: 10 * scale,
@@ -481,18 +512,15 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
     if (!jam) return tgl;
     final j = dt.hour.toString().padLeft(2, '0');
     final m = dt.minute.toString().padLeft(2, '0');
-    return "$tgl, $j:$m";
+    return "$tgl - $j:$m";
   }
 }
 
-/// Custom Clipper untuk membuat kurva lengkungan tipis mengarah ke bawah
 class HeaderCurveClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
     final path = Path();
-    path.lineTo(0, size.height - 20); // Titik awal lengkungan di kiri
-
-    // Membuat lengkungan halus menonjol ke bawah di tengah
+    path.lineTo(0, size.height - 20);
     final controlPoint = Offset(size.width / 2, size.height + 15);
     final endPoint = Offset(size.width, size.height - 20);
 
@@ -503,7 +531,7 @@ class HeaderCurveClipper extends CustomClipper<Path> {
       endPoint.dy,
     );
 
-    path.lineTo(size.width, 0); // Naik ke pojok kanan atas
+    path.lineTo(size.width, 0);
     path.close();
     return path;
   }

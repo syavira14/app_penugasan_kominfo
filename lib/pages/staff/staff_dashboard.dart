@@ -58,6 +58,14 @@ class StaffDashboardPage extends StatelessWidget {
                         backgroundColor: Colors.white.withOpacity(0.05),
                       ),
                     ),
+                    Positioned(
+                      top: 40 * scale,
+                      left: -40 * scale,
+                      child: CircleAvatar(
+                        radius: 60 * scale,
+                        backgroundColor: accentGold.withOpacity(0.1),
+                      ),
+                    ),
                   ],
                 ),
               ),

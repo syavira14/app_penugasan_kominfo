@@ -261,7 +261,7 @@ class _LoginPageState extends State<LoginPage> {
 
                           // INPUT EMAIL / NIP
                           const Text(
-                            'Email / NIP',
+                            'NIP',
                             style: TextStyle(
                               color: AppColors.abuHeader,
                               fontSize: 13,

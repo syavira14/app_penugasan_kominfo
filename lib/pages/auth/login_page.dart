@@ -251,7 +251,7 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                           const SizedBox(height: 4),
                           const Text(
-                            'Silakan masuk dengan akun terdaftar Anda.',
+                            'Silakan masuk menggunakan NIP dan kata sandi Anda.',
                             style: TextStyle(
                               color: AppColors.abuTeks,
                               fontSize: 13,
@@ -278,7 +278,7 @@ class _LoginPageState extends State<LoginPage> {
                               color: AppColors.biruTua,
                             ),
                             decoration: _inputDecoration(
-                              hint: 'Masukkan Email terdaftar',
+                              hint: 'Masukkan NIP terdaftar',
                               icon: Icons.email_outlined,
                             ),
                             onFieldSubmitted: (_) {
@@ -288,7 +288,7 @@ class _LoginPageState extends State<LoginPage> {
                             },
                             validator: (value) {
                               if (value == null || value.trim().isEmpty) {
-                                return 'Email wajib diisi';
+                                return 'NIP wajib diisi';
                               }
                               return null;
                             },
@@ -401,7 +401,7 @@ class _LoginPageState extends State<LoginPage> {
                                           MainAxisAlignment.center,
                                       children: [
                                         Text(
-                                          'Masuk Aplikasi',
+                                          'Masuk ',
                                           style: TextStyle(
                                             fontSize: 15,
                                             fontWeight: FontWeight.w600,

@@ -1,19 +1,18 @@
 import 'package:flutter/material.dart';
 
-// Definisi warna sesuai tema aplikasi kamu
+// Definisi warna sesuai tema aplikasi
 const Color kBiruTua = Color(0xFF0D47A1);
 const Color kBiruSedang = Color(0xFF1976D2);
 const Color kBiruMuda = Color(0xFF42A5F5);
 const Color kBgLight = Color(0xFFF4F6F9);
 
-// Model Data Tugas
+// Model Data Tugas (Tanpa Status Validasi)
 class TugasModel {
   String id;
   String judulTugas;
   String deskripsiTugas;
   String namaAtasan;
-  String statusTugas; // "Pending", "Berlangsung", "Selesai"
-  String statusValidasi; // "Belum Diverifikasi", "Diterima", "Ditolak"
+  String statusTugas; // "Selesai"
   String prioritasTugas; // "Rendah", "Sedang", "Tinggi"
   DateTime tanggalMulai;
   DateTime batasWaktu;
@@ -26,7 +25,6 @@ class TugasModel {
     required this.deskripsiTugas,
     required this.namaAtasan,
     required this.statusTugas,
-    required this.statusValidasi,
     required this.prioritasTugas,
     required this.tanggalMulai,
     required this.batasWaktu,
@@ -52,7 +50,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
           "Menyusun dan menyajikan laporan rekonsiliasi kas bulan ini.",
       namaAtasan: "Budi Santoso",
       statusTugas: "Selesai",
-      statusValidasi: "Diterima",
       prioritasTugas: "Tinggi",
       tanggalMulai: DateTime.now().subtract(const Duration(days: 5)),
       batasWaktu: DateTime.now().subtract(const Duration(days: 1)),
@@ -66,7 +63,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
       deskripsiTugas: "Membuat banner promo utama untuk halaman beranda.",
       namaAtasan: "Siti Rahma",
       statusTugas: "Selesai",
-      statusValidasi: "Belum Diverifikasi",
       prioritasTugas: "Sedang",
       tanggalMulai: DateTime.now().subtract(const Duration(days: 3)),
       batasWaktu: DateTime.now().add(const Duration(days: 1)),
@@ -75,12 +71,12 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     ),
   ];
 
-  // ==== POP-UP DETAIL RIWAYAT ====
+  // ==== POP-UP DETAIL RIWAYAT READ-ONLY ====
   void _tampilkanPopUpDetail(BuildContext context, TugasModel tugas) {
     showDialog(
       context: context,
-      barrierDismissible: true, // Bisa ditutup saat klik luar area pop-up
-      barrierColor: Colors.black.withOpacity(0.6), // Layar luar redup
+      barrierDismissible: true,
+      barrierColor: Colors.black.withOpacity(0.6),
       builder: (BuildContext context) {
         return Dialog(
           backgroundColor: Colors.transparent,
@@ -146,7 +142,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                         children: [
                           _badgePrioritas(tugas.prioritasTugas),
                           const SizedBox(width: 8),
-                          _badgeStatusValidasi(tugas.statusValidasi),
+                          _badgeStatusSelesai(),
                         ],
                       ),
                       const SizedBox(height: 12),
@@ -272,7 +268,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
 
           return Column(
             children: [
-              // HEADER DI-SAMAKAN DENGAN HEADER CURVE DARI STAFF TUGAS
+              // HEADER
               ClipPath(
                 clipper: HeaderCurveClipper(),
                 child: Container(
@@ -317,7 +313,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                             ),
                           ),
                         ),
-                        SizedBox(width: 24 * scale), // Penyeimbang posisi title
+                        SizedBox(width: 24 * scale),
                       ],
                     ),
                   ),
@@ -357,7 +353,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   _badgePrioritas(tugas.prioritasTugas),
-                                  _badgeStatusValidasi(tugas.statusValidasi),
+                                  _badgeStatusSelesai(),
                                 ],
                               ),
                               SizedBox(height: 10 * scale),
@@ -462,20 +458,17 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     );
   }
 
-  Widget _badgeStatusValidasi(String status) {
-    Color warna = status == "Diterima"
-        ? Colors.green
-        : (status == "Ditolak" ? Colors.red : kBiruSedang);
+  Widget _badgeStatusSelesai() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: warna.withOpacity(0.1),
+        color: Colors.green.withOpacity(0.1),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Text(
-        "Validasi: $status",
+      child: const Text(
+        "SELESAI",
         style: TextStyle(
-          color: warna,
+          color: Colors.green,
           fontSize: 10,
           fontWeight: FontWeight.bold,
         ),

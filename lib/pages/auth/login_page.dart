@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-// Sesuaikan path import ini dengan struktur folder projek kamu
+import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
 import '../admin/dashboard_admin_page.dart';
 import '../staff/staff_dashboard.dart';
@@ -55,9 +55,9 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      // Autentikasi via Firebase
-      final userData = await _authService.loginWithEmail(
-        email: _identifierController.text,
+      // Autentikasi via Firebase (Mengembalikan Map<String, dynamic>?)
+      final userDataMap = await _authService.loginWithEmail(
+        email: _identifierController.text.trim(),
         password: _passwordController.text,
       );
 
@@ -67,11 +67,16 @@ class _LoginPageState extends State<LoginPage> {
         _isLoading = false;
       });
 
-      // Deteksi Role Otomatis dari Firestore
-      String userRole = userData?['role'] ?? 'Staff';
+      // Peta data Map ke UserModel
+      UserModel userModel;
+      if (userDataMap != null) {
+        userModel = UserModel.fromMap(userDataMap);
+      } else {
+        throw Exception("Data pengguna tidak ditemukan di database.");
+      }
 
-      // Navigasi Otomatis Berdasarkan Role
-      if (userRole == 'Admin') {
+      // Navigasi Otomatis Berdasarkan Role pada UserModel
+      if (userModel.role.toLowerCase() == 'admin') {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardAdminPage()),
@@ -251,7 +256,7 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                           const SizedBox(height: 4),
                           const Text(
-                            'Silakan masuk menggunakan NIP dan kata sandi Anda.',
+                            'Silakan masuk menggunakan Email/NIP dan kata sandi Anda.',
                             style: TextStyle(
                               color: AppColors.abuTeks,
                               fontSize: 13,
@@ -261,7 +266,7 @@ class _LoginPageState extends State<LoginPage> {
 
                           // INPUT EMAIL / NIP
                           const Text(
-                            'NIP',
+                            'Email / NIP',
                             style: TextStyle(
                               color: AppColors.abuHeader,
                               fontSize: 13,
@@ -278,7 +283,7 @@ class _LoginPageState extends State<LoginPage> {
                               color: AppColors.biruTua,
                             ),
                             decoration: _inputDecoration(
-                              hint: 'Masukkan NIP terdaftar',
+                              hint: 'Masukkan Email atau NIP terdaftar',
                               icon: Icons.email_outlined,
                             ),
                             onFieldSubmitted: (_) {
@@ -288,7 +293,7 @@ class _LoginPageState extends State<LoginPage> {
                             },
                             validator: (value) {
                               if (value == null || value.trim().isEmpty) {
-                                return 'NIP wajib diisi';
+                                return 'Email / NIP wajib diisi';
                               }
                               return null;
                             },

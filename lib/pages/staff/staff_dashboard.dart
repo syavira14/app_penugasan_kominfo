@@ -1,35 +1,104 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 
 // ---- IMPORT FILE HALAMAN SESUAI STRUKTUR PROYEKMU ----
-import 'tugas_staff_page.dart';
-import 'staff_kalender.dart';
+import '../../models/user_model.dart';
 import 'riwayat_tugas.dart';
+import 'staff_kalender.dart';
 import 'staff_profil_page.dart';
+import 'tugas_staff_page.dart';
 
-class StaffDashboardPage extends StatelessWidget {
+class StaffDashboardPage extends StatefulWidget {
   const StaffDashboardPage({super.key});
 
-  // Warna tetap (tidak diubah sesuai permintaan)
+  @override
+  State<StaffDashboardPage> createState() => _StaffDashboardPageState();
+}
+
+class _StaffDashboardPageState extends State<StaffDashboardPage> {
+  // Warna tetap
   static const Color redDark = Color(0xFF1A1464);
   static const Color redMid = Color(0xFF1D5FA0);
   static const Color redLight = Color(0xFF4FA6DE);
   static const Color accentGold = Color(0xFFFFC107);
   static const Color bgLight = Color(0xFFF7F9FB);
 
+  UserModel? currentUser;
+  bool _isLoading = true;
+  String _formattedDate = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeData();
+  }
+
+  Future<void> _initializeData() async {
+    // Format tanggal ke Bahasa Indonesia
+    await initializeDateFormatting('id_ID', null);
+    if (mounted) {
+      setState(() {
+        _formattedDate = DateFormat(
+          'EEEE, d MMM yyyy',
+          'id_ID',
+        ).format(DateTime.now());
+      });
+    }
+
+    // Ambil data user dari Firestore
+    await _fetchUserData();
+  }
+
+  Future<void> _fetchUserData() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (doc.exists && mounted) {
+        setState(() {
+          currentUser = UserModel.fromFirestore(doc);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Gagal memuat data user: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Penyesuaian untuk Samsung Galaxy A55 (Layar 19.5:9)
     final double screenHeight = MediaQuery.of(context).size.height;
     final double screenWidth = MediaQuery.of(context).size.width;
     final double scale = (screenWidth / 375).clamp(0.85, 1.25);
+
+    final String displayName = currentUser?.nama.isNotEmpty == true
+        ? currentUser!.nama
+        : FirebaseAuth.instance.currentUser?.email?.split('@').first ?? 'User';
+
+    final String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
     return Scaffold(
       backgroundColor: bgLight,
       body: Stack(
         children: [
-          // ==========================================
-          // LAYER 1: BACKGROUND GRADIENT DENGAN LENGKUNGAN
-          // ==========================================
+          // LAYER 1: BACKGROUND GRADIENT
           Positioned(
             top: 0,
             left: 0,
@@ -38,7 +107,6 @@ class StaffDashboardPage extends StatelessWidget {
               clipper: HeaderCurveClipper(),
               child: Container(
                 width: double.infinity,
-                // Tinggi header disesuaikan agar pas di belakang kartu
                 height: screenHeight * 0.45,
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
@@ -49,7 +117,6 @@ class StaffDashboardPage extends StatelessWidget {
                 ),
                 child: Stack(
                   children: [
-                    // Dekorasi lingkaran halus (Blobs)
                     Positioned(
                       top: -30 * scale,
                       right: -20 * scale,
@@ -72,13 +139,11 @@ class StaffDashboardPage extends StatelessWidget {
             ),
           ),
 
-          // ==========================================
           // LAYER 2: KONTEN UTAMA
-          // ==========================================
           SafeArea(
             child: Column(
               children: [
-                // --- HEADER: GREETING & NOTIF ---
+                // HEADER: GREETING & NOTIF
                 Padding(
                   padding: EdgeInsets.fromLTRB(
                     25 * scale,
@@ -89,25 +154,41 @@ class StaffDashboardPage extends StatelessWidget {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Halo, Jhon Steward",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 22 * scale,
-                              fontWeight: FontWeight.bold,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _isLoading
+                                ? Container(
+                                    width: 140 * scale,
+                                    height: 24 * scale,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white24,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                  )
+                                : Text(
+                                    "Halo, $displayName",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 22 * scale,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                            SizedBox(height: 4 * scale),
+                            Text(
+                              _formattedDate.isNotEmpty
+                                  ? _formattedDate
+                                  : "Memuat tanggal...",
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 13 * scale,
+                              ),
                             ),
-                          ),
-                          Text(
-                            "Senin, 17 Jan 2022",
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 13 * scale,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                       const Icon(
                         Icons.notifications_none,
@@ -120,22 +201,71 @@ class StaffDashboardPage extends StatelessWidget {
 
                 SizedBox(height: 35 * scale),
 
-                // --- STATS ROW ---
+                // --- STATS ROW (REALTIME FIRESTORE & BAHASA INDONESIA) ---
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 25 * scale),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _buildHeaderStat("08", "Tasks\nPending", scale),
-                      _buildHeaderStat("15", "Tasks\nIn Progress", scale),
-                      _buildHeaderStat("29", "Tasks\nCompleted", scale),
-                    ],
+                  child: StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('tugas')
+                        .where('assignedTo', isEqualTo: currentUserId)
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      int countPending = 0;
+                      int countBerlangsung = 0;
+                      int countSelesai = 0;
+
+                      if (snapshot.hasData) {
+                        for (var doc in snapshot.data!.docs) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          final status = (data['statusTugas'] ?? '')
+                              .toString()
+                              .toLowerCase();
+
+                          if (status == 'pending' ||
+                              status == 'belum dimulai') {
+                            countPending++;
+                          } else if (status == 'berlangsung' ||
+                              status == 'in progress' ||
+                              status == 'terkendala' ||
+                              status == 'revisi') {
+                            countBerlangsung++;
+                          } else if (status == 'selesai' ||
+                              status == 'completed' ||
+                              status == 'disetujui') {
+                            countSelesai++;
+                          }
+                        }
+                      }
+
+                      String fmt(int num) => num < 10 ? '0$num' : '$num';
+
+                      return Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _buildHeaderStat(
+                            fmt(countPending),
+                            "Tugas\nPending",
+                            scale,
+                          ),
+                          _buildHeaderStat(
+                            fmt(countBerlangsung),
+                            "Tugas\nBerlangsung",
+                            scale,
+                          ),
+                          _buildHeaderStat(
+                            fmt(countSelesai),
+                            "Tugas\nSelesai",
+                            scale,
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
 
                 SizedBox(height: 40 * scale),
 
-                // --- MENU GRID (4 CARDS) ---
+                // MENU GRID
                 Expanded(
                   child: Container(
                     padding: EdgeInsets.symmetric(horizontal: 20 * scale),
@@ -147,7 +277,7 @@ class StaffDashboardPage extends StatelessWidget {
                       children: [
                         _buildMenuCard(
                           title: "Tugasku",
-                          subtitle: "lorem ipsum dolor sit amet",
+                          subtitle: "Kelola tugas anda",
                           icon: Icons.assignment_outlined,
                           iconColor: redMid,
                           bgColor: const Color(0xFFE8EAF6),
@@ -161,7 +291,7 @@ class StaffDashboardPage extends StatelessWidget {
                         ),
                         _buildMenuCard(
                           title: "Kalender",
-                          subtitle: "lorem ipsum dolor sit amet",
+                          subtitle: "Jadwal kegiatan",
                           icon: Icons.confirmation_number_outlined,
                           iconColor: Colors.teal,
                           bgColor: const Color(0xFFE0F2F1),
@@ -175,7 +305,7 @@ class StaffDashboardPage extends StatelessWidget {
                         ),
                         _buildMenuCard(
                           title: "Riwayat Tugas",
-                          subtitle: "lorem ipsum dolor sit amet",
+                          subtitle: "Laporan tugas selesai",
                           icon: Icons.insert_chart_outlined,
                           iconColor: Colors.blue,
                           bgColor: const Color(0xFFE3F2FD),
@@ -189,24 +319,25 @@ class StaffDashboardPage extends StatelessWidget {
                         ),
                         _buildMenuCard(
                           title: "Profil",
-                          subtitle: "lorem ipsum dolor sit amet",
+                          subtitle: "Pengaturan akun",
                           icon: Icons.person_outline,
                           iconColor: Colors.purple,
                           bgColor: const Color(0xFFF3E5F5),
                           scale: scale,
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const StaffProfilPage(),
-                            ),
-                          ),
+                          onTap: () async {
+                            await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const StaffProfilPage(),
+                              ),
+                            );
+                            _fetchUserData();
+                          },
                         ),
                       ],
                     ),
                   ),
                 ),
-
-                // --- BUTTON CREATE TICKET (Sama seperti referensi) ---
               ],
             ),
           ),
@@ -310,7 +441,6 @@ class StaffDashboardPage extends StatelessWidget {
   }
 }
 
-// Clipper untuk lengkungan yang pas di Samsung Galaxy A55 (Layar Panjang)
 class HeaderCurveClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
@@ -318,9 +448,8 @@ class HeaderCurveClipper extends CustomClipper<Path> {
     double h = size.height;
     double w = size.width;
 
-    path.lineTo(0, h * 0.75); // Titik awal lengkungan
+    path.lineTo(0, h * 0.75);
 
-    // Membuat lengkungan halus ke bawah (U-Shape tipis)
     var controlPoint = Offset(w / 2, h);
     var endPoint = Offset(w, h * 0.75);
 

@@ -24,6 +24,14 @@ class TugasModel {
   String? keteranganHasil;
   final String namaAtasan;
 
+  // Data kendala
+  String? jenisKendala;
+  String? deskripsiKendala;
+  String? dampakKendala;
+  String? fileKendala;
+  String? statusKendala;
+  String? tanggapanAtasan;
+
   TugasModel({
     required this.idTugas,
     required this.idAtasan,
@@ -39,6 +47,12 @@ class TugasModel {
     this.fileHasil,
     this.keteranganHasil,
     required this.namaAtasan,
+    this.jenisKendala,
+    this.deskripsiKendala,
+    this.dampakKendala,
+    this.fileKendala,
+    this.statusKendala,
+    this.tanggapanAtasan,
   });
 }
 
@@ -258,7 +272,13 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
 
   // ---- TABS FILTER SESUAI PERMINTAAN ----
   Widget _buildFilterTabs(double scale) {
-    final tabs = ["Semua", "Pending", "Berlangsung", "Dikumpulkan"];
+    final tabs = [
+      "Semua",
+      "Pending",
+      "Berlangsung",
+      "Terkendala",
+      "Dikumpulkan",
+    ];
     return SizedBox(
       width: double.infinity,
       child: SingleChildScrollView(
@@ -493,6 +513,8 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
     switch (status) {
       case "Berlangsung":
         return Colors.orange.shade800;
+      case "Terkendala":
+        return Colors.red.shade700;
       case "Menunggu Disetujui":
         return Colors.blue.shade700;
       case "Revisi":

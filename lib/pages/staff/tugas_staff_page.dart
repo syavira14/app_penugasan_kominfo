@@ -1,182 +1,423 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
 import 'tugas_detail_page.dart';
 
-/// ==== PALET WARNA KOMINFO (biru gradasi) ====
-const Color kBiruTua = Color(0xFF1A1464);
-const Color kBiruSedang = Color(0xFF1D5FA0);
-const Color kBiruMuda = Color(0xFF4FA6DE);
-const Color kBgLight = Color(0xFFF7F9FB);
+const Color kBiruTua =
+    Color(0xFF1A1464);
+
+const Color kBiruSedang =
+    Color(0xFF1D5FA0);
+
+const Color kBiruMuda =
+    Color(0xFF4FA6DE);
+
+const Color kBgLight =
+    Color(0xFFF7F9FB);
 
 class TugasModel {
-  final int idTugas;
-  final int idAtasan;
-  final int idStaff;
+  final String idTugas;
+  final String penugasanId;
   final String judulTugas;
   final String deskripsiTugas;
   final String lokasi;
-  final DateTime tanggalDiberikan;
-  final DateTime tanggalMulai;
-  final DateTime batasWaktu;
-  final String prioritasTugas; // "Tinggi" | "Sedang" | "Rendah"
-  String
-  statusTugas; // "Pending" | "Berlangsung" | "Menunggu Disetujui" | "Revisi" | "ACC"
-  String? fileHasil;
-  String? keteranganHasil;
+  final DateTime? tanggalDiberikan;
+  final DateTime? tanggalMulai;
+  final DateTime? tanggalSelesai;
+  final String prioritasTugas;
   final String namaAtasan;
+  final String statusTugas;
+  final String? fileHasil;
+  final String? keteranganHasil;
+  final String? catatanRevisi;
 
-  // Data kendala
-  String? jenisKendala;
-  String? deskripsiKendala;
-  String? dampakKendala;
-  String? fileKendala;
-  String? statusKendala;
-  String? tanggapanAtasan;
-
-  TugasModel({
+  const TugasModel({
     required this.idTugas,
-    required this.idAtasan,
-    required this.idStaff,
+    required this.penugasanId,
     required this.judulTugas,
     required this.deskripsiTugas,
     required this.lokasi,
     required this.tanggalDiberikan,
     required this.tanggalMulai,
-    required this.batasWaktu,
+    required this.tanggalSelesai,
     required this.prioritasTugas,
+    required this.namaAtasan,
     required this.statusTugas,
     this.fileHasil,
     this.keteranganHasil,
-    required this.namaAtasan,
-    this.jenisKendala,
-    this.deskripsiKendala,
-    this.dampakKendala,
-    this.fileKendala,
-    this.statusKendala,
-    this.tanggapanAtasan,
+    this.catatanRevisi,
   });
 }
 
-List<TugasModel> dummyTugasStaff() {
-  return [
-    TugasModel(
-      idTugas: 1,
-      idAtasan: 101,
-      idStaff: 55,
-      judulTugas: "Penyusunan Laporan TIK",
-      deskripsiTugas: "Susun laporan bulanan penggunaan infrastruktur TIK.",
-      lokasi: "Ruang Rapat Lantai 3",
-      tanggalDiberikan: DateTime(2026, 8, 25),
-      tanggalMulai: DateTime(2026, 8, 28),
-      batasWaktu: DateTime(2026, 9, 3, 12, 45),
-      prioritasTugas: "Tinggi",
-      statusTugas: "Berlangsung",
-      namaAtasan: "Saad Ibn Sayeed",
-    ),
-    TugasModel(
-      idTugas: 2,
-      idAtasan: 102,
-      idStaff: 55,
-      judulTugas: "Maintenance Server",
-      deskripsiTugas: "Lakukan pemeliharaan rutin server utama.",
-      lokasi: "Data Center Kominfo",
-      tanggalDiberikan: DateTime(2026, 8, 26),
-      tanggalMulai: DateTime(2026, 8, 30),
-      batasWaktu: DateTime(2026, 9, 2, 15, 0),
-      prioritasTugas: "Sedang",
-      statusTugas: "Menunggu Disetujui", // Masuk ke tab "Dikumpulkan"
-      fileHasil: "laporan_maintenance.pdf",
-      keteranganHasil: "Semua server sudah dicek.",
-      namaAtasan: "Jonathan Eve",
-    ),
-    TugasModel(
-      idTugas: 3,
-      idAtasan: 103,
-      idStaff: 55,
-      judulTugas: "Desain Banner Kominfo",
-      deskripsiTugas: "Buat desain banner sosialisasi.",
-      lokasi: "Ruang Media Center",
-      tanggalDiberikan: DateTime(2026, 8, 30),
-      tanggalMulai: DateTime(2026, 9, 1),
-      batasWaktu: DateTime(2026, 9, 22, 9, 0),
-      prioritasTugas: "Rendah",
-      statusTugas: "Pending",
-      namaAtasan: "Marques Browney",
-    ),
-    TugasModel(
-      idTugas: 4,
-      idAtasan: 104,
-      idStaff: 55,
-      judulTugas: "Revisi Format Dokumen",
-      deskripsiTugas: "Perbaiki format tabel pada lampiran 2.",
-      lokasi: "Kantor Utama",
-      tanggalDiberikan: DateTime(2026, 8, 27),
-      tanggalMulai: DateTime(2026, 8, 29),
-      batasWaktu: DateTime(2026, 9, 5, 16, 0),
-      prioritasTugas: "Tinggi",
-      statusTugas: "Revisi", // Masuk ke tab "Dikumpulkan"
-      namaAtasan: "Saad Ibn Sayeed",
-    ),
-  ];
-}
-
-class TugasStaffPage extends StatefulWidget {
-  const TugasStaffPage({super.key});
+class TugasStaffPage
+    extends StatefulWidget {
+  const TugasStaffPage({
+    super.key,
+  });
 
   @override
-  State<TugasStaffPage> createState() => _TugasStaffPageState();
+  State<TugasStaffPage> createState() =>
+      _TugasStaffPageState();
 }
 
-class _TugasStaffPageState extends State<TugasStaffPage> {
-  final List<TugasModel> _semuaTugas = dummyTugasStaff();
-  String _filterAktif = "Semua";
+class _TugasStaffPageState
+    extends State<TugasStaffPage> {
+  final FirebaseFirestore
+      _firestore =
+      FirebaseFirestore.instance;
 
-  // Filter tugas: Mengabaikan tugas yang sudah di-ACC (karena masuk Riwayat)
-  List<TugasModel> get _tugasTerfilter {
-    final tugasAktif = _semuaTugas
-        .where((t) => t.statusTugas != "ACC")
-        .toList();
+  final FirebaseAuth _auth =
+      FirebaseAuth.instance;
 
-    if (_filterAktif == "Semua") {
-      return tugasAktif;
-    } else if (_filterAktif == "Dikumpulkan") {
-      return tugasAktif
+  String _filterAktif = 'Semua';
+
+  Stream<QuerySnapshot<
+      Map<String, dynamic>>>
+  get _assignmentStream {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      return const Stream.empty();
+    }
+
+    return _firestore
+        .collection('penugasan')
+        .where(
+          'staff_id',
+          isEqualTo: user.uid,
+        )
+        .snapshots();
+  }
+
+  DateTime? _asDate(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+
+    return null;
+  }
+
+  Future<Map<String, dynamic>>
+      _buildTaskData(
+    QueryDocumentSnapshot<
+            Map<String, dynamic>>
+        assignment,
+  ) async {
+    final assignmentData =
+        assignment.data();
+
+    final tugasId =
+        (assignmentData['tugas_id'] ??
+                '')
+            .toString();
+
+    final tugasDoc =
+        await _firestore
+            .collection('tugas')
+            .doc(tugasId)
+            .get();
+
+    final tugasData =
+        tugasDoc.data() ?? {};
+
+    final adminId =
+        (tugasData['dibuat_oleh'] ??
+                '')
+            .toString();
+
+    Map<String, dynamic>
+        adminData = {};
+
+    if (adminId.isNotEmpty) {
+      final adminDoc =
+          await _firestore
+              .collection('users')
+              .doc(adminId)
+              .get();
+
+      adminData =
+          adminDoc.data() ?? {};
+    }
+
+    return {
+      'assignment_id':
+          assignment.id,
+      'tugas_id': tugasId,
+      'judul':
+          tugasData['judul'] ?? '',
+      'deskripsi':
+          tugasData['deskripsi'] ?? '',
+      'tempat_tugas':
+          tugasData['tempat_tugas'] ??
+          '',
+      'tanggal_tugas_diberikan':
+          tugasData[
+            'tanggal_tugas_diberikan'
+          ],
+      'tanggal_mulai_tugas':
+          tugasData[
+            'tanggal_mulai_tugas'
+          ],
+      'tanggal_selesai_tugas':
+          tugasData[
+            'tanggal_selesai_tugas'
+          ],
+      'prioritas':
+          tugasData['prioritas'] ??
+          'sedang',
+      'nama_atasan':
+          adminData['nama'] ?? '-',
+      'status':
+          assignmentData['status'] ??
+          'pending',
+      'file_hasil_url':
+          assignmentData[
+            'file_hasil_url'
+          ],
+      'file_hasil_nama':
+          assignmentData[
+            'file_hasil_nama'
+          ],
+      'catatan_staff':
+          assignmentData[
+            'catatan_staff'
+          ],
+      'catatan_revisi':
+          assignmentData[
+            'catatan_revisi'
+          ],
+    };
+  }
+
+  Future<List<TugasModel>>
+      _loadTasks(
+    List<QueryDocumentSnapshot<
+            Map<String, dynamic>>>
+        assignments,
+  ) async {
+    final List<TugasModel> result =
+        [];
+
+    for (final assignment
+        in assignments) {
+      try {
+        final data =
+            await _buildTaskData(
+              assignment,
+            );
+
+        final status =
+            (data['status'] ??
+                    'pending')
+                .toString()
+                .toLowerCase();
+
+        if (status == 'disetujui') {
+          continue;
+        }
+
+        result.add(
+          TugasModel(
+            idTugas:
+                data['tugas_id']
+                    .toString(),
+            penugasanId:
+                data['assignment_id']
+                    .toString(),
+            judulTugas:
+                data['judul']
+                    .toString(),
+            deskripsiTugas:
+                data['deskripsi']
+                    .toString(),
+            lokasi:
+                data['tempat_tugas']
+                    .toString(),
+            tanggalDiberikan:
+                _asDate(
+                  data[
+                    'tanggal_tugas_diberikan'
+                  ],
+                ),
+            tanggalMulai:
+                _asDate(
+                  data[
+                    'tanggal_mulai_tugas'
+                  ],
+                ),
+            tanggalSelesai:
+                _asDate(
+                  data[
+                    'tanggal_selesai_tugas'
+                  ],
+                ),
+            prioritasTugas:
+                data['prioritas']
+                    .toString(),
+            namaAtasan:
+                data['nama_atasan']
+                    .toString(),
+            statusTugas:
+                status,
+            fileHasil:
+                data[
+                    'file_hasil_nama']
+                    ?.toString(),
+            keteranganHasil:
+                data[
+                    'catatan_staff']
+                    ?.toString(),
+            catatanRevisi:
+                data[
+                    'catatan_revisi']
+                    ?.toString(),
+          ),
+        );
+      } catch (_) {
+        // Jika salah satu tugas gagal
+        // dibaca, tugas lain tetap tampil.
+      }
+    }
+
+    return result;
+  }
+
+  List<TugasModel>
+      _filterTasks(
+    List<TugasModel> tasks,
+  ) {
+    if (_filterAktif ==
+        'Semua') {
+      return tasks;
+    }
+
+    if (_filterAktif ==
+        'Dikumpulkan') {
+      return tasks.where((task) {
+        return task.statusTugas ==
+                'dikumpulkan' ||
+            task.statusTugas ==
+                'revisi';
+      }).toList();
+    }
+
+    if (_filterAktif ==
+        'Terkendala') {
+      return tasks
           .where(
-            (t) =>
-                t.statusTugas == "Menunggu Disetujui" ||
-                t.statusTugas == "Revisi",
+            (task) =>
+                task.statusTugas ==
+                'terkendala',
           )
           .toList();
-    } else {
-      return tugasAktif.where((t) => t.statusTugas == _filterAktif).toList();
     }
+
+    return tasks.where((task) {
+      return _displayStatus(
+            task.statusTugas,
+          ) ==
+          _filterAktif;
+    }).toList();
+  }
+
+  String _displayStatus(
+    String status,
+  ) {
+    switch (status
+        .toLowerCase()) {
+      case 'pending':
+        return 'Pending';
+
+      case 'berlangsung':
+        return 'Berlangsung';
+
+      case 'dikumpulkan':
+        return 'Dikumpulkan';
+
+      case 'revisi':
+        return 'Dikumpulkan';
+
+      case 'terkendala':
+        return 'Terkendala';
+
+      default:
+        return status;
+    }
+  }
+
+  String _formatDate(
+    DateTime? date,
+  ) {
+    if (date == null) return '-';
+
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year}';
+  }
+
+  String _formatDateTime(
+    DateTime? date,
+  ) {
+    if (date == null) return '-';
+
+    return '${_formatDate(date)} '
+        '${date.hour.toString().padLeft(2, '0')}:'
+        '${date.minute.toString().padLeft(2, '0')}';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBgLight,
+      backgroundColor:
+          kBgLight,
       body: LayoutBuilder(
-        builder: (context, constraints) {
-          final double scale = (constraints.maxWidth / 375).clamp(0.85, 1.25);
+        builder:
+            (
+              context,
+              constraints,
+            ) {
+          final double scale =
+              (constraints.maxWidth /
+                      375)
+                  .clamp(
+                    0.85,
+                    1.25,
+                  );
+
           return Column(
             children: [
-              // ---- HEADER GRADASI ----
               ClipPath(
-                clipper: HeaderCurveClipper(),
+                clipper:
+                    HeaderCurveClipper(),
                 child: Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.fromLTRB(
-                    20 * scale,
-                    16 * scale,
-                    20 * scale,
-                    35 * scale,
-                  ),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [kBiruMuda, kBiruSedang, kBiruTua],
-                      stops: [0.0, 0.5, 1.0],
+                  width:
+                      double.infinity,
+                  padding:
+                      EdgeInsets.fromLTRB(
+                        20 * scale,
+                        16 * scale,
+                        20 * scale,
+                        35 * scale,
+                      ),
+                  decoration:
+                      const BoxDecoration(
+                    gradient:
+                        LinearGradient(
+                      begin:
+                          Alignment.topLeft,
+                      end:
+                          Alignment.bottomRight,
+                      colors: [
+                        kBiruMuda,
+                        kBiruSedang,
+                        kBiruTua,
+                      ],
+                      stops: [
+                        0.0,
+                        0.5,
+                        1.0,
+                      ],
                     ),
                   ),
                   child: SafeArea(
@@ -186,80 +427,201 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
                         Row(
                           children: [
                             IconButton(
-                              onPressed: () => Navigator.maybePop(context),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
+                              onPressed:
+                                  () =>
+                                      Navigator.maybePop(
+                                        context,
+                                      ),
+                              padding:
+                                  EdgeInsets.zero,
+                              constraints:
+                                  const BoxConstraints(),
                               icon: Icon(
                                 Icons.arrow_back,
-                                color: Colors.white,
-                                size: 24 * scale,
+                                color:
+                                    Colors.white,
+                                size:
+                                    24 * scale,
                               ),
                             ),
                             Expanded(
-                              child: Center(
-                                child: Text(
-                                  "Tugas Saya",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18 * scale,
-                                    fontWeight: FontWeight.bold,
+                              child:
+                                  Center(
+                                child:
+                                    Text(
+                                  'Tugas Saya',
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.white,
+                                    fontSize:
+                                        18 * scale,
+                                    fontWeight:
+                                        FontWeight.bold,
                                   ),
                                 ),
                               ),
                             ),
-                            SizedBox(width: 24 * scale),
+                            SizedBox(
+                              width:
+                                  24 * scale,
+                            ),
                           ],
                         ),
-                        SizedBox(height: 20 * scale),
-                        _buildFilterTabs(scale),
+
+                        SizedBox(
+                          height:
+                              20 * scale,
+                        ),
+
+                        _buildFilterTabs(
+                          scale,
+                        ),
                       ],
                     ),
                   ),
                 ),
               ),
 
-              // ---- KONTEN UTAMA ----
               Expanded(
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    20 * scale,
-                    10 * scale,
-                    20 * scale,
-                    12 * scale,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Daftar Tugas",
-                        style: TextStyle(
-                          fontSize: 17 * scale,
-                          fontWeight: FontWeight.bold,
-                          color: kBiruTua,
-                        ),
+                  padding:
+                      EdgeInsets.fromLTRB(
+                        20 * scale,
+                        10 * scale,
+                        20 * scale,
+                        12 * scale,
                       ),
-                      SizedBox(height: 14 * scale),
-                      Expanded(
-                        child: _tugasTerfilter.isEmpty
-                            ? Center(
-                                child: Text(
-                                  "Belum ada tugas pada kategori ini",
-                                  style: TextStyle(
-                                    color: Colors.grey.shade500,
-                                    fontSize: 13 * scale,
-                                  ),
-                                ),
-                              )
-                            : ListView.builder(
-                                padding: EdgeInsets.zero,
-                                itemCount: _tugasTerfilter.length,
-                                itemBuilder: (context, index) {
-                                  final tugas = _tugasTerfilter[index];
-                                  return _buildTaskCard(context, tugas, scale);
-                                },
+                  child:
+                      StreamBuilder<
+                        QuerySnapshot<
+                          Map<String,
+                              dynamic>
+                        >
+                      >(
+                    stream:
+                        _assignmentStream,
+                    builder:
+                        (
+                          context,
+                          snapshot,
+                        ) {
+                      if (snapshot.hasError) {
+                        return Center(
+                          child: Text(
+                            'Gagal memuat tugas:\n${snapshot.error}',
+                            textAlign:
+                                TextAlign.center,
+                          ),
+                        );
+                      }
+
+                      if (snapshot
+                              .connectionState ==
+                          ConnectionState
+                              .waiting) {
+                        return const Center(
+                          child:
+                              CircularProgressIndicator(),
+                        );
+                      }
+
+                      final assignments =
+                          snapshot.data
+                                  ?.docs ??
+                              [];
+
+                      return FutureBuilder<
+                        List<TugasModel>
+                      >(
+                        future:
+                            _loadTasks(
+                              assignments,
+                            ),
+                        builder:
+                            (
+                              context,
+                              taskSnapshot,
+                            ) {
+                          if (taskSnapshot
+                                  .connectionState ==
+                              ConnectionState
+                                  .waiting) {
+                            return const Center(
+                              child:
+                                  CircularProgressIndicator(),
+                            );
+                          }
+
+                          if (taskSnapshot
+                              .hasError) {
+                            return Center(
+                              child: Text(
+                                'Gagal memuat detail tugas:\n${taskSnapshot.error}',
+                                textAlign:
+                                    TextAlign.center,
                               ),
-                      ),
-                    ],
+                            );
+                          }
+
+                          final tasks =
+                              _filterTasks(
+                                taskSnapshot
+                                        .data ??
+                                    [],
+                              );
+
+                          return Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment
+                                    .start,
+                            children: [
+                              Text(
+                                'Daftar Tugas',
+                                style:
+                                    TextStyle(
+                                  fontSize:
+                                      17 * scale,
+                                  fontWeight:
+                                      FontWeight
+                                          .bold,
+                                  color:
+                                      kBiruTua,
+                                ),
+                              ),
+
+                              SizedBox(
+                                height:
+                                    14 * scale,
+                              ),
+
+                              Expanded(
+                                child:
+                                    tasks.isEmpty
+                                        ? const _EmptyTaskState()
+                                        : ListView.builder(
+                                          padding:
+                                              EdgeInsets.zero,
+                                          itemCount:
+                                              tasks.length,
+                                          itemBuilder:
+                                              (
+                                                context,
+                                                index,
+                                              ) {
+                                            return _buildTaskCard(
+                                              context,
+                                              tasks[index],
+                                              scale,
+                                            );
+                                          },
+                                        ),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
                   ),
                 ),
               ),
@@ -270,305 +632,508 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
     );
   }
 
-  // ---- TABS FILTER SESUAI PERMINTAAN ----
-  Widget _buildFilterTabs(double scale) {
+  Widget _buildFilterTabs(
+    double scale,
+  ) {
     final tabs = [
-      "Semua",
-      "Pending",
-      "Berlangsung",
-      "Terkendala",
-      "Dikumpulkan",
+      'Semua',
+      'Pending',
+      'Berlangsung',
+      'Terkendala',
+      'Dikumpulkan',
     ];
+
     return SizedBox(
       width: double.infinity,
       child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
+        scrollDirection:
+            Axis.horizontal,
         child: Row(
-          children: tabs.map((tab) {
-            final bool aktif = tab == _filterAktif;
-            return Padding(
-              padding: EdgeInsets.only(right: 12 * scale),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(15 * scale),
-                onTap: () => setState(() => _filterAktif = tab),
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 16 * scale,
-                    vertical: 9 * scale,
-                  ),
-                  decoration: BoxDecoration(
-                    color: aktif
-                        ? Colors.white
-                        : Colors.white.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(15 * scale),
-                  ),
-                  child: Text(
-                    tab,
-                    style: TextStyle(
-                      color: aktif ? kBiruTua : Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12.5 * scale,
+          children:
+              tabs.map((tab) {
+                final bool aktif =
+                    tab == _filterAktif;
+
+                return Padding(
+                  padding:
+                      EdgeInsets.only(
+                        right:
+                            12 * scale,
+                      ),
+                  child: InkWell(
+                    borderRadius:
+                        BorderRadius.circular(
+                          15 * scale,
+                        ),
+                    onTap: () {
+                      setState(() {
+                        _filterAktif =
+                            tab;
+                      });
+                    },
+                    child: Container(
+                      padding:
+                          EdgeInsets.symmetric(
+                            horizontal:
+                                16 * scale,
+                            vertical:
+                                9 * scale,
+                          ),
+                      decoration:
+                          BoxDecoration(
+                        color:
+                            aktif
+                                ? Colors.white
+                                : Colors.white
+                                    .withOpacity(
+                                      0.15,
+                                    ),
+                        borderRadius:
+                            BorderRadius.circular(
+                              15 * scale,
+                            ),
+                      ),
+                      child: Text(
+                        tab,
+                        style:
+                            TextStyle(
+                          color:
+                              aktif
+                                  ? kBiruTua
+                                  : Colors.white,
+                          fontWeight:
+                              FontWeight.bold,
+                          fontSize:
+                              12.5 * scale,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-            );
-          }).toList(),
+                );
+              }).toList(),
         ),
       ),
     );
   }
 
-  // ---- CARD TUGAS DENGAN INFORMASI LENGKAP ----
-  Widget _buildTaskCard(BuildContext context, TugasModel tugas, double scale) {
-    final statusColor = _warnaStatus(tugas.statusTugas);
-    final prioritasColor = _warnaPrioritas(tugas.prioritasTugas);
+  Widget _buildTaskCard(
+    BuildContext context,
+    TugasModel tugas,
+    double scale,
+  ) {
+    final statusColor =
+        _warnaStatus(
+          tugas.statusTugas,
+        );
+
+    final prioritasColor =
+        _warnaPrioritas(
+          tugas.prioritasTugas,
+        );
 
     return InkWell(
-      borderRadius: BorderRadius.circular(20 * scale),
+      borderRadius:
+          BorderRadius.circular(
+            20 * scale,
+          ),
       onTap: () {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => TugasDetailPage(tugas: tugas),
+            builder:
+                (_) =>
+                    TugasDetailPage(
+                      penugasanId:
+                          tugas
+                              .penugasanId,
+                    ),
           ),
         );
       },
       child: Container(
-        margin: EdgeInsets.only(bottom: 16 * scale),
-        padding: EdgeInsets.all(16 * scale),
-        decoration: BoxDecoration(
+        margin:
+            EdgeInsets.only(
+              bottom:
+                  16 * scale,
+            ),
+        padding:
+            EdgeInsets.all(
+              16 * scale,
+            ),
+        decoration:
+            BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(20 * scale),
+          borderRadius:
+              BorderRadius.circular(
+                20 * scale,
+              ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black
+                  .withOpacity(.05),
               blurRadius: 10,
-              offset: const Offset(0, 4),
+              offset:
+                  const Offset(0, 4),
             ),
           ],
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
           children: [
-            // Row 1: Prioritas & Status Aktivitas
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                // Badge Prioritas
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 10 * scale,
-                    vertical: 4 * scale,
-                  ),
-                  decoration: BoxDecoration(
-                    color: prioritasColor.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(8 * scale),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.flag, size: 12 * scale, color: prioritasColor),
-                      SizedBox(width: 4 * scale),
-                      Text(
-                        "Prioritas ${tugas.prioritasTugas}",
-                        style: TextStyle(
-                          color: prioritasColor,
-                          fontSize: 10.5 * scale,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // Badge Status Aktivitas
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 10 * scale,
-                    vertical: 4 * scale,
-                  ),
-                  decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(8 * scale),
-                  ),
-                  child: Text(
-                    tugas.statusTugas.toUpperCase(),
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: 10 * scale,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 10 * scale),
-
-            // Judul Tugas
-            Text(
-              tugas.judulTugas,
-              style: TextStyle(
-                fontSize: 16 * scale,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-            SizedBox(height: 8 * scale),
-
-            // Info Lokasi
             Row(
               children: [
-                Icon(
-                  Icons.location_on_outlined,
-                  size: 14 * scale,
-                  color: Colors.grey[600],
-                ),
-                SizedBox(width: 4 * scale),
                 Expanded(
                   child: Text(
-                    tugas.lokasi,
-                    style: TextStyle(
-                      color: Colors.grey[700],
-                      fontSize: 11.5 * scale,
+                    tugas.judulTugas,
+                    style:
+                        TextStyle(
+                      fontSize:
+                          15 * scale,
+                      fontWeight:
+                          FontWeight.bold,
+                      color:
+                          kBiruTua,
                     ),
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                _badge(
+                  _displayStatus(
+                    tugas.statusTugas,
+                  ),
+                  statusColor,
+                  scale,
+                ),
               ],
             ),
-            SizedBox(height: 10 * scale),
-            const Divider(height: 1, thickness: 0.5),
-            SizedBox(height: 10 * scale),
 
-            // Info Tanggal & Atasan
-            Column(
-              children: [
-                _buildInfoRow(
-                  Icons.event_available,
-                  "Diberikan",
-                  _formatTanggal(tugas.tanggalDiberikan),
-                  scale,
-                ),
-                SizedBox(height: 4 * scale),
-                _buildInfoRow(
-                  Icons.play_circle_outline,
-                  "Mulai Dikerjakan",
-                  _formatTanggal(tugas.tanggalMulai),
-                  scale,
-                ),
-                SizedBox(height: 4 * scale),
-                _buildInfoRow(
-                  Icons.timer_outlined,
-                  "Deadline",
-                  _formatTanggalJam(tugas.batasWaktu),
-                  scale,
-                  isHighlight: true,
-                ),
-                SizedBox(height: 6 * scale),
-                _buildInfoRow(
-                  Icons.person_outline,
-                  "Diberikan Oleh",
-                  tugas.namaAtasan,
-                  scale,
-                ),
-              ],
+            SizedBox(
+              height: 9 * scale,
             ),
+
+            Text(
+              tugas.deskripsiTugas,
+              maxLines: 2,
+              overflow:
+                  TextOverflow.ellipsis,
+              style:
+                  TextStyle(
+                fontSize:
+                    12 * scale,
+                color:
+                    Colors.grey.shade700,
+              ),
+            ),
+
+            SizedBox(
+              height: 12 * scale,
+            ),
+
+            _row(
+              Icons.person_outline,
+              'Atasan',
+              tugas.namaAtasan,
+              scale,
+            ),
+
+            SizedBox(
+              height: 7 * scale,
+            ),
+
+            _row(
+              Icons.location_on_outlined,
+              'Lokasi',
+              tugas.lokasi,
+              scale,
+            ),
+
+            SizedBox(
+              height: 7 * scale,
+            ),
+
+            _row(
+              Icons.calendar_today_outlined,
+              'Mulai',
+              _formatDateTime(
+                tugas.tanggalMulai,
+              ),
+              scale,
+            ),
+
+            SizedBox(
+              height: 7 * scale,
+            ),
+
+            _row(
+              Icons.event_available_outlined,
+              'Batas',
+              _formatDateTime(
+                tugas.tanggalSelesai,
+              ),
+              scale,
+              highlight:
+                  tugas.tanggalSelesai !=
+                      null &&
+                  tugas.tanggalSelesai!
+                      .isBefore(
+                        DateTime.now(),
+                      ) &&
+                  tugas.statusTugas !=
+                      'dikumpulkan' &&
+                  tugas.statusTugas !=
+                      'disetujui',
+            ),
+
+            SizedBox(
+              height: 10 * scale,
+            ),
+
+            _badge(
+              'Prioritas ${tugas.prioritasTugas}',
+              prioritasColor,
+              scale,
+            ),
+
+            if (tugas.statusTugas ==
+                    'revisi' &&
+                (tugas.catatanRevisi ??
+                        '')
+                    .isNotEmpty) ...[
+              SizedBox(
+                height: 10 * scale,
+              ),
+              Container(
+                width:
+                    double.infinity,
+                padding:
+                    EdgeInsets.all(
+                      10 * scale,
+                    ),
+                decoration:
+                    BoxDecoration(
+                  color:
+                      Colors.orange
+                          .withOpacity(
+                            .08,
+                          ),
+                  borderRadius:
+                      BorderRadius.circular(
+                        10 * scale,
+                      ),
+                ),
+                child: Text(
+                  'Catatan revisi: ${tugas.catatanRevisi}',
+                  style:
+                      TextStyle(
+                    fontSize:
+                        11.5 * scale,
+                    color:
+                        Colors.orange
+                            .shade800,
+                    fontWeight:
+                        FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInfoRow(
+  Color _warnaStatus(
+    String status,
+  ) {
+    switch (status
+        .toLowerCase()) {
+      case 'pending':
+        return Colors.orange;
+
+      case 'berlangsung':
+        return kBiruSedang;
+
+      case 'dikumpulkan':
+        return Colors.green;
+
+      case 'revisi':
+        return Colors.orange.shade800;
+
+      case 'terkendala':
+        return Colors.red;
+
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Color _warnaPrioritas(
+    String prioritas,
+  ) {
+    switch (prioritas
+        .toLowerCase()) {
+      case 'tinggi':
+        return Colors.red;
+
+      case 'rendah':
+        return Colors.green;
+
+      default:
+        return Colors.orange;
+    }
+  }
+
+  Widget _badge(
+    String text,
+    Color color,
+    double scale,
+  ) {
+    return Container(
+      padding:
+          EdgeInsets.symmetric(
+            horizontal:
+                10 * scale,
+            vertical:
+                5 * scale,
+          ),
+      decoration:
+          BoxDecoration(
+        color:
+            color.withOpacity(.1),
+        borderRadius:
+            BorderRadius.circular(
+              9 * scale,
+            ),
+      ),
+      child: Text(
+        text,
+        style:
+            TextStyle(
+          color: color,
+          fontSize:
+              10.5 * scale,
+          fontWeight:
+              FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  Widget _row(
     IconData icon,
     String label,
     String value,
     double scale, {
-    bool isHighlight = false,
+    bool highlight = false,
   }) {
     return Row(
+      crossAxisAlignment:
+          CrossAxisAlignment.start,
       children: [
         Icon(
           icon,
-          size: 13 * scale,
-          color: isHighlight ? Colors.redAccent : Colors.grey[500],
+          size: 14 * scale,
+          color:
+              highlight
+                  ? Colors.redAccent
+                  : Colors.grey[500],
         ),
-        SizedBox(width: 6 * scale),
-        Text(
-          "$label: ",
-          style: TextStyle(color: Colors.grey[600], fontSize: 11 * scale),
+        SizedBox(
+          width: 7 * scale,
         ),
         Text(
-          value,
-          style: TextStyle(
-            color: isHighlight ? Colors.redAccent : Colors.black87,
-            fontSize: 11 * scale,
-            fontWeight: isHighlight ? FontWeight.bold : FontWeight.w500,
+          '$label: ',
+          style:
+              TextStyle(
+            color:
+                Colors.grey[600],
+            fontSize:
+                11 * scale,
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style:
+                TextStyle(
+              color:
+                  highlight
+                      ? Colors.redAccent
+                      : Colors.black87,
+              fontSize:
+                  11 * scale,
+              fontWeight:
+                  highlight
+                      ? FontWeight.bold
+                      : FontWeight.w500,
+            ),
           ),
         ),
       ],
     );
   }
+}
 
-  Color _warnaStatus(String status) {
-    switch (status) {
-      case "Berlangsung":
-        return Colors.orange.shade800;
-      case "Terkendala":
-        return Colors.red.shade700;
-      case "Menunggu Disetujui":
-        return Colors.blue.shade700;
-      case "Revisi":
-        return Colors.purple.shade700;
-      case "Pending":
-      default:
-        return Colors.blueGrey;
-    }
-  }
+class _EmptyTaskState
+    extends StatelessWidget {
+  const _EmptyTaskState();
 
-  Color _warnaPrioritas(String prioritas) {
-    switch (prioritas) {
-      case "Tinggi":
-        return Colors.red;
-      case "Sedang":
-        return Colors.orange;
-      case "Rendah":
-      default:
-        return Colors.green;
-    }
-  }
-
-  String _formatTanggal(DateTime dt) {
-    const bulan = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "Mei",
-      "Jun",
-      "Jul",
-      "Agt",
-      "Sep",
-      "Okt",
-      "Nov",
-      "Des",
-    ];
-    return "${dt.day} ${bulan[dt.month - 1]} ${dt.year}";
-  }
-
-  String _formatTanggalJam(DateTime dt) {
-    final jam = dt.hour.toString().padLeft(2, '0');
-    final menit = dt.minute.toString().padLeft(2, '0');
-    return "${_formatTanggal(dt)} - $jam:$menit";
+  @override
+  Widget build(
+    BuildContext context,
+  ) {
+    return Center(
+      child: Column(
+        mainAxisSize:
+            MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons
+                .assignment_late_outlined,
+            size: 48,
+            color: Colors.grey,
+          ),
+          const SizedBox(
+            height: 12,
+          ),
+          Text(
+            'Belum ada tugas',
+            style: TextStyle(
+              color:
+                  Colors.grey.shade600,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
-class HeaderCurveClipper extends CustomClipper<Path> {
+class HeaderCurveClipper
+    extends CustomClipper<Path> {
   @override
-  Path getClip(Size size) {
-    final path = Path();
-    path.lineTo(0, size.height - 20);
-    final controlPoint = Offset(size.width / 2, size.height + 15);
-    final endPoint = Offset(size.width, size.height - 20);
+  Path getClip(
+    Size size,
+  ) {
+    final path =
+        Path()
+          ..lineTo(
+            0,
+            size.height - 20,
+          );
+
+    final controlPoint =
+        Offset(
+          size.width / 2,
+          size.height + 15,
+        );
+
+    final endPoint =
+        Offset(
+          size.width,
+          size.height - 20,
+        );
 
     path.quadraticBezierTo(
       controlPoint.dx,
@@ -576,11 +1141,23 @@ class HeaderCurveClipper extends CustomClipper<Path> {
       endPoint.dx,
       endPoint.dy,
     );
-    path.lineTo(size.width, 0);
+
+    path.lineTo(
+      size.width,
+      0,
+    );
+
     path.close();
+
     return path;
   }
 
   @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
+  bool shouldReclip(
+    covariant
+        CustomClipper<Path>
+        oldClipper,
+  ) {
+    return false;
+  }
 }

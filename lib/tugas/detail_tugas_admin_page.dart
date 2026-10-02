@@ -1,110 +1,108 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import '../pages/admin/admin_navbar.dart';
 import 'location_picker_page.dart';
-import 'tugas_model.dart';
-
-/// ============================================================
-/// DETAIL TUGAS ADMIN (Tambah / Edit Tugas)
-/// Sistem Penjadwalan Penugasan Pegawai — Dinas Kominfo
-/// ============================================================
-/// Form berisi:
-///   - Judul Tugas
-///   - Deskripsi Tugas
-///   - Tempat Tugas (+ ambil lokasi GPS otomatis)
-///   - Tanggal & Jam Penugasan
-///   - Staf yang Bertugas (multi-pilih)
-///   - Prioritas Tugas
-///
-/// CATATAN DEPENDENCY (tambahkan di pubspec.yaml):
-///   dependencies:
-///     geolocator: ^13.0.1
-///
-///   Android (android/app/src/main/AndroidManifest.xml), di dalam <manifest>:
-///     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-///     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-///
-///   iOS (ios/Runner/Info.plist), tambahkan:
-///     <key>NSLocationWhenInUseUsageDescription</key>
-///     <string>Aplikasi memerlukan lokasi untuk menandai tempat tugas</string>
-/// ============================================================
-
-class AppColors {
-  static const Color biruTua = Color(0xFF0011CC);
-  static const Color biruSedang = Color(0xFF0066FF);
-  static const Color cyan = Color(0xFF00CCFF);
-  static const Color oranyeWarning = Color(0xFFFF9800);
-  static const Color hijauSelesai = Color(0xFF2E8B57);
-  static const Color putih = Colors.white;
-  static const Color abuTeks = Color(0xFF5A6472);
-  static const Color latarAbu = Color(0xFFF4F6FB);
-  static const Color abuBorder = Color(0xFFE1E5F0);
-}
-
-/// Daftar staf contoh — ganti dengan data dari backend/API
-const List<String> _daftarStafTersedia = [
-  'Ahmad Fauzi',
-  'Siti Nurhaliza',
-  'Budi Santoso',
-  'Dewi Lestari',
-  'Rizky Pratama',
-];
 
 class DetailTugasAdminPage extends StatefulWidget {
-  final TugasModel? tugas; // null = mode tambah, terisi = mode edit
+  final String? tugasId;
+  final bool modeLihat;
 
-  const DetailTugasAdminPage({super.key, this.tugas});
+  const DetailTugasAdminPage({
+    super.key,
+    this.tugasId,
+    this.modeLihat = false,
+  });
 
   @override
-  State<DetailTugasAdminPage> createState() => _DetailTugasAdminPageState();
+  State<DetailTugasAdminPage> createState() =>
+      _DetailTugasAdminPageState();
 }
 
-class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _judulController;
-  late final TextEditingController _deskripsiController;
-  late final TextEditingController _tempatController;
-  late final TextEditingController _staffSearchController;
+class _DetailTugasAdminPageState
+    extends State<DetailTugasAdminPage> {
+  static const Color biruTua =
+      Color(0xFF0011CC);
 
-  DateTime? _tanggalDipilih;
-  TimeOfDay? _jamDipilih;
+  static const Color biruSedang =
+      Color(0xFF0066FF);
+
+  static const Color cyan =
+      Color(0xFF00CCFF);
+
+  static const Color latarAbu =
+      Color(0xFFF4F6FB);
+
+  static const Color abuTeks =
+      Color(0xFF5A6472);
+
+  static const Color abuBorder =
+      Color(0xFFE1E5F0);
+
+  final FirebaseFirestore _firestore =
+      FirebaseFirestore.instance;
+
+  final FirebaseAuth _auth =
+      FirebaseAuth.instance;
+
+  final _formKey =
+      GlobalKey<FormState>();
+
+  final _judulController =
+      TextEditingController();
+
+  final _deskripsiController =
+      TextEditingController();
+
+  final _tempatController =
+      TextEditingController();
+
+  final _staffSearchController =
+      TextEditingController();
+
+  DateTime? _tanggalMulai;
+
+  TimeOfDay? _jamMulai;
+
+  DateTime? _tanggalSelesai;
+
+  TimeOfDay? _jamSelesai;
+
   double? _latitude;
+
   double? _longitude;
-  bool _sedangMengambilLokasi = false;
-  String _prioritas = 'Sedang';
-  TugasStatus _statusTugas = TugasStatus.belumSelesai;
-  String _staffSearchQuery = '';
+
+  String _prioritas = 'sedang';
+
+  List<Map<String, dynamic>>
+      _daftarStaff = [];
+
   final Set<String> _stafDipilih = {};
 
-  bool get _modeEdit => widget.tugas != null;
+  bool _loading = true;
 
-  List<String> get _saranStaf {
-    final query = _staffSearchQuery.trim().toLowerCase();
-    if (query.isEmpty) return [];
+  bool _saving = false;
 
-    return _daftarStafTersedia.where((nama) {
-      return !_stafDipilih.contains(nama) && nama.toLowerCase().contains(query);
-    }).toList();
-  }
+  bool _sedangMengambilLokasi =
+      false;
+
+  Map<String, dynamic>?
+      _tugasData;
+
+  List<QueryDocumentSnapshot<
+      Map<String, dynamic>>> _penugasan =
+      [];
 
   @override
   void initState() {
     super.initState();
-    final tugas = widget.tugas;
-    _judulController = TextEditingController(text: tugas?.judul ?? '');
-    _deskripsiController = TextEditingController(text: tugas?.deskripsi ?? '');
-    _tempatController = TextEditingController(text: tugas?.tempat ?? '');
-    _staffSearchController = TextEditingController();
-    _tanggalDipilih = tugas?.tanggal;
-    _jamDipilih = tugas?.jam;
-    _latitude = tugas?.latitude;
-    _longitude = tugas?.longitude;
-    _prioritas = tugas?.prioritas ?? 'Sedang';
-    _statusTugas = tugas?.status ?? TugasStatus.belumSelesai;
-    if (tugas != null) _stafDipilih.addAll(tugas.staff);
+
+    _loadPage();
   }
 
   @override
@@ -113,92 +111,397 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     _deskripsiController.dispose();
     _tempatController.dispose();
     _staffSearchController.dispose();
+
     super.dispose();
   }
 
-  void _pilihStaf(String nama) {
-    setState(() {
-      _stafDipilih.add(nama);
-      _staffSearchController.clear();
-      _staffSearchQuery = '';
-    });
-  }
-
-  void _hapusStaf(String nama) {
-    setState(() => _stafDipilih.remove(nama));
-  }
-
-  // ---------- AMBIL LOKASI GPS SAAT INI ----------
-  Future<void> _ambilLokasiSaatIni() async {
-    setState(() => _sedangMengambilLokasi = true);
+  Future<void> _loadPage() async {
     try {
-      bool layananAktif = await Geolocator.isLocationServiceEnabled();
-      if (!layananAktif) {
-        _tampilkanPesan(
-          'Layanan lokasi (GPS) sedang nonaktif. Aktifkan terlebih dahulu.',
+      await _loadStaff();
+
+      if (widget.tugasId != null) {
+        await _loadTugas();
+      }
+    } catch (e) {
+      if (mounted) {
+        _message(
+          'Gagal memuat data: $e',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadStaff() async {
+    final snapshot = await _firestore
+        .collection('users')
+        .where(
+          'role',
+          isEqualTo: 'staff',
+        )
+        .where(
+          'status_akun',
+          isEqualTo: 'aktif',
+        )
+        .get();
+
+    _daftarStaff =
+        snapshot.docs.map((doc) {
+          return {
+            'id': doc.id,
+            ...doc.data(),
+          };
+        }).toList();
+
+    _daftarStaff.sort(
+      (a, b) =>
+          (a['nama'] ?? '')
+              .toString()
+              .compareTo(
+                (b['nama'] ?? '')
+                    .toString(),
+              ),
+    );
+  }
+
+  Future<void> _loadTugas() async {
+    final doc = await _firestore
+        .collection('tugas')
+        .doc(widget.tugasId)
+        .get();
+
+    if (!doc.exists) {
+      throw Exception(
+        'Data tugas tidak ditemukan.',
+      );
+    }
+
+    final data = doc.data()!;
+
+    _tugasData = data;
+
+    _judulController.text =
+        (data['judul'] ?? '').toString();
+
+    _deskripsiController.text =
+        (data['deskripsi'] ?? '')
+            .toString();
+
+    _tempatController.text =
+        (data['tempat_tugas'] ?? '')
+            .toString();
+
+    _latitude =
+        (data['latitude'] as num?)
+            ?.toDouble();
+
+    _longitude =
+        (data['longitude'] as num?)
+            ?.toDouble();
+
+    _prioritas =
+        (data['prioritas'] ?? 'sedang')
+            .toString()
+            .toLowerCase();
+
+    final start =
+        _asDate(
+          data['tanggal_mulai_tugas'],
+        );
+
+    final end =
+        _asDate(
+          data['tanggal_selesai_tugas'],
+        );
+
+    _tanggalMulai =
+        start == null
+            ? null
+            : DateTime(
+              start.year,
+              start.month,
+              start.day,
+            );
+
+    _jamMulai =
+        start == null
+            ? null
+            : TimeOfDay(
+              hour: start.hour,
+              minute: start.minute,
+            );
+
+    _tanggalSelesai =
+        end == null
+            ? null
+            : DateTime(
+              end.year,
+              end.month,
+              end.day,
+            );
+
+    _jamSelesai =
+        end == null
+            ? null
+            : TimeOfDay(
+              hour: end.hour,
+              minute: end.minute,
+            );
+
+    final assignmentSnapshot =
+        await _firestore
+            .collection('penugasan')
+            .where(
+              'tugas_id',
+              isEqualTo: widget.tugasId,
+            )
+            .get();
+
+    _penugasan =
+        assignmentSnapshot.docs;
+
+    _stafDipilih.clear();
+
+    for (final assignment
+        in assignmentSnapshot.docs) {
+      final staffId =
+          (assignment.data()['staff_id'] ??
+                  '')
+              .toString();
+
+      if (staffId.isNotEmpty) {
+        _stafDipilih.add(staffId);
+      }
+    }
+  }
+
+  DateTime? _asDate(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+
+    return null;
+  }
+
+  Future<void> _pilihTanggalMulai() async {
+    final result =
+        await showDatePicker(
+          context: context,
+          initialDate:
+              _tanggalMulai ??
+              DateTime.now(),
+          firstDate: DateTime.now()
+              .subtract(
+                const Duration(days: 1),
+              ),
+          lastDate: DateTime.now().add(
+            const Duration(days: 365),
+          ),
+        );
+
+    if (result != null) {
+      setState(() {
+        _tanggalMulai = result;
+      });
+    }
+  }
+
+  Future<void> _pilihJamMulai() async {
+    final result =
+        await showTimePicker(
+          context: context,
+          initialTime:
+              _jamMulai ??
+              TimeOfDay.now(),
+        );
+
+    if (result != null) {
+      setState(() {
+        _jamMulai = result;
+      });
+    }
+  }
+
+  Future<void> _pilihTanggalSelesai() async {
+    final result =
+        await showDatePicker(
+          context: context,
+          initialDate:
+              _tanggalSelesai ??
+              _tanggalMulai ??
+              DateTime.now(),
+          firstDate:
+              _tanggalMulai ??
+              DateTime.now(),
+          lastDate: DateTime.now().add(
+            const Duration(days: 365),
+          ),
+        );
+
+    if (result != null) {
+      setState(() {
+        _tanggalSelesai = result;
+      });
+    }
+  }
+
+  Future<void> _pilihJamSelesai() async {
+    final result =
+        await showTimePicker(
+          context: context,
+          initialTime:
+              _jamSelesai ??
+              TimeOfDay.now(),
+        );
+
+    if (result != null) {
+      setState(() {
+        _jamSelesai = result;
+      });
+    }
+  }
+
+  Future<void> _ambilLokasiSaatIni() async {
+    setState(() {
+      _sedangMengambilLokasi =
+          true;
+    });
+
+    try {
+      final serviceEnabled =
+          await Geolocator
+              .isLocationServiceEnabled();
+
+      if (!serviceEnabled) {
+        _message(
+          'Layanan lokasi (GPS) sedang nonaktif.',
+          error: true,
         );
         return;
       }
 
-      LocationPermission izin = await Geolocator.checkPermission();
-      if (izin == LocationPermission.denied) {
-        izin = await Geolocator.requestPermission();
-        if (izin == LocationPermission.denied) {
-          _tampilkanPesan('Izin lokasi ditolak.');
-          return;
-        }
+      var permission =
+          await Geolocator.checkPermission();
+
+      if (permission ==
+          LocationPermission.denied) {
+        permission =
+            await Geolocator
+                .requestPermission();
       }
-      if (izin == LocationPermission.deniedForever) {
-        _tampilkanPesan(
-          'Izin lokasi ditolak permanen. Aktifkan lewat pengaturan aplikasi.',
+
+      if (permission ==
+          LocationPermission.denied) {
+        _message(
+          'Izin lokasi ditolak.',
+          error: true,
         );
         return;
       }
 
-      final posisi = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
+      if (permission ==
+          LocationPermission.deniedForever) {
+        _message(
+          'Izin lokasi ditolak permanen.',
+          error: true,
+        );
+        return;
+      }
+
+      final position =
+          await Geolocator
+              .getCurrentPosition(
+        locationSettings:
+            const LocationSettings(
+          accuracy:
+              LocationAccuracy.high,
         ),
       );
 
       setState(() {
-        _latitude = posisi.latitude;
-        _longitude = posisi.longitude;
-        if (_tempatController.text.trim().isEmpty) {
+        _latitude =
+            position.latitude;
+
+        _longitude =
+            position.longitude;
+
+        if (_tempatController
+            .text
+            .trim()
+            .isEmpty) {
           _tempatController.text =
-              'Lat: ${posisi.latitude.toStringAsFixed(6)}, Lng: ${posisi.longitude.toStringAsFixed(6)}';
+              'Lat: ${position.latitude.toStringAsFixed(6)}, '
+              'Lng: ${position.longitude.toStringAsFixed(6)}';
         }
       });
-      _tampilkanPesan('Lokasi berhasil diambil');
+
+      _message(
+        'Lokasi berhasil diambil',
+      );
     } catch (e) {
-      _tampilkanPesan('Gagal mengambil lokasi. Coba lagi.');
+      _message(
+        'Gagal mengambil lokasi.',
+        error: true,
+      );
     } finally {
-      if (mounted) setState(() => _sedangMengambilLokasi = false);
+      if (mounted) {
+        setState(() {
+          _sedangMengambilLokasi =
+              false;
+        });
+      }
     }
   }
 
   Future<void> _pilihLokasiDariPeta() async {
-    final hasil = await Navigator.push<LocationPickResult>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => LocationPickerPage(
-          initialTempat: _tempatController.text.trim(),
-          initialLatitude: _latitude,
-          initialLongitude: _longitude,
-        ),
-      ),
-    );
+    final hasil =
+        await Navigator.push<
+          LocationPickResult
+        >(
+          context,
+          MaterialPageRoute(
+            builder:
+                (_) =>
+                    LocationPickerPage(
+                      initialTempat:
+                          _tempatController
+                              .text
+                              .trim(),
+                      initialLatitude:
+                          _latitude,
+                      initialLongitude:
+                          _longitude,
+                    ),
+          ),
+        );
 
-    if (hasil == null) return;
+    if (hasil == null) {
+      return;
+    }
+
     setState(() {
-      _tempatController.text = hasil.tempat;
-      _latitude = hasil.latitude;
-      _longitude = hasil.longitude;
+      _tempatController.text =
+          hasil.tempat;
+
+      _latitude =
+          hasil.latitude;
+
+      _longitude =
+          hasil.longitude;
     });
   }
 
-  Future<void> _bukaPanduanArah() async {
-    if (_latitude == null || _longitude == null) return;
+  Future<void> _bukaMaps() async {
+    if (_latitude == null ||
+        _longitude == null) {
+      return;
+    }
 
     final uri = Uri.parse(
       'https://www.google.com/maps/dir/?api=1'
@@ -206,84 +509,488 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
       '&travelmode=driving',
     );
 
-    final berhasil = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!berhasil && mounted) {
-      _tampilkanPesan('Google Maps tidak bisa dibuka di perangkat ini.');
-    }
-  }
-
-  void _tampilkanPesan(String pesan) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(pesan),
-        backgroundColor: AppColors.biruTua,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
+    await launchUrl(
+      uri,
+      mode:
+          LaunchMode.externalApplication,
     );
   }
 
-  Future<void> _pilihTanggal() async {
-    final hasil = await showDatePicker(
-      context: context,
-      initialDate: _tanggalDipilih ?? DateTime.now(),
-      firstDate: DateTime.now().subtract(const Duration(days: 1)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-      builder: (context, child) => Theme(
-        data: Theme.of(context).copyWith(
-          colorScheme: const ColorScheme.light(primary: AppColors.biruTua),
-        ),
-        child: child!,
-      ),
+  DateTime _gabungkanTanggalDanJam(
+    DateTime tanggal,
+    TimeOfDay jam,
+  ) {
+    return DateTime(
+      tanggal.year,
+      tanggal.month,
+      tanggal.day,
+      jam.hour,
+      jam.minute,
     );
-    if (hasil != null) setState(() => _tanggalDipilih = hasil);
   }
 
-  Future<void> _pilihJam() async {
-    final hasil = await showTimePicker(
-      context: context,
-      initialTime: _jamDipilih ?? TimeOfDay.now(),
-      builder: (context, child) => Theme(
-        data: Theme.of(context).copyWith(
-          colorScheme: const ColorScheme.light(primary: AppColors.biruTua),
-        ),
-        child: child!,
-      ),
-    );
-    if (hasil != null) setState(() => _jamDipilih = hasil);
-  }
-
-  void _simpanTugas() {
-    if (!_formKey.currentState!.validate()) return;
-
-    if (_tanggalDipilih == null) {
-      _tampilkanPesan('Tanggal penugasan wajib dipilih');
+  Future<void> _simpanTugas() async {
+    if (widget.modeLihat) {
       return;
     }
-    if (_jamDipilih == null) {
-      _tampilkanPesan('Jam penugasan wajib dipilih');
+
+    if (!_formKey.currentState!
+        .validate()) {
       return;
     }
+
+    if (_tanggalMulai == null ||
+        _jamMulai == null) {
+      _message(
+        'Tanggal dan jam mulai wajib dipilih.',
+        error: true,
+      );
+      return;
+    }
+
+    if (_tanggalSelesai == null ||
+        _jamSelesai == null) {
+      _message(
+        'Tanggal dan jam selesai wajib dipilih.',
+        error: true,
+      );
+      return;
+    }
+
     if (_stafDipilih.isEmpty) {
-      _tampilkanPesan('Pilih minimal 1 staf yang bertugas');
+      _message(
+        'Pilih minimal 1 staf.',
+        error: true,
+      );
       return;
     }
 
-    final tugasBaru = TugasModel(
-      id: widget.tugas?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
-      judul: _judulController.text.trim(),
-      deskripsi: _deskripsiController.text.trim(),
-      tempat: _tempatController.text.trim(),
-      latitude: _latitude,
-      longitude: _longitude,
-      tanggal: _tanggalDipilih!,
-      jam: _jamDipilih!,
-      staff: _stafDipilih.toList(),
-      prioritas: _prioritas,
-      status: _statusTugas,
+    final mulai =
+        _gabungkanTanggalDanJam(
+          _tanggalMulai!,
+          _jamMulai!,
+        );
+
+    final selesai =
+        _gabungkanTanggalDanJam(
+          _tanggalSelesai!,
+          _jamSelesai!,
+        );
+
+    if (!selesai.isAfter(mulai)) {
+      _message(
+        'Waktu selesai harus setelah waktu mulai.',
+        error: true,
+      );
+      return;
+    }
+
+    final currentUser =
+        _auth.currentUser;
+
+    if (currentUser == null) {
+      _message(
+        'Sesi admin tidak ditemukan.',
+        error: true,
+      );
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+    });
+
+    try {
+      final tugasRef =
+          widget.tugasId == null
+              ? _firestore
+                  .collection('tugas')
+                  .doc()
+              : _firestore
+                  .collection('tugas')
+                  .doc(widget.tugasId);
+
+      final data = <String, dynamic>{
+        'judul':
+            _judulController.text
+                .trim(),
+        'deskripsi':
+            _deskripsiController.text
+                .trim(),
+        'dibuat_oleh':
+            widget.tugasId == null
+                ? currentUser.uid
+                : (
+                    _tugasData?[
+                          'dibuat_oleh'
+                        ] ??
+                        currentUser.uid
+                  ),
+        'tanggal_mulai_tugas':
+            Timestamp.fromDate(mulai),
+        'tanggal_selesai_tugas':
+            Timestamp.fromDate(selesai),
+        'tempat_tugas':
+            _tempatController.text
+                .trim(),
+        'latitude': _latitude,
+        'longitude': _longitude,
+        'prioritas':
+            _prioritas.toLowerCase(),
+        'updated_at':
+            FieldValue.serverTimestamp(),
+      };
+
+      if (widget.tugasId == null) {
+        data['tanggal_tugas_diberikan'] =
+            FieldValue.serverTimestamp();
+
+        data['created_at'] =
+            FieldValue.serverTimestamp();
+      }
+
+      await tugasRef.set(
+        data,
+        SetOptions(merge: true),
+      );
+
+      final oldAssignments =
+          await _firestore
+              .collection('penugasan')
+              .where(
+                'tugas_id',
+                isEqualTo: tugasRef.id,
+              )
+              .get();
+
+      final oldByStaff =
+          <String,
+            QueryDocumentSnapshot<
+              Map<String, dynamic>
+            >>{};
+
+      for (final doc
+          in oldAssignments.docs) {
+        final staffId =
+            (doc.data()['staff_id'] ??
+                    '')
+                .toString();
+
+        if (staffId.isNotEmpty) {
+          oldByStaff[staffId] =
+              doc;
+        }
+      }
+
+      final batch =
+          _firestore.batch();
+
+      for (final staffId
+          in _stafDipilih) {
+        final existing =
+            oldByStaff[staffId];
+
+        final ref =
+            existing?.reference ??
+            _firestore
+                .collection(
+                  'penugasan',
+                )
+                .doc();
+
+        if (existing == null) {
+          batch.set(
+            ref,
+            {
+              'tugas_id':
+                  tugasRef.id,
+              'staff_id':
+                  staffId,
+              'status':
+                  'pending',
+              'file_hasil_url':
+                  '',
+              'file_hasil_nama':
+                  '',
+              'catatan_staff':
+                  '',
+              'catatan_revisi':
+                  '',
+              'created_at':
+                  FieldValue
+                      .serverTimestamp(),
+              'updated_at':
+                  FieldValue
+                      .serverTimestamp(),
+            },
+          );
+        } else {
+          batch.update(
+            ref,
+            {
+              'updated_at':
+                  FieldValue
+                      .serverTimestamp(),
+            },
+          );
+        }
+      }
+
+      for (final old
+          in oldAssignments.docs) {
+        final staffId =
+            (old.data()['staff_id'] ??
+                    '')
+                .toString();
+
+        if (!_stafDipilih
+            .contains(staffId)) {
+          batch.delete(
+            old.reference,
+          );
+        }
+      }
+
+      await batch.commit();
+
+      if (!mounted) return;
+
+      _message(
+        widget.tugasId == null
+            ? 'Tugas berhasil ditambahkan.'
+            : 'Tugas berhasil diperbarui.',
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        _message(
+          'Gagal menyimpan tugas: $e',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _mintaRevisi(
+    String penugasanId,
+  ) async {
+    final controller =
+        TextEditingController();
+
+    final catatan =
+        await showDialog<String>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text(
+                'Minta Revisi',
+              ),
+              content: TextField(
+                controller: controller,
+                maxLines: 4,
+                decoration:
+                    const InputDecoration(
+                  hintText:
+                      'Tuliskan catatan revisi...',
+                  border:
+                      OutlineInputBorder(),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(
+                      context,
+                    );
+                  },
+                  child:
+                      const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (controller
+                        .text
+                        .trim()
+                        .isNotEmpty) {
+                      Navigator.pop(
+                        context,
+                        controller
+                            .text
+                            .trim(),
+                      );
+                    }
+                  },
+                  child:
+                      const Text(
+                        'Kirim Revisi',
+                      ),
+                ),
+              ],
+            );
+          },
+        );
+
+    controller.dispose();
+
+    if (catatan == null) {
+      return;
+    }
+
+    try {
+      await _firestore
+          .collection('penugasan')
+          .doc(penugasanId)
+          .update({
+        'status': 'revisi',
+        'catatan_revisi':
+            catatan,
+        'updated_at':
+            FieldValue
+                .serverTimestamp(),
+      });
+
+      _message(
+        'Permintaan revisi berhasil dikirim.',
+      );
+
+      await _loadTugas();
+
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      _message(
+        'Gagal mengirim revisi: $e',
+        error: true,
+      );
+    }
+  }
+
+  Future<void> _setujui(
+    String penugasanId,
+  ) async {
+    try {
+      await _firestore
+          .collection('penugasan')
+          .doc(penugasanId)
+          .update({
+        'status': 'disetujui',
+        'tanggal_disetujui':
+            FieldValue
+                .serverTimestamp(),
+        'updated_at':
+            FieldValue
+                .serverTimestamp(),
+      });
+
+      _message(
+        'Tugas berhasil disetujui.',
+      );
+
+      await _loadTugas();
+
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      _message(
+        'Gagal menyetujui tugas: $e',
+        error: true,
+      );
+    }
+  }
+
+  void _message(
+    String text, {
+    bool error = false,
+  }) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor:
+            error
+                ? Colors.red.shade700
+                : biruTua,
+        behavior:
+            SnackBarBehavior.floating,
+        shape:
+            RoundedRectangleBorder(
+          borderRadius:
+              BorderRadius.circular(10),
+        ),
+      ),
+    );
+  }
+
+  String _formatDate(
+    DateTime? date,
+  ) {
+    if (date == null) return '-';
+
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year}';
+  }
+
+  String _formatTime(
+    TimeOfDay? time,
+  ) {
+    if (time == null) return '-';
+
+    return '${time.hour.toString().padLeft(2, '0')}:'
+        '${time.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _staffName(
+    String uid,
+  ) {
+    final found =
+        _daftarStaff.where(
+      (staff) =>
+          staff['id'].toString() ==
+          uid,
     );
 
-    Navigator.pop(context, tugasBaru);
+    if (found.isEmpty) {
+      return uid;
+    }
+
+    return (
+      found.first['nama'] ??
+      uid
+    ).toString();
+  }
+
+  Color _statusColor(
+    String status,
+  ) {
+    switch (status) {
+      case 'disetujui':
+        return Colors.green;
+
+      case 'dikumpulkan':
+        return cyan;
+
+      case 'berlangsung':
+        return biruSedang;
+
+      case 'revisi':
+        return Colors.orange;
+
+      default:
+        return Colors.grey;
+    }
   }
 
   @override
@@ -291,555 +998,769 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     return withAdminReadableText(
       context,
       Scaffold(
-        backgroundColor: AppColors.latarAbu,
+        backgroundColor:
+            latarAbu,
         appBar: AppBar(
-          backgroundColor: AppColors.biruTua,
+          backgroundColor:
+              biruTua,
           elevation: 0,
           title: Text(
-            _modeEdit ? 'Edit Tugas' : 'Tambah Tugas',
-            style: const TextStyle(fontWeight: FontWeight.w700),
+            widget.modeLihat
+                ? 'Detail Tugas'
+                : widget.tugasId == null
+                ? 'Tambah Tugas'
+                : 'Edit Tugas',
+            style:
+                const TextStyle(
+              fontWeight:
+                  FontWeight.w700,
+            ),
           ),
         ),
-        body: Form(
-          key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              // ---------- JUDUL TUGAS ----------
-              _LabelForm(label: 'Judul Tugas'),
-              TextFormField(
-                controller: _judulController,
-                decoration: _dekorasi(
-                  hint: 'Contoh: Pemeliharaan Server Data Center',
-                ),
-                validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'Judul tugas wajib diisi'
-                    : null,
-              ),
-              const SizedBox(height: 18),
+        body:
+            _loading
+                ? const Center(
+                  child:
+                      CircularProgressIndicator(),
+                )
+                : Form(
+                  key: _formKey,
+                  child: ListView(
+                    padding:
+                        const EdgeInsets.all(
+                          16,
+                        ),
+                    children: [
+                      const _LabelForm(
+                        label:
+                            'Judul Tugas',
+                      ),
 
-              // ---------- DESKRIPSI TUGAS ----------
-              _LabelForm(label: 'Deskripsi Tugas'),
-              TextFormField(
-                controller: _deskripsiController,
-                maxLines: 4,
-                decoration: _dekorasi(
-                  hint: 'Jelaskan rincian pekerjaan yang perlu dilakukan...',
-                ),
-                validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'Deskripsi tugas wajib diisi'
-                    : null,
-              ),
-              const SizedBox(height: 18),
+                      TextFormField(
+                        controller:
+                            _judulController,
+                        enabled:
+                            !widget.modeLihat,
+                        decoration:
+                            _dekorasi(
+                          hint:
+                              'Contoh: Pemeliharaan Server Data Center',
+                        ),
+                        validator:
+                            (value) {
+                          if (value ==
+                                  null ||
+                              value
+                                  .trim()
+                                  .isEmpty) {
+                            return 'Judul tugas wajib diisi';
+                          }
 
-              // ---------- TEMPAT TUGAS + GPS ----------
-              _LabelForm(label: 'Tempat Tugas'),
-              TextFormField(
-                controller: _tempatController,
-                decoration:
-                    _dekorasi(
-                      hint: 'Contoh: Kantor Dinas Kominfo Lt. 2',
-                    ).copyWith(
-                      suffixIcon: _sedangMengambilLokasi
-                          ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppColors.biruSedang,
-                                ),
-                              ),
-                            )
-                          : IconButton(
-                              icon: const Icon(
-                                Icons.my_location_rounded,
-                                color: AppColors.biruSedang,
-                                size: 20,
-                              ),
-                              tooltip: 'Ambil lokasi saat ini',
-                              onPressed: _ambilLokasiSaatIni,
+                          return null;
+                        },
+                      ),
+
+                      const SizedBox(
+                        height: 18,
+                      ),
+
+                      const _LabelForm(
+                        label:
+                            'Deskripsi Tugas',
+                      ),
+
+                      TextFormField(
+                        controller:
+                            _deskripsiController,
+                        enabled:
+                            !widget.modeLihat,
+                        maxLines: 4,
+                        decoration:
+                            _dekorasi(
+                          hint:
+                              'Jelaskan rincian pekerjaan yang perlu dilakukan...',
+                        ),
+                        validator:
+                            (value) {
+                          if (value ==
+                                  null ||
+                              value
+                                  .trim()
+                                  .isEmpty) {
+                            return 'Deskripsi tugas wajib diisi';
+                          }
+
+                          return null;
+                        },
+                      ),
+
+                      const SizedBox(
+                        height: 18,
+                      ),
+
+                      const _LabelForm(
+                        label:
+                            'Tempat Tugas',
+                      ),
+
+                      TextFormField(
+                        controller:
+                            _tempatController,
+                        enabled:
+                            !widget.modeLihat,
+                        decoration:
+                            _dekorasi(
+                              hint:
+                                  'Contoh: Kantor Dinas Kominfo Lt. 2',
+                            ).copyWith(
+                              suffixIcon:
+                                  _sedangMengambilLokasi
+                                      ? const Padding(
+                                        padding:
+                                            EdgeInsets.all(
+                                              12,
+                                            ),
+                                        child:
+                                            SizedBox(
+                                          width:
+                                              18,
+                                          height:
+                                              18,
+                                          child:
+                                              CircularProgressIndicator(
+                                            strokeWidth:
+                                                2,
+                                          ),
+                                        ),
+                                      )
+                                      : widget
+                                              .modeLihat
+                                          ? null
+                                          : IconButton(
+                                            onPressed:
+                                                _ambilLokasiSaatIni,
+                                            icon:
+                                                const Icon(
+                                              Icons.my_location,
+                                            ),
+                                          ),
                             ),
-                    ),
-                validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'Tempat tugas wajib diisi'
-                    : null,
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _pilihLokasiDariPeta,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.biruTua,
-                        side: const BorderSide(color: AppColors.abuBorder),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      icon: const Icon(Icons.map_outlined, size: 18),
-                      label: const Text(
-                        'Pilih dari Peta',
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
+
+                      if (!widget.modeLihat) ...[
+                        const SizedBox(
+                          height: 8,
                         ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _sedangMengambilLokasi
-                          ? null
-                          : _ambilLokasiSaatIni,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.biruSedang,
-                        side: const BorderSide(color: AppColors.abuBorder),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      icon: const Icon(Icons.my_location_rounded, size: 18),
-                      label: const Text(
-                        'Lokasi Saat Ini',
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (_latitude != null && _longitude != null) ...[
-                const SizedBox(height: 10),
-                Container(
-                  height: 180,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.abuBorder),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.biruTua.withOpacity(0.08),
-                        blurRadius: 14,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: FlutterMap(
-                      options: MapOptions(
-                        initialCenter: LatLng(_latitude!, _longitude!),
-                        initialZoom: 15,
-                        interactionOptions: const InteractionOptions(
-                          flags: InteractiveFlag.all,
-                        ),
-                      ),
-                      children: [
-                        TileLayer(
-                          urlTemplate:
-                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                          userAgentPackageName:
-                              'com.example.app_penugasan_kominfo',
-                        ),
-                        MarkerLayer(
-                          markers: [
-                            Marker(
-                              point: LatLng(_latitude!, _longitude!),
-                              width: 54,
-                              height: 54,
-                              child: const Icon(
-                                Icons.location_pin,
-                                color: Colors.redAccent,
-                                size: 42,
+                        Row(
+                          children: [
+                            Expanded(
+                              child:
+                                  OutlinedButton.icon(
+                                onPressed:
+                                    _pilihLokasiDariPeta,
+                                icon:
+                                    const Icon(
+                                  Icons.map_outlined,
+                                ),
+                                label:
+                                    const Text(
+                                  'Pilih dari Peta',
+                                ),
                               ),
                             ),
                           ],
                         ),
                       ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.place_rounded,
-                      size: 14,
-                      color: AppColors.biruSedang,
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        'Koordinat: ${_latitude!.toStringAsFixed(6)}, ${_longitude!.toStringAsFixed(6)}',
-                        style: const TextStyle(
-                          color: AppColors.abuTeks,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  height: 44,
-                  child: OutlinedButton.icon(
-                    onPressed: _bukaPanduanArah,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.biruTua,
-                      side: const BorderSide(color: AppColors.abuBorder),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    icon: const Icon(Icons.directions_rounded, size: 18),
-                    label: const Text(
-                      'Panduan Arah',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 18),
 
-              // ---------- TANGGAL & JAM ----------
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _LabelForm(label: 'Tanggal Penugasan'),
-                        _PemilihWaktu(
-                          icon: Icons.calendar_today_rounded,
-                          teks: _tanggalDipilih == null
-                              ? 'Pilih tanggal'
-                              : formatTanggalIndo(_tanggalDipilih!),
-                          onTap: _pilihTanggal,
+                      if (_latitude != null &&
+                          _longitude != null) ...[
+                        const SizedBox(
+                          height: 8,
+                        ),
+                        InkWell(
+                          onTap:
+                              _bukaMaps,
+                          child:
+                              Text(
+                            'Lokasi: ${_latitude!.toStringAsFixed(6)}, '
+                            '${_longitude!.toStringAsFixed(6)} '
+                            '(Buka Maps)',
+                            style:
+                                const TextStyle(
+                              color:
+                                  biruSedang,
+                              fontSize:
+                                  12,
+                              fontWeight:
+                                  FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _LabelForm(label: 'Jam Penugasan'),
-                        _PemilihWaktu(
-                          icon: Icons.access_time_rounded,
-                          teks: _jamDipilih == null
-                              ? 'Pilih jam'
-                              : formatJam(_jamDipilih!),
-                          onTap: _pilihJam,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
 
-              // ---------- STAF YANG BERTUGAS ----------
-              _LabelForm(label: 'Staf yang Bertugas'),
-              TextField(
-                controller: _staffSearchController,
-                onChanged: (value) => setState(() => _staffSearchQuery = value),
-                decoration: _dekorasi(hint: 'Ketik nama staf, contoh: Ahmad')
-                    .copyWith(
-                      prefixIcon: const Icon(
-                        Icons.search_rounded,
-                        color: AppColors.biruSedang,
-                        size: 20,
+                      const SizedBox(
+                        height: 18,
                       ),
-                      suffixIcon: _staffSearchQuery.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(
-                                Icons.close_rounded,
-                                color: AppColors.abuTeks,
-                                size: 18,
+
+                      const _LabelForm(
+                        label:
+                            'Jadwal Mulai Tugas',
+                      ),
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child:
+                                _TimeBox(
+                              label:
+                                  _formatDate(
+                                    _tanggalMulai,
+                                  ),
+                              icon:
+                                  Icons
+                                      .calendar_today,
+                              onTap:
+                                  widget.modeLihat
+                                      ? null
+                                      : _pilihTanggalMulai,
+                            ),
+                          ),
+                          const SizedBox(
+                            width: 10,
+                          ),
+                          Expanded(
+                            child:
+                                _TimeBox(
+                              label:
+                                  _formatTime(
+                                    _jamMulai,
+                                  ),
+                              icon:
+                                  Icons
+                                      .access_time,
+                              onTap:
+                                  widget.modeLihat
+                                      ? null
+                                      : _pilihJamMulai,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(
+                        height: 18,
+                      ),
+
+                      const _LabelForm(
+                        label:
+                            'Jadwal Selesai Tugas',
+                      ),
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child:
+                                _TimeBox(
+                              label:
+                                  _formatDate(
+                                    _tanggalSelesai,
+                                  ),
+                              icon:
+                                  Icons
+                                      .calendar_today,
+                              onTap:
+                                  widget.modeLihat
+                                      ? null
+                                      : _pilihTanggalSelesai,
+                            ),
+                          ),
+                          const SizedBox(
+                            width: 10,
+                          ),
+                          Expanded(
+                            child:
+                                _TimeBox(
+                              label:
+                                  _formatTime(
+                                    _jamSelesai,
+                                  ),
+                              icon:
+                                  Icons
+                                      .access_time,
+                              onTap:
+                                  widget.modeLihat
+                                      ? null
+                                      : _pilihJamSelesai,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(
+                        height: 18,
+                      ),
+
+                      const _LabelForm(
+                        label:
+                            'Prioritas Tugas',
+                      ),
+
+                      DropdownButtonFormField<
+                        String
+                      >(
+                        value:
+                            _prioritas,
+                        decoration:
+                            _dekorasi(
+                          hint:
+                              'Pilih prioritas',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value:
+                                'rendah',
+                            child:
+                                Text(
+                              'Rendah',
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value:
+                                'sedang',
+                            child:
+                                Text(
+                              'Sedang',
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value:
+                                'tinggi',
+                            child:
+                                Text(
+                              'Tinggi',
+                            ),
+                          ),
+                        ],
+                        onChanged:
+                            widget.modeLihat
+                                ? null
+                                : (
+                                  value,
+                                ) {
+                                  if (value !=
+                                      null) {
+                                    setState(
+                                      () {
+                                        _prioritas =
+                                            value;
+                                      },
+                                    );
+                                  }
+                                },
+                      ),
+
+                      const SizedBox(
+                        height: 18,
+                      ),
+
+                      const _LabelForm(
+                        label:
+                            'Staf yang Bertugas',
+                      ),
+
+                      if (_stafDipilih
+                          .isNotEmpty)
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children:
+                              _stafDipilih.map(
+                                (uid) {
+                                  return Chip(
+                                    label:
+                                        Text(
+                                      _staffName(
+                                        uid,
+                                      ),
+                                    ),
+                                    deleteIcon:
+                                        widget.modeLihat
+                                            ? null
+                                            : const Icon(
+                                              Icons.close,
+                                            ),
+                                    onDeleted:
+                                        widget.modeLihat
+                                            ? null
+                                            : () {
+                                              setState(
+                                                () {
+                                                  _stafDipilih.remove(
+                                                    uid,
+                                                  );
+                                                },
+                                              );
+                                            },
+                                  );
+                                },
+                              ).toList(),
+                        ),
+
+                      if (!widget.modeLihat) ...[
+                        const SizedBox(
+                          height: 10,
+                        ),
+
+                        TextField(
+                          controller:
+                              _staffSearchController,
+                          onChanged:
+                              (_) =>
+                                  setState(
+                                    () {},
+                                  ),
+                          decoration:
+                              _dekorasi(
+                                hint:
+                                    'Cari nama staf...',
+                              ).copyWith(
+                                prefixIcon:
+                                    const Icon(
+                                  Icons.search,
+                                ),
                               ),
-                              onPressed: () {
-                                _staffSearchController.clear();
-                                setState(() => _staffSearchQuery = '');
+                        ),
+
+                        const SizedBox(
+                          height: 8,
+                        ),
+
+                        ..._daftarStaff
+                            .where(
+                              (staff) {
+                                final query =
+                                    _staffSearchController
+                                        .text
+                                        .trim()
+                                        .toLowerCase();
+
+                                final nama =
+                                    (
+                                      staff['nama'] ??
+                                      ''
+                                    )
+                                        .toString()
+                                        .toLowerCase();
+
+                                return !_stafDipilih
+                                        .contains(
+                                          staff['id'],
+                                        ) &&
+                                    (
+                                      query
+                                          .isEmpty ||
+                                      nama.contains(
+                                        query,
+                                      )
+                                    );
+                              },
+                            )
+                            .map(
+                              (staff) {
+                                return ListTile(
+                                  dense:
+                                      true,
+                                  leading:
+                                      const CircleAvatar(
+                                    child:
+                                        Icon(
+                                      Icons.person,
+                                    ),
+                                  ),
+                                  title:
+                                      Text(
+                                    (
+                                      staff['nama'] ??
+                                      '-'
+                                    ).toString(),
+                                  ),
+                                  subtitle:
+                                      Text(
+                                    (
+                                      staff['jabatan'] ??
+                                      ''
+                                    ).toString(),
+                                  ),
+                                  trailing:
+                                      const Icon(
+                                    Icons
+                                        .add_circle_outline,
+                                    color:
+                                        biruSedang,
+                                  ),
+                                  onTap:
+                                      () {
+                                    setState(
+                                      () {
+                                        _stafDipilih
+                                            .add(
+                                          staff[
+                                            'id'
+                                          ].toString(),
+                                        );
+                                        _staffSearchController
+                                            .clear();
+                                      },
+                                    );
+                                  },
+                                );
                               },
                             ),
-                    ),
-              ),
-              if (_saranStaf.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.putih,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.abuBorder),
-                  ),
-                  child: Column(
-                    children: _saranStaf.map((nama) {
-                      final isLast = nama == _saranStaf.last;
-                      return Column(
-                        children: [
-                          ListTile(
-                            dense: true,
-                            leading: const CircleAvatar(
-                              radius: 16,
-                              backgroundColor: Color(0x1A0066FF),
-                              child: Icon(
-                                Icons.person_outline_rounded,
-                                color: AppColors.biruSedang,
-                                size: 17,
+                      ],
+
+                      if (widget.modeLihat) ...[
+                        const SizedBox(
+                          height: 20,
+                        ),
+
+                        const _LabelForm(
+                          label:
+                              'Status Penugasan',
+                        ),
+
+                        ..._penugasan.map(
+                          (assignment) {
+                            final data =
+                                assignment
+                                    .data();
+
+                            final staffId =
+                                (
+                                  data[
+                                        'staff_id'
+                                      ] ??
+                                      ''
+                                ).toString();
+
+                            final status =
+                                (
+                                  data[
+                                        'status'
+                                      ] ??
+                                      'pending'
+                                ).toString();
+
+                            return Container(
+                              margin:
+                                  const EdgeInsets.only(
+                                    bottom:
+                                        10,
+                                  ),
+                              padding:
+                                  const EdgeInsets.all(
+                                    12,
+                                  ),
+                              decoration:
+                                  BoxDecoration(
+                                    color:
+                                        Colors
+                                            .white,
+                                    borderRadius:
+                                        BorderRadius.circular(
+                                          12,
+                                        ),
+                                    border:
+                                        Border.all(
+                                      color:
+                                          abuBorder,
+                                    ),
+                                  ),
+                              child:
+                                  Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment
+                                        .start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child:
+                                            Text(
+                                          _staffName(
+                                            staffId,
+                                          ),
+                                          style:
+                                              const TextStyle(
+                                            fontWeight:
+                                                FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      _Badge(
+                                        text:
+                                            status.toUpperCase(),
+                                        color:
+                                            _statusColor(
+                                              status,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+
+                                  if (status ==
+                                      'dikumpulkan') ...[
+                                    const SizedBox(
+                                      height:
+                                          10,
+                                    ),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child:
+                                              OutlinedButton(
+                                            onPressed:
+                                                () =>
+                                                    _mintaRevisi(
+                                                      assignment.id,
+                                                    ),
+                                            child:
+                                                const Text(
+                                              'Minta Revisi',
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(
+                                          width:
+                                              8,
+                                        ),
+                                        Expanded(
+                                          child:
+                                              ElevatedButton(
+                                            onPressed:
+                                                () =>
+                                                    _setujui(
+                                                      assignment.id,
+                                                    ),
+                                            style:
+                                                ElevatedButton.styleFrom(
+                                              backgroundColor:
+                                                  Colors.green,
+                                              foregroundColor:
+                                                  Colors.white,
+                                            ),
+                                            child:
+                                                const Text(
+                                              'Setujui',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+
+                      if (!widget.modeLihat) ...[
+                        const SizedBox(
+                          height: 24,
+                        ),
+
+                        SizedBox(
+                          width:
+                              double.infinity,
+                          height: 50,
+                          child:
+                              ElevatedButton(
+                            onPressed:
+                                _saving
+                                    ? null
+                                    : _simpanTugas,
+                            style:
+                                ElevatedButton
+                                    .styleFrom(
+                              backgroundColor:
+                                  biruTua,
+                              foregroundColor:
+                                  Colors.white,
+                              shape:
+                                  RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(
+                                      14,
+                                    ),
                               ),
                             ),
-                            title: Text(
-                              nama,
-                              style: const TextStyle(
-                                color: AppColors.biruTua,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            trailing: const Icon(
-                              Icons.add_circle_outline_rounded,
-                              color: AppColors.biruSedang,
-                              size: 20,
-                            ),
-                            onTap: () => _pilihStaf(nama),
-                          ),
-                          if (!isLast)
-                            const Divider(
-                              height: 1,
-                              indent: 56,
-                              color: AppColors.abuBorder,
-                            ),
-                        ],
-                      );
-                    }).toList(),
-                  ),
-                ),
-              ] else if (_staffSearchQuery.trim().isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.putih,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.abuBorder),
-                  ),
-                  child: const Text(
-                    'Nama staf tidak ditemukan',
-                    style: TextStyle(color: AppColors.abuTeks, fontSize: 12.5),
-                  ),
-                ),
-              ],
-              if (_stafDipilih.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _stafDipilih.map((nama) {
-                    return Chip(
-                      label: Text(
-                        nama,
-                        style: const TextStyle(
-                          color: AppColors.biruTua,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      avatar: const Icon(
-                        Icons.check_circle_rounded,
-                        color: AppColors.biruSedang,
-                        size: 17,
-                      ),
-                      deleteIcon: const Icon(Icons.close_rounded, size: 16),
-                      onDeleted: () => _hapusStaf(nama),
-                      backgroundColor: AppColors.cyan.withOpacity(0.12),
-                      side: BorderSide(color: AppColors.cyan.withOpacity(0.35)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
-              if (_stafDipilih.isEmpty) ...[
-                const SizedBox(height: 8),
-                const Text(
-                  'Pilih minimal 1 staf yang bertugas.',
-                  style: TextStyle(color: AppColors.abuTeks, fontSize: 11.5),
-                ),
-              ],
-              const SizedBox(height: 18),
-
-              // ---------- STATUS TUGAS ----------
-              _LabelForm(label: 'Status Tugas'),
-              Row(
-                children: TugasStatus.values.map((status) {
-                  final dipilih = _statusTugas == status;
-                  final Color warna = switch (status) {
-                    TugasStatus.belumSelesai => AppColors.oranyeWarning,
-                    TugasStatus.dikerjakan => AppColors.biruSedang,
-                    TugasStatus.selesai => AppColors.hijauSelesai,
-                  };
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: () => setState(() => _statusTugas = status),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: dipilih
-                              ? warna.withOpacity(0.12)
-                              : AppColors.putih,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: dipilih ? warna : AppColors.abuBorder,
+                            child:
+                                _saving
+                                    ? const SizedBox(
+                                      width:
+                                          20,
+                                      height:
+                                          20,
+                                      child:
+                                          CircularProgressIndicator(
+                                        strokeWidth:
+                                            2,
+                                        color:
+                                            Colors.white,
+                                      ),
+                                    )
+                                    : Text(
+                                      widget.tugasId ==
+                                              null
+                                          ? 'SIMPAN TUGAS'
+                                          : 'SIMPAN PERUBAHAN',
+                                      style:
+                                          const TextStyle(
+                                        fontWeight:
+                                            FontWeight.bold,
+                                      ),
+                                    ),
                           ),
                         ),
-                        child: Text(
-                          status.label,
-                          style: TextStyle(
-                            color: dipilih ? warna : AppColors.abuTeks,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 18),
-
-              // ---------- PRIORITAS ----------
-              _LabelForm(label: 'Prioritas Tugas'),
-              Row(
-                children: ['Rendah', 'Sedang', 'Tinggi'].map((p) {
-                  final dipilih = _prioritas == p;
-                  final Color warna = switch (p) {
-                    'Tinggi' => const Color(0xFFFF9800),
-                    'Rendah' => AppColors.cyan,
-                    _ => AppColors.biruSedang,
-                  };
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: () => setState(() => _prioritas = p),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: dipilih
-                              ? warna.withOpacity(0.15)
-                              : AppColors.putih,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: dipilih ? warna : AppColors.abuBorder,
-                          ),
-                        ),
-                        child: Text(
-                          p,
-                          style: TextStyle(
-                            color: dipilih ? warna : AppColors.abuTeks,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 32),
-
-              // ---------- TOMBOL SIMPAN & BATAL ----------
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _simpanTugas,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.biruTua,
-                    foregroundColor: AppColors.putih,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: Text(
-                    _modeEdit ? 'Simpan Perubahan' : 'Simpan Tugas',
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
+                      ],
+                    ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.abuTeks,
-                    side: const BorderSide(color: AppColors.abuBorder),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: const Text(
-                    'Batal',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 1),
       ),
     );
   }
 
-  InputDecoration _dekorasi({required String hint}) {
+  InputDecoration _dekorasi({
+    required String hint,
+  }) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: AppColors.abuTeks, fontSize: 13),
       filled: true,
-      fillColor: AppColors.putih,
-      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      fillColor: Colors.white,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.abuBorder),
+        borderRadius:
+            BorderRadius.circular(12),
+        borderSide:
+            BorderSide.none,
       ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.abuBorder),
+      enabledBorder:
+          OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(12),
+        borderSide:
+            const BorderSide(
+          color: abuBorder,
+        ),
       ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.biruSedang, width: 1.6),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Colors.redAccent),
+      focusedBorder:
+          OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(12),
+        borderSide:
+            const BorderSide(
+          color: biruSedang,
+          width: 1.5,
+        ),
       ),
     );
   }
@@ -847,62 +1768,126 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
 
 class _LabelForm extends StatelessWidget {
   final String label;
-  const _LabelForm({required this.label});
+
+  const _LabelForm({
+    required this.label,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding:
+          const EdgeInsets.only(
+            bottom: 8,
+          ),
       child: Text(
         label,
-        style: const TextStyle(
-          color: AppColors.biruTua,
+        style:
+            const TextStyle(
+          fontWeight:
+              FontWeight.w700,
+          color: Color(
+            0xFF303846,
+          ),
           fontSize: 13,
-          fontWeight: FontWeight.w600,
         ),
       ),
     );
   }
 }
 
-class _PemilihWaktu extends StatelessWidget {
+class _TimeBox extends StatelessWidget {
+  final String label;
   final IconData icon;
-  final String teks;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
-  const _PemilihWaktu({
+  const _TimeBox({
+    required this.label,
     required this.icon,
-    required this.teks,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
       onTap: onTap,
+      borderRadius:
+          BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 12),
+        padding:
+            const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 14,
+            ),
         decoration: BoxDecoration(
-          color: AppColors.putih,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.abuBorder),
+          color: Colors.white,
+          borderRadius:
+              BorderRadius.circular(12),
+          border: Border.all(
+            color:
+                const Color(
+                  0xFFE1E5F0,
+                ),
+          ),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 17, color: AppColors.biruSedang),
+            Icon(
+              icon,
+              size: 18,
+              color: const Color(
+                0xFF0066FF,
+              ),
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                teks,
-                style: const TextStyle(
-                  color: AppColors.abuTeks,
+                label,
+                overflow:
+                    TextOverflow.ellipsis,
+                style:
+                    const TextStyle(
                   fontSize: 12.5,
                 ),
-                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Badge extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  const _Badge({
+    required this.text,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(
+            horizontal: 9,
+            vertical: 5,
+          ),
+      decoration: BoxDecoration(
+        color:
+            color.withOpacity(.1),
+        borderRadius:
+            BorderRadius.circular(9),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight:
+              FontWeight.bold,
         ),
       ),
     );

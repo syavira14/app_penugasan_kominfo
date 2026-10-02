@@ -1,19 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import '../pages/admin/admin_navbar.dart';
-import 'tugas_model.dart';
-import 'detail_tugas_admin_page.dart';
 
-/// ============================================================
-/// KELOLA TUGAS (ADMIN)
-/// Sistem Penjadwalan Penugasan Pegawai — Dinas Kominfo
-/// ============================================================
-/// Fitur:
-///  - Kolom pencarian (judul / staff / tempat)
-///  - Filter & sorting (Nama, Tanggal, Status)
-///  - List tugas + tombol Edit & Delete
-///  - Tombol (+) mengarah ke Detail Tugas Admin (mode tambah)
-///  - Tombol Edit mengarah ke Detail Tugas Admin (mode ubah)
-/// ============================================================
+import '../pages/admin/admin_navbar.dart';
+import 'detail_tugas_admin_page.dart';
 
 class AppColors {
   static const Color biruTua = Color(0xFF0011CC);
@@ -27,9 +16,20 @@ class AppColors {
   static const Color oranyeWarning = Color(0xFFFF9800);
 }
 
-enum SortBy { terbaru, namaAZ, tanggal }
+enum SortBy {
+  terbaru,
+  namaAZ,
+  tanggal,
+}
 
-enum FilterStatus { semua, belumSelesai, dikerjakan, selesai }
+enum FilterStatus {
+  semua,
+  pending,
+  berlangsung,
+  dikumpulkan,
+  revisi,
+  disetujui,
+}
 
 class KelolaTugasPage extends StatefulWidget {
   const KelolaTugasPage({super.key});
@@ -39,12 +39,33 @@ class KelolaTugasPage extends StatefulWidget {
 }
 
 class _KelolaTugasPageState extends State<KelolaTugasPage> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
   final TextEditingController _searchController = TextEditingController();
 
   String _searchQuery = '';
+
   SortBy _sortBy = SortBy.terbaru;
+
   FilterStatus _filterStatus = FilterStatus.semua;
+
   DateTime? _selectedDate;
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> get _tugasStream {
+    return _firestore
+        .collection('tugas')
+        .orderBy(
+          'tanggal_tugas_diberikan',
+          descending: true,
+        )
+        .snapshots();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pilihTanggal() async {
     final picked = await showDatePicker(
@@ -58,173 +79,233 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     );
 
     if (picked != null) {
-      setState(() => _selectedDate = picked);
+      setState(() {
+        _selectedDate = picked;
+      });
     }
-  }
-
-  // Data contoh — ganti dengan data dari backend/API
-  final List<TugasModel> _daftarTugas = [
-    TugasModel(
-      id: '1',
-      judul: 'Pemeliharaan Server Data Center',
-      deskripsi: 'Pengecekan rutin dan pemeliharaan server utama.',
-      tempat: 'Ruang Server, Kantor Dinas Kominfo',
-      tanggal: DateTime(2026, 8, 22),
-      jam: const TimeOfDay(hour: 9, minute: 0),
-      staff: const ['Ahmad Fauzi'],
-      prioritas: 'Tinggi',
-      selesai: false,
-    ),
-    TugasModel(
-      id: '2',
-      judul: 'Update Konten Portal Layanan Publik',
-      deskripsi: 'Memperbarui informasi layanan pada portal resmi.',
-      tempat: 'Kantor Dinas Kominfo Lt. 2',
-      tanggal: DateTime(2026, 8, 24),
-      jam: const TimeOfDay(hour: 13, minute: 30),
-      staff: const ['Siti Nurhaliza'],
-      prioritas: 'Sedang',
-      selesai: false,
-    ),
-    TugasModel(
-      id: '3',
-      judul: 'Audit Keamanan Jaringan',
-      deskripsi: 'Pemeriksaan celah keamanan pada jaringan internal.',
-      tempat: 'Ruang IT, Kantor Dinas Kominfo',
-      tanggal: DateTime(2026, 8, 18),
-      jam: const TimeOfDay(hour: 10, minute: 0),
-      staff: const ['Budi Santoso', 'Ahmad Fauzi'],
-      prioritas: 'Tinggi',
-      selesai: true,
-    ),
-    TugasModel(
-      id: '4',
-      judul: 'Dokumentasi Rapat Koordinasi',
-      deskripsi: 'Menyusun notulen dan dokumentasi hasil rapat.',
-      tempat: 'Ruang Rapat Utama',
-      tanggal: DateTime(2026, 8, 15),
-      jam: const TimeOfDay(hour: 14, minute: 0),
-      staff: const ['Siti Nurhaliza'],
-      prioritas: 'Rendah',
-      selesai: true,
-    ),
-  ];
-
-  List<TugasModel> get _tugasTertampil {
-    List<TugasModel> hasil = _daftarTugas.where((tugas) {
-      final query = _searchQuery.toLowerCase();
-      final cocokPencarian =
-          tugas.judul.toLowerCase().contains(query) ||
-          tugas.tempat.toLowerCase().contains(query) ||
-          tugas.staff.any((s) => s.toLowerCase().contains(query));
-
-      final cocokStatus = switch (_filterStatus) {
-        FilterStatus.semua => true,
-        FilterStatus.belumSelesai => tugas.status == TugasStatus.belumSelesai,
-        FilterStatus.dikerjakan => tugas.status == TugasStatus.dikerjakan,
-        FilterStatus.selesai => tugas.status == TugasStatus.selesai,
-      };
-
-      final cocokTanggal =
-          _selectedDate == null ||
-          DateUtils.isSameDay(tugas.tanggal, _selectedDate!);
-
-      return cocokPencarian && cocokStatus && cocokTanggal;
-    }).toList();
-
-    switch (_sortBy) {
-      case SortBy.namaAZ:
-        hasil.sort((a, b) => a.judul.compareTo(b.judul));
-        break;
-      case SortBy.tanggal:
-        hasil.sort((a, b) => a.tanggal.compareTo(b.tanggal));
-        break;
-      case SortBy.terbaru:
-        hasil.sort((a, b) => b.tanggal.compareTo(a.tanggal));
-        break;
-    }
-    return hasil;
   }
 
   Future<void> _bukaTambahTugas() async {
-    final hasil = await Navigator.push<TugasModel>(
+    await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const DetailTugasAdminPage()),
-    );
-    if (hasil != null) {
-      setState(() => _daftarTugas.add(hasil));
-      _tampilkanSnackbar('Tugas "${hasil.judul}" berhasil ditambahkan');
-    }
-  }
-
-  Future<void> _bukaEditTugas(TugasModel tugas) async {
-    final hasil = await Navigator.push<TugasModel>(
-      context,
-      MaterialPageRoute(builder: (_) => DetailTugasAdminPage(tugas: tugas)),
-    );
-    if (hasil != null) {
-      setState(() {
-        final index = _daftarTugas.indexWhere((t) => t.id == hasil.id);
-        if (index != -1) _daftarTugas[index] = hasil;
-      });
-      _tampilkanSnackbar('Tugas "${hasil.judul}" berhasil diperbarui');
-    }
-  }
-
-  void _konfirmasiHapus(TugasModel tugas) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Hapus Tugas?',
-          style: TextStyle(
-            color: AppColors.biruTua,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        content: Text('Tugas "${tugas.judul}" akan dihapus secara permanen.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'Batal',
-              style: TextStyle(color: AppColors.abuTeks),
-            ),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.merahHapus,
-              foregroundColor: AppColors.putih,
-              elevation: 0,
-            ),
-            onPressed: () {
-              setState(() => _daftarTugas.removeWhere((t) => t.id == tugas.id));
-              Navigator.pop(context);
-              _tampilkanSnackbar('Tugas "${tugas.judul}" telah dihapus');
-            },
-            child: const Text('Hapus'),
-          ),
-        ],
+      MaterialPageRoute(
+        builder: (_) => const DetailTugasAdminPage(),
       ),
     );
   }
 
-  void _tampilkanSnackbar(String pesan) {
+  Future<void> _bukaEditTugas(String tugasId) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DetailTugasAdminPage(
+          tugasId: tugasId,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _bukaDetailTugas(String tugasId) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DetailTugasAdminPage(
+          tugasId: tugasId,
+          modeLihat: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _konfirmasiHapus(
+    String tugasId,
+    String judul,
+  ) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Text(
+            'Hapus Tugas?',
+            style: TextStyle(
+              color: AppColors.biruTua,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          content: Text(
+            'Tugas "$judul" akan dihapus secara permanen beserta penugasannya.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, false);
+              },
+              child: const Text(
+                'Batal',
+                style: TextStyle(
+                  color: AppColors.abuTeks,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.merahHapus,
+                foregroundColor: Colors.white,
+                elevation: 0,
+              ),
+              onPressed: () {
+                Navigator.pop(context, true);
+              },
+              child: const Text('Hapus'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) {
+      return;
+    }
+
+    try {
+      final assignments = await _firestore
+          .collection('penugasan')
+          .where(
+            'tugas_id',
+            isEqualTo: tugasId,
+          )
+          .get();
+
+      final batch = _firestore.batch();
+
+      for (final doc in assignments.docs) {
+        batch.delete(doc.reference);
+      }
+
+      batch.delete(
+        _firestore.collection('tugas').doc(tugasId),
+      );
+
+      await batch.commit();
+
+      if (!mounted) return;
+
+      _tampilkanSnackbar(
+        'Tugas "$judul" telah dihapus',
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      _tampilkanSnackbar(
+        'Gagal menghapus tugas: $e',
+        error: true,
+      );
+    }
+  }
+
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _filterDocs(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    final result = docs.where((doc) {
+      final data = doc.data();
+
+      final judul = (data['judul'] ?? '')
+          .toString()
+          .toLowerCase();
+
+      final tempat = (data['tempat_tugas'] ?? '')
+          .toString()
+          .toLowerCase();
+
+      final query = _searchQuery
+          .trim()
+          .toLowerCase();
+
+      final cocokSearch =
+          query.isEmpty ||
+          judul.contains(query) ||
+          tempat.contains(query);
+
+      final start =
+          _asDate(data['tanggal_mulai_tugas']);
+
+      final cocokTanggal =
+          _selectedDate == null ||
+          (
+            start != null &&
+            DateUtils.isSameDay(
+              start,
+              _selectedDate!,
+            )
+          );
+
+      return cocokSearch && cocokTanggal;
+    }).toList();
+
+    if (_sortBy == SortBy.namaAZ) {
+      result.sort(
+        (a, b) {
+          return (a.data()['judul'] ?? '')
+              .toString()
+              .compareTo(
+                (b.data()['judul'] ?? '')
+                    .toString(),
+              );
+        },
+      );
+    } else if (_sortBy == SortBy.tanggal) {
+      result.sort(
+        (a, b) {
+          return (
+            _asDate(
+                  a.data()['tanggal_mulai_tugas'],
+                ) ??
+                DateTime(1900)
+          ).compareTo(
+            _asDate(
+                  b.data()['tanggal_mulai_tugas'],
+                ) ??
+                DateTime(1900),
+          );
+        },
+      );
+    }
+
+    return result;
+  }
+
+  DateTime? _asDate(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+
+    if (value is DateTime) {
+      return value;
+    }
+
+    return null;
+  }
+
+  void _tampilkanSnackbar(
+    String pesan, {
+    bool error = false,
+  }) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(pesan),
-        backgroundColor: AppColors.biruTua,
+        backgroundColor:
+            error
+                ? Colors.red.shade700
+                : AppColors.biruTua,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
   }
 
   @override
@@ -239,7 +320,9 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
           automaticallyImplyLeading: false,
           toolbarHeight: 96,
           shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
+            borderRadius: BorderRadius.vertical(
+              bottom: Radius.circular(32),
+            ),
           ),
           flexibleSpace: Container(
             decoration: const BoxDecoration(
@@ -252,7 +335,9 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
+              borderRadius: BorderRadius.vertical(
+                bottom: Radius.circular(32),
+              ),
             ),
           ),
           title: const Text(
@@ -268,20 +353,30 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
           children: [
             const SizedBox(height: 8),
 
-            // ================= PENCARIAN & FILTER =================
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: const EdgeInsets.fromLTRB(
+                16,
+                0,
+                16,
+                12,
+              ),
               color: AppColors.latarAbu,
               child: Column(
                 children: [
-                  // ---------- KOLOM PENCARIAN ----------
                   TextField(
                     controller: _searchController,
-                    onChanged: (value) => setState(() => _searchQuery = value),
-                    style: const TextStyle(fontSize: 13.5),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value;
+                      });
+                    },
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                    ),
                     decoration: InputDecoration(
-                      hintText: 'Cari judul, tempat, atau staf...',
+                      hintText:
+                          'Cari judul atau tempat tugas...',
                       hintStyle: const TextStyle(
                         color: AppColors.abuTeks,
                         fontSize: 13,
@@ -290,113 +385,81 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                         Icons.search_rounded,
                         color: AppColors.biruSedang,
                       ),
-                      suffixIcon: _searchQuery.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(
-                                Icons.close_rounded,
-                                size: 18,
-                                color: AppColors.abuTeks,
+                      suffixIcon:
+                          _searchQuery.isEmpty
+                              ? null
+                              : IconButton(
+                                onPressed: () {
+                                  _searchController.clear();
+
+                                  setState(() {
+                                    _searchQuery = '';
+                                  });
+                                },
+                                icon: const Icon(
+                                  Icons.close,
+                                ),
                               ),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _searchQuery = '');
-                              },
-                            )
-                          : null,
                       filled: true,
-                      fillColor: AppColors.putih,
-                      contentPadding: const EdgeInsets.symmetric(
-                        vertical: 0,
-                        horizontal: 12,
-                      ),
+                      fillColor: Colors.white,
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius:
+                            BorderRadius.circular(14),
                         borderSide: BorderSide.none,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
 
-                  // ---------- FILTER STATUS DAN SORT ----------
+                  const SizedBox(height: 10),
+
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(
                       children: [
-                        SizedBox(
-                          width: 130,
-                          height: 36,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(
-                                color: AppColors.biruSedang.withOpacity(0.35),
-                              ),
-                            ),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<FilterStatus>(
-                                isExpanded: true,
-                                value: _filterStatus,
-                                icon: const Icon(
-                                  Icons.arrow_drop_down_rounded,
-                                  color: AppColors.biruTua,
-                                ),
-                                dropdownColor: Colors.white,
-                                style: const TextStyle(
-                                  color: AppColors.biruTua,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: FilterStatus.semua,
-                                    child: Text('Semua'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: FilterStatus.belumSelesai,
-                                    child: Text('Belum'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: FilterStatus.dikerjakan,
-                                    child: Text('Dikerjakan'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: FilterStatus.selesai,
-                                    child: Text('Selesai'),
-                                  ),
-                                ],
-                                onChanged: (value) {
-                                  if (value != null) {
-                                    setState(() => _filterStatus = value);
-                                  }
-                                },
-                              ),
-                            ),
-                          ),
+                        _FilterChip(
+                          label: _filterLabel(),
+                          selected:
+                              _filterStatus !=
+                              FilterStatus.semua,
+                          onTap: _bukaFilterStatus,
                         ),
+
                         const SizedBox(width: 8),
-                        _SortChip(
-                          icon: Icons.access_time_rounded,
-                          label: 'Terbaru',
-                          selected: _sortBy == SortBy.terbaru,
-                          onTap: () => setState(() => _sortBy = SortBy.terbaru),
+
+                        _FilterChip(
+                          label: _sortLabel(),
+                          selected:
+                              _sortBy != SortBy.terbaru,
+                          onTap: _bukaSort,
                         ),
+
                         const SizedBox(width: 8),
-                        _SortChip(
-                          icon: Icons.sort_by_alpha_rounded,
-                          label: 'Nama',
-                          selected: _sortBy == SortBy.namaAZ,
-                          onTap: () => setState(() => _sortBy = SortBy.namaAZ),
-                        ),
-                        const SizedBox(width: 8),
-                        _DateChip(
-                          label: _selectedDate == null
-                              ? 'Tanggal'
-                              : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
-                          selected: _selectedDate != null,
+
+                        _FilterChip(
+                          label:
+                              _selectedDate == null
+                                  ? 'Tanggal'
+                                  : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
+                          selected:
+                              _selectedDate != null,
                           onTap: _pilihTanggal,
                         ),
+
+                        if (_selectedDate != null) ...[
+                          const SizedBox(width: 4),
+
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _selectedDate = null;
+                              });
+                            },
+                            icon: const Icon(
+                              Icons.close,
+                              size: 18,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -404,229 +467,671 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
               ),
             ),
 
-            // ================= LIST TUGAS =================
             Expanded(
-              child: _tugasTertampil.isEmpty
-                  ? _EmptyState(query: _searchQuery)
-                  : ListView.separated(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _tugasTertampil.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        final tugas = _tugasTertampil[index];
-                        return _TugasCard(
-                          tugas: tugas,
-                          onEdit: () => _bukaEditTugas(tugas),
-                          onDelete: () => _konfirmasiHapus(tugas),
+              child:
+                  StreamBuilder<
+                    QuerySnapshot<
+                      Map<String, dynamic>
+                    >
+                  >(
+                    stream: _tugasStream,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return Center(
+                          child: Text(
+                            'Gagal memuat tugas:\n${snapshot.error}',
+                          ),
                         );
-                      },
-                    ),
+                      }
+
+                      if (snapshot.connectionState ==
+                          ConnectionState.waiting) {
+                        return const Center(
+                          child:
+                              CircularProgressIndicator(),
+                        );
+                      }
+
+                      final docs = _filterDocs(
+                        snapshot.data?.docs ?? [],
+                      );
+
+                      if (docs.isEmpty) {
+                        return _EmptyState(
+                          query: _searchQuery,
+                        );
+                      }
+
+                      return ListView.separated(
+                        padding:
+                            const EdgeInsets.all(16),
+                        itemCount: docs.length,
+                        separatorBuilder:
+                            (_, __) =>
+                                const SizedBox(
+                                  height: 12,
+                                ),
+                        itemBuilder:
+                            (context, index) {
+                          final doc = docs[index];
+
+                          return _TugasCard(
+                            doc: doc,
+                            firestore: _firestore,
+                            onTap:
+                                () =>
+                                    _bukaDetailTugas(
+                                      doc.id,
+                                    ),
+                            onEdit:
+                                () =>
+                                    _bukaEditTugas(
+                                      doc.id,
+                                    ),
+                            onDelete:
+                                () =>
+                                    _konfirmasiHapus(
+                                      doc.id,
+                                      (
+                                            doc.data()[
+                                                  'judul'
+                                                ] ??
+                                                'Tugas'
+                                          )
+                                          .toString(),
+                                    ),
+                          );
+                        },
+                      );
+                    },
+                  ),
             ),
           ],
         ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: _bukaTambahTugas,
-          backgroundColor: AppColors.biruTua,
-          icon: const Icon(Icons.add_rounded, color: AppColors.putih),
-          label: const Text(
-            'Tambah Tugas',
-            style: TextStyle(color: AppColors.putih),
-          ),
-        ),
-        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 1),
+
+        floatingActionButton:
+            FloatingActionButton.extended(
+              onPressed: _bukaTambahTugas,
+              backgroundColor:
+                  AppColors.biruTua,
+              icon: const Icon(
+                Icons.add_rounded,
+                color: Colors.white,
+              ),
+              label: const Text(
+                'Tambah Tugas',
+                style: TextStyle(
+                  color: Colors.white,
+                ),
+              ),
+            ),
+
+        floatingActionButtonLocation:
+            FloatingActionButtonLocation.endFloat,
+
+        bottomNavigationBar:
+            const AdminBottomNavigationBar(
+              currentIndex: 1,
+            ),
       ),
     );
   }
+
+  String _filterLabel() {
+    switch (_filterStatus) {
+      case FilterStatus.pending:
+        return 'Pending';
+
+      case FilterStatus.berlangsung:
+        return 'Berlangsung';
+
+      case FilterStatus.dikumpulkan:
+        return 'Dikumpulkan';
+
+      case FilterStatus.revisi:
+        return 'Revisi';
+
+      case FilterStatus.disetujui:
+        return 'Disetujui';
+
+      case FilterStatus.semua:
+        return 'Status';
+    }
+  }
+
+  String _sortLabel() {
+    switch (_sortBy) {
+      case SortBy.terbaru:
+        return 'Terbaru';
+
+      case SortBy.namaAZ:
+        return 'Nama A-Z';
+
+      case SortBy.tanggal:
+        return 'Tanggal';
+    }
+  }
+
+  Future<void> _bukaFilterStatus() async {
+    final value =
+        await showModalBottomSheet<FilterStatus>(
+          context: context,
+          builder: (context) {
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children:
+                    FilterStatus.values.map(
+                      (status) {
+                        return ListTile(
+                          title: Text(
+                            _filterStatusName(
+                              status,
+                            ),
+                          ),
+                          trailing:
+                              _filterStatus ==
+                                      status
+                                  ? const Icon(
+                                    Icons.check,
+                                    color:
+                                        AppColors
+                                            .biruTua,
+                                  )
+                                  : null,
+                          onTap: () {
+                            Navigator.pop(
+                              context,
+                              status,
+                            );
+                          },
+                        );
+                      },
+                    ).toList(),
+              ),
+            );
+          },
+        );
+
+    if (value != null) {
+      setState(() {
+        _filterStatus = value;
+      });
+    }
+  }
+
+  Future<void> _bukaSort() async {
+    final value =
+        await showModalBottomSheet<SortBy>(
+          context: context,
+          builder: (context) {
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children:
+                    SortBy.values.map((sort) {
+                      return ListTile(
+                        title: Text(
+                          _sortName(sort),
+                        ),
+                        trailing:
+                            _sortBy == sort
+                                ? const Icon(
+                                  Icons.check,
+                                  color:
+                                      AppColors
+                                          .biruTua,
+                                )
+                                : null,
+                        onTap: () {
+                          Navigator.pop(
+                            context,
+                            sort,
+                          );
+                        },
+                      );
+                    }).toList(),
+              ),
+            );
+          },
+        );
+
+    if (value != null) {
+      setState(() {
+        _sortBy = value;
+      });
+    }
+  }
+
+  String _filterStatusName(
+    FilterStatus value,
+  ) {
+    switch (value) {
+      case FilterStatus.semua:
+        return 'Semua';
+
+      case FilterStatus.pending:
+        return 'Pending';
+
+      case FilterStatus.berlangsung:
+        return 'Berlangsung';
+
+      case FilterStatus.dikumpulkan:
+        return 'Dikumpulkan';
+
+      case FilterStatus.revisi:
+        return 'Revisi';
+
+      case FilterStatus.disetujui:
+        return 'Disetujui';
+    }
+  }
+
+  String _sortName(SortBy value) {
+    switch (value) {
+      case SortBy.terbaru:
+        return 'Terbaru';
+
+      case SortBy.namaAZ:
+        return 'Nama A-Z';
+
+      case SortBy.tanggal:
+        return 'Tanggal Mulai';
+    }
+  }
 }
 
-/// ---------------------------------------------------------
-/// KARTU TUGAS
-/// ---------------------------------------------------------
 class _TugasCard extends StatelessWidget {
-  final TugasModel tugas;
+  final QueryDocumentSnapshot<
+    Map<String, dynamic>
+  >
+  doc;
+
+  final FirebaseFirestore firestore;
+
+  final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _TugasCard({
-    required this.tugas,
+    required this.doc,
+    required this.firestore,
+    required this.onTap,
     required this.onEdit,
     required this.onDelete,
   });
 
+  DateTime? _date(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+
+    return null;
+  }
+
+  String _formatDate(DateTime? value) {
+    if (value == null) return '-';
+
+    return '${value.day.toString().padLeft(2, '0')}/'
+        '${value.month.toString().padLeft(2, '0')}/'
+        '${value.year}';
+  }
+
+  String _statusFromAssignments(
+    List<QueryDocumentSnapshot<
+      Map<String, dynamic>
+    >>
+    assignments,
+  ) {
+    if (assignments.isEmpty) {
+      return 'pending';
+    }
+
+    final statuses =
+        assignments
+            .map(
+              (e) =>
+                  (e.data()['status'] ?? 'pending')
+                      .toString()
+                      .toLowerCase(),
+            )
+            .toList();
+
+    if (statuses.every(
+      (status) => status == 'disetujui',
+    )) {
+      return 'disetujui';
+    }
+
+    if (statuses.any(
+      (status) => status == 'revisi',
+    )) {
+      return 'revisi';
+    }
+
+    if (statuses.any(
+      (status) => status == 'dikumpulkan',
+    )) {
+      return 'dikumpulkan';
+    }
+
+    if (statuses.any(
+      (status) => status == 'berlangsung',
+    )) {
+      return 'berlangsung';
+    }
+
+    return 'pending';
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'disetujui':
+        return AppColors.hijauSelesai;
+
+      case 'dikumpulkan':
+        return AppColors.cyan;
+
+      case 'berlangsung':
+        return AppColors.biruSedang;
+
+      case 'revisi':
+        return Colors.orange;
+
+      default:
+        return AppColors.oranyeWarning;
+    }
+  }
+
+  String _statusText(String status) {
+    switch (status) {
+      case 'disetujui':
+        return 'Disetujui';
+
+      case 'dikumpulkan':
+        return 'Dikumpulkan';
+
+      case 'berlangsung':
+        return 'Berlangsung';
+
+      case 'revisi':
+        return 'Revisi';
+
+      default:
+        return 'Pending';
+    }
+  }
+
+  Color _priorityColor(String priority) {
+    switch (priority.toLowerCase()) {
+      case 'tinggi':
+        return AppColors.oranyeWarning;
+
+      case 'rendah':
+        return AppColors.cyan;
+
+      default:
+        return AppColors.biruSedang;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final Color warnaPrioritas = switch (tugas.prioritas) {
-      'Tinggi' => AppColors.oranyeWarning,
-      'Rendah' => AppColors.cyan,
-      _ => AppColors.biruSedang,
-    };
+    final data = doc.data();
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.putih,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.biruTua.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+    final judul =
+        (data['judul'] ?? 'Tanpa Judul')
+            .toString();
+
+    final tempat =
+        (data['tempat_tugas'] ?? '-')
+            .toString();
+
+    final priority =
+        (data['prioritas'] ?? 'sedang')
+            .toString();
+
+    final start =
+        _date(data['tanggal_mulai_tugas']);
+
+    return FutureBuilder<
+      QuerySnapshot<Map<String, dynamic>>
+    >(
+      future: firestore
+          .collection('penugasan')
+          .where(
+            'tugas_id',
+            isEqualTo: doc.id,
+          )
+          .get(),
+      builder: (context, snapshot) {
+        final assignments =
+            snapshot.data?.docs ?? [];
+
+        final status =
+            _statusFromAssignments(
+              assignments,
+            );
+
+        return InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(
+            16,
           ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Garis status di sisi kiri
-          Container(
-            width: 4,
-            height: 68,
-            decoration: BoxDecoration(
-              color: switch (tugas.status) {
-                TugasStatus.belumSelesai => AppColors.oranyeWarning,
-                TugasStatus.dikerjakan => AppColors.biruSedang,
-                TugasStatus.selesai => AppColors.hijauSelesai,
-              },
-              borderRadius: BorderRadius.circular(4),
+          child: Container(
+            padding: const EdgeInsets.all(
+              14,
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            decoration: BoxDecoration(
+              color: AppColors.putih,
+              borderRadius:
+                  BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.biruTua
+                      .withOpacity(0.06),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        tugas.judul,
-                        style: const TextStyle(
-                          color: AppColors.biruTua,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: warnaPrioritas.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        tugas.prioritas,
-                        style: TextStyle(
-                          color: warnaPrioritas,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                _IconText(icon: Icons.place_outlined, text: tugas.tempat),
-                const SizedBox(height: 3),
-                _IconText(
-                  icon: Icons.event_outlined,
-                  text:
-                      '${formatTanggalIndo(tugas.tanggal)} · ${formatJam(tugas.jam)}',
-                ),
-                const SizedBox(height: 3),
-                _IconText(
-                  icon: Icons.person_outline_rounded,
-                  text: tugas.staff.join(', '),
-                ),
-                const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
+                  width: 4,
+                  height: 80,
                   decoration: BoxDecoration(
-                    color: switch (tugas.status) {
-                      TugasStatus.belumSelesai =>
-                        AppColors.oranyeWarning.withOpacity(0.10),
-                      TugasStatus.dikerjakan =>
-                        AppColors.biruSedang.withOpacity(0.10),
-                      TugasStatus.selesai => AppColors.hijauSelesai.withOpacity(
-                        0.10,
-                      ),
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    tugas.status.label,
-                    style: TextStyle(
-                      color: switch (tugas.status) {
-                        TugasStatus.belumSelesai => AppColors.oranyeWarning,
-                        TugasStatus.dikerjakan => AppColors.biruSedang,
-                        TugasStatus.selesai => AppColors.hijauSelesai,
-                      },
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
+                    color: _statusColor(
+                      status,
                     ),
+                    borderRadius:
+                        BorderRadius.circular(4),
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              judul,
+                              style:
+                                  const TextStyle(
+                                    color:
+                                        AppColors
+                                            .biruTua,
+                                    fontSize: 14,
+                                    fontWeight:
+                                        FontWeight.w700,
+                                  ),
+                            ),
+                          ),
+
+                          PopupMenuButton<
+                            String
+                          >(
+                            padding:
+                                EdgeInsets.zero,
+                            onSelected: (value) {
+                              if (value ==
+                                  'edit') {
+                                onEdit();
+                              } else if (value ==
+                                  'delete') {
+                                onDelete();
+                              }
+                            },
+                            itemBuilder:
+                                (_) => const [
+                                  PopupMenuItem(
+                                    value:
+                                        'edit',
+                                    child: Text(
+                                      'Edit',
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value:
+                                        'delete',
+                                    child: Text(
+                                      'Hapus',
+                                    ),
+                                  ),
+                                ],
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 7),
+
+                      Row(
+                        children: [
+                          _Badge(
+                            text:
+                                _statusText(
+                                  status,
+                                ),
+                            color:
+                                _statusColor(
+                                  status,
+                                ),
+                          ),
+
+                          const SizedBox(width: 7),
+
+                          _Badge(
+                            text:
+                                priority
+                                    .toUpperCase(),
+                            color:
+                                _priorityColor(
+                                  priority,
+                                ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 9),
+
+                      _InfoRow(
+                        icon:
+                            Icons
+                                .calendar_today_outlined,
+                        text:
+                            _formatDate(start),
+                      ),
+
+                      const SizedBox(height: 5),
+
+                      _InfoRow(
+                        icon:
+                            Icons
+                                .location_on_outlined,
+                        text: tempat,
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-          // ---------- TOMBOL EDIT & DELETE ----------
-          Column(
-            children: [
-              IconButton(
-                onPressed: onEdit,
-                icon: const Icon(
-                  Icons.edit_outlined,
-                  color: AppColors.biruSedang,
-                  size: 20,
-                ),
-                tooltip: 'Edit Tugas',
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.all(6),
-              ),
-              IconButton(
-                onPressed: onDelete,
-                icon: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: AppColors.merahHapus,
-                  size: 20,
-                ),
-                tooltip: 'Hapus Tugas',
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.all(6),
-              ),
-            ],
+        );
+      },
+    );
+  }
+}
+
+class _Badge extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  const _Badge({
+    required this.text,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(
+            horizontal: 9,
+            vertical: 4,
           ),
-        ],
+      decoration: BoxDecoration(
+        color: color.withOpacity(.1),
+        borderRadius:
+            BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 9.5,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }
 }
 
-class _IconText extends StatelessWidget {
+class _InfoRow extends StatelessWidget {
   final IconData icon;
   final String text;
 
-  const _IconText({required this.icon, required this.text});
+  const _InfoRow({
+    required this.icon,
+    required this.text,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 13, color: AppColors.abuTeks),
-        const SizedBox(width: 5),
+        Icon(
+          icon,
+          size: 14,
+          color: AppColors.abuTeks,
+        ),
+        const SizedBox(width: 6),
         Expanded(
           child: Text(
             text,
             maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AppColors.abuTeks, fontSize: 11.5),
+            overflow:
+                TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppColors.abuTeks,
+              fontSize: 11.5,
+            ),
           ),
         ),
       ],
@@ -649,151 +1154,53 @@ class _FilterChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius:
+          BorderRadius.circular(18),
       child: Container(
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.biruSedang : Colors.white,
-          border: Border.all(
-            color: selected
-                ? AppColors.biruSedang
-                : AppColors.biruSedang.withOpacity(0.35),
-          ),
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: AppColors.biruSedang.withOpacity(0.18),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  ),
-                ]
-              : null,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? AppColors.putih : AppColors.biruTua,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SortChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _SortChip({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        alignment: Alignment.center,
         height: 36,
-        constraints: const BoxConstraints(maxWidth: 118),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        padding:
+            const EdgeInsets.symmetric(
+              horizontal: 13,
+            ),
         decoration: BoxDecoration(
-          color: selected ? AppColors.biruTua : Colors.white,
+          color:
+              selected
+                  ? AppColors.biruTua
+                  : Colors.white,
           border: Border.all(
-            color: selected
-                ? AppColors.biruTua
-                : AppColors.biruSedang.withOpacity(0.35),
+            color:
+                selected
+                    ? AppColors.biruTua
+                    : AppColors.biruSedang
+                        .withOpacity(.35),
           ),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius:
+              BorderRadius.circular(18),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize:
+              MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 13,
-              color: selected ? AppColors.putih : AppColors.biruTua,
-            ),
-            const SizedBox(width: 5),
-            Flexible(
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-                style: TextStyle(
-                  color: selected ? AppColors.putih : AppColors.biruTua,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                ),
+            Text(
+              label,
+              style: TextStyle(
+                color:
+                    selected
+                        ? Colors.white
+                        : AppColors.biruTua,
+                fontSize: 11.5,
+                fontWeight:
+                    FontWeight.w700,
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DateChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _DateChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        alignment: Alignment.center,
-        height: 36,
-        constraints: const BoxConstraints(maxWidth: 118),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.biruTua : Colors.white,
-          border: Border.all(
-            color: selected
-                ? AppColors.biruTua
-                : AppColors.biruSedang.withOpacity(0.35),
-          ),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+            const SizedBox(width: 4),
             Icon(
-              Icons.calendar_today_rounded,
-              size: 13,
-              color: selected ? AppColors.putih : AppColors.biruTua,
-            ),
-            const SizedBox(width: 5),
-            Flexible(
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-                style: TextStyle(
-                  color: selected ? AppColors.putih : AppColors.biruTua,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              Icons.keyboard_arrow_down,
+              size: 16,
+              color:
+                  selected
+                      ? Colors.white
+                      : AppColors.biruTua,
             ),
           ],
         ),
@@ -805,16 +1212,20 @@ class _DateChip extends StatelessWidget {
 class _EmptyState extends StatelessWidget {
   final String query;
 
-  const _EmptyState({required this.query});
+  const _EmptyState({
+    required this.query,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize:
+            MainAxisSize.min,
         children: [
           const Icon(
-            Icons.assignment_late_outlined,
+            Icons
+                .assignment_late_outlined,
             size: 48,
             color: AppColors.abuTeks,
           ),
@@ -823,7 +1234,10 @@ class _EmptyState extends StatelessWidget {
             query.isEmpty
                 ? 'Belum ada tugas'
                 : 'Tugas "$query" tidak ditemukan',
-            style: const TextStyle(color: AppColors.abuTeks, fontSize: 13),
+            style: const TextStyle(
+              color: AppColors.abuTeks,
+              fontSize: 13,
+            ),
           ),
         ],
       ),

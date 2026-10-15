@@ -1,13 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../pages/admin/admin_navbar.dart';
 import 'location_picker_page.dart';
+import 'tugas_staff_data.dart';
 
 class DetailTugasAdminPage extends StatefulWidget {
   final String? tugasId;
@@ -37,9 +36,6 @@ class _DetailTugasAdminPageState
 
   static const Color latarAbu =
       Color(0xFFF4F6FB);
-
-  static const Color abuTeks =
-      Color(0xFF5A6472);
 
   static const Color abuBorder =
       Color(0xFFE1E5F0);
@@ -83,6 +79,8 @@ class _DetailTugasAdminPageState
       _daftarStaff = [];
 
   final Set<String> _stafDipilih = {};
+
+  final Map<String, String> _namaStaff = {};
 
   bool _loading = true;
 
@@ -139,25 +137,20 @@ class _DetailTugasAdminPageState
   }
 
   Future<void> _loadStaff() async {
-    final snapshot = await _firestore
-        .collection('users')
-        .where(
-          'role',
-          isEqualTo: 'staff',
-        )
-        .where(
-          'status_akun',
-          isEqualTo: 'aktif',
-        )
-        .get();
-
-    _daftarStaff =
-        snapshot.docs.map((doc) {
-          return {
-            'id': doc.id,
-            ...doc.data(),
-          };
-        }).toList();
+    // Role lama menggunakan "Staff" dan sebagian akun tidak memiliki
+    // status_akun. Nama tetap dimuat untuk staf lama yang sudah nonaktif.
+    final snapshot = await _firestore.collection('users').get();
+    _namaStaff.clear();
+    _daftarStaff = [];
+    for (final doc in snapshot.docs) {
+      final staff = staffFromDocument(doc.id, doc.data());
+      final nama = staffDisplayName(staff);
+      _namaStaff[doc.id] = nama;
+      _namaStaff[staff['id'].toString()] = nama;
+      if (isSelectableStaff(staff)) {
+        _daftarStaff.add(staff);
+      }
+    }
 
     _daftarStaff.sort(
       (a, b) =>
@@ -277,6 +270,11 @@ class _DetailTugasAdminPageState
 
       if (staffId.isNotEmpty) {
         _stafDipilih.add(staffId);
+        final savedName = (assignment.data()['staff_nama'] ?? '')
+            .toString().trim();
+        if (!_namaStaff.containsKey(staffId) && savedName.isNotEmpty) {
+          _namaStaff[staffId] = savedName;
+        }
       }
     }
   }
@@ -296,13 +294,8 @@ class _DetailTugasAdminPageState
           initialDate:
               _tanggalMulai ??
               DateTime.now(),
-          firstDate: DateTime.now()
-              .subtract(
-                const Duration(days: 1),
-              ),
-          lastDate: DateTime.now().add(
-            const Duration(days: 365),
-          ),
+          firstDate: DateTime(1900),
+          lastDate: DateTime(2100, 12, 31),
         );
 
     if (result != null) {
@@ -329,20 +322,14 @@ class _DetailTugasAdminPageState
   }
 
   Future<void> _pilihTanggalSelesai() async {
-    final result =
-        await showDatePicker(
-          context: context,
-          initialDate:
-              _tanggalSelesai ??
-              _tanggalMulai ??
-              DateTime.now(),
-          firstDate:
-              _tanggalMulai ??
-              DateTime.now(),
-          lastDate: DateTime.now().add(
-            const Duration(days: 365),
-          ),
-        );
+    final firstDate = _tanggalMulai ?? DateUtils.dateOnly(DateTime.now());
+    final previousDate = _tanggalSelesai ?? firstDate;
+    final result = await showDatePicker(
+      context: context,
+      initialDate: previousDate.isBefore(firstDate) ? firstDate : previousDate,
+      firstDate: firstDate,
+      lastDate: DateTime(2100, 12, 31),
+    );
 
     if (result != null) {
       setState(() {
@@ -649,11 +636,6 @@ class _DetailTugasAdminPageState
             FieldValue.serverTimestamp();
       }
 
-      await tugasRef.set(
-        data,
-        SetOptions(merge: true),
-      );
-
       final oldAssignments =
           await _firestore
               .collection('penugasan')
@@ -682,8 +664,8 @@ class _DetailTugasAdminPageState
         }
       }
 
-      final batch =
-          _firestore.batch();
+      final batch = _firestore.batch();
+      batch.set(tugasRef, data, SetOptions(merge: true));
 
       for (final staffId
           in _stafDipilih) {
@@ -706,6 +688,7 @@ class _DetailTugasAdminPageState
                   tugasRef.id,
               'staff_id':
                   staffId,
+              'staff_nama': _staffName(staffId),
               'status':
                   'pending',
               'file_hasil_url':
@@ -728,6 +711,7 @@ class _DetailTugasAdminPageState
           batch.update(
             ref,
             {
+              'staff_nama': _staffName(staffId),
               'updated_at':
                   FieldValue
                       .serverTimestamp(),
@@ -778,135 +762,6 @@ class _DetailTugasAdminPageState
     }
   }
 
-  Future<void> _mintaRevisi(
-    String penugasanId,
-  ) async {
-    final controller =
-        TextEditingController();
-
-    final catatan =
-        await showDialog<String>(
-          context: context,
-          builder: (context) {
-            return AlertDialog(
-              title: const Text(
-                'Minta Revisi',
-              ),
-              content: TextField(
-                controller: controller,
-                maxLines: 4,
-                decoration:
-                    const InputDecoration(
-                  hintText:
-                      'Tuliskan catatan revisi...',
-                  border:
-                      OutlineInputBorder(),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(
-                      context,
-                    );
-                  },
-                  child:
-                      const Text('Batal'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    if (controller
-                        .text
-                        .trim()
-                        .isNotEmpty) {
-                      Navigator.pop(
-                        context,
-                        controller
-                            .text
-                            .trim(),
-                      );
-                    }
-                  },
-                  child:
-                      const Text(
-                        'Kirim Revisi',
-                      ),
-                ),
-              ],
-            );
-          },
-        );
-
-    controller.dispose();
-
-    if (catatan == null) {
-      return;
-    }
-
-    try {
-      await _firestore
-          .collection('penugasan')
-          .doc(penugasanId)
-          .update({
-        'status': 'revisi',
-        'catatan_revisi':
-            catatan,
-        'updated_at':
-            FieldValue
-                .serverTimestamp(),
-      });
-
-      _message(
-        'Permintaan revisi berhasil dikirim.',
-      );
-
-      await _loadTugas();
-
-      if (mounted) {
-        setState(() {});
-      }
-    } catch (e) {
-      _message(
-        'Gagal mengirim revisi: $e',
-        error: true,
-      );
-    }
-  }
-
-  Future<void> _setujui(
-    String penugasanId,
-  ) async {
-    try {
-      await _firestore
-          .collection('penugasan')
-          .doc(penugasanId)
-          .update({
-        'status': 'disetujui',
-        'tanggal_disetujui':
-            FieldValue
-                .serverTimestamp(),
-        'updated_at':
-            FieldValue
-                .serverTimestamp(),
-      });
-
-      _message(
-        'Tugas berhasil disetujui.',
-      );
-
-      await _loadTugas();
-
-      if (mounted) {
-        setState(() {});
-      }
-    } catch (e) {
-      _message(
-        'Gagal menyetujui tugas: $e',
-        error: true,
-      );
-    }
-  }
-
   void _message(
     String text, {
     bool error = false,
@@ -952,24 +807,8 @@ class _DetailTugasAdminPageState
         '${time.minute.toString().padLeft(2, '0')}';
   }
 
-  String _staffName(
-    String uid,
-  ) {
-    final found =
-        _daftarStaff.where(
-      (staff) =>
-          staff['id'].toString() ==
-          uid,
-    );
-
-    if (found.isEmpty) {
-      return uid;
-    }
-
-    return (
-      found.first['nama'] ??
-      uid
-    ).toString();
+  String _staffName(String uid) {
+    return _namaStaff[uid] ?? 'Staf tidak ditemukan';
   }
 
   Color _statusColor(
@@ -1438,30 +1277,9 @@ class _DetailTugasAdminPageState
                         ..._daftarStaff
                             .where(
                               (staff) {
-                                final query =
-                                    _staffSearchController
-                                        .text
-                                        .trim()
-                                        .toLowerCase();
-
-                                final nama =
-                                    (
-                                      staff['nama'] ??
-                                      ''
-                                    )
-                                        .toString()
-                                        .toLowerCase();
-
-                                return !_stafDipilih
-                                        .contains(
-                                          staff['id'],
-                                        ) &&
-                                    (
-                                      query
-                                          .isEmpty ||
-                                      nama.contains(
-                                        query,
-                                      )
+                                return !_stafDipilih.contains(staff['id']) &&
+                                    matchesStaffSearch(
+                                      staff, _staffSearchController.text,
                                     );
                               },
                             )
@@ -1606,57 +1424,6 @@ class _DetailTugasAdminPageState
                                       ),
                                     ],
                                   ),
-
-                                  if (status ==
-                                      'dikumpulkan') ...[
-                                    const SizedBox(
-                                      height:
-                                          10,
-                                    ),
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child:
-                                              OutlinedButton(
-                                            onPressed:
-                                                () =>
-                                                    _mintaRevisi(
-                                                      assignment.id,
-                                                    ),
-                                            child:
-                                                const Text(
-                                              'Minta Revisi',
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(
-                                          width:
-                                              8,
-                                        ),
-                                        Expanded(
-                                          child:
-                                              ElevatedButton(
-                                            onPressed:
-                                                () =>
-                                                    _setujui(
-                                                      assignment.id,
-                                                    ),
-                                            style:
-                                                ElevatedButton.styleFrom(
-                                              backgroundColor:
-                                                  Colors.green,
-                                              foregroundColor:
-                                                  Colors.white,
-                                            ),
-                                            child:
-                                                const Text(
-                                              'Setujui',
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
                                 ],
                               ),
                             );

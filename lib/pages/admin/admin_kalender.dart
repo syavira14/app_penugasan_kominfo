@@ -6,7 +6,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../tugas/kelola_tugas_page.dart' hide AppColors;
 import '../../tugas/tugas_model.dart';
 import 'admin_navbar.dart';
-import 'dashboard_admin_page.dart';
+
+// ==========================================
+// WARNA UTAMA APLIKASI
+// ==========================================
+class AppColors {
+  static const Color biruTua = Color(0xFF0011CC);
+  static const Color biruSedang = Color(0xFF0066FF);
+  static const Color cyan = Color(0xFF00CCFF);
+  static const Color putih = Colors.white;
+  static const Color abuTeks = Color(0xFF5A6472);
+  static const Color latarAbu = Color(0xFFF4F6FB);
+  static const Color oranyeWarning = Color(0xFFFF9800);
+}
 
 class AdminKalenderPage extends StatefulWidget {
   const AdminKalenderPage({super.key});

@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart'; // Tambahkan ini
-import 'firebase_options.dart'; // Tambahkan ini
-import 'pages/auth/welcome_page.dart';
+import 'package:firebase_core/firebase_core.dart';
+
+import 'firebase_options.dart';
+import 'pages/auth/splash_page.dart';
 
 void main() async {
-  // Wajib ditambahkan agar binding Flutter siap sebelum memanggil Firebase
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inisialisasi Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   runApp(const MyApp());
@@ -19,14 +18,14 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Sistem Penjadwalan Penugasan Pegawai',
+      title: 'SIMTAS - Sistem Informasi Manajemen Tugas dan Staf',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: const Color(0xFF0011CC),
+        colorSchemeSeed: const Color(0xFF003B7A),
         fontFamily: 'Roboto',
       ),
-      home: const WelcomePage(),
+      home: const SplashPage(),
     );
   }
 }

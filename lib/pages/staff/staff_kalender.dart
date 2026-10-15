@@ -1,4 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import 'tugas_detail_page.dart';
 
 class StaffKalenderPage extends StatefulWidget {
   const StaffKalenderPage({super.key});
@@ -14,198 +18,501 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
   static const Color accentGold = Color(0xFFFFC107);
   static const Color bgLight = Color(0xFFF7F9FB);
 
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
 
-  // Data Dummy Tugas Berdasarkan Tanggal (Tahun-Bulan-Hari)
-  final Map<String, List<Map<String, String>>> _events = {
-    "2026-09-02": [
-      {
-        "title": "Meeting Progress Proyek UI/UX",
-        "time": "09:00 - 10:30 WIB",
-        "type": "Penting",
-      },
-      {
-        "title": "Review Modul Kalender Staff",
-        "time": "13:00 - 15:00 WIB",
-        "type": "Tugas",
-      },
-    ],
-    "2026-09-05": [
-      {
-        "title": "Penyerahan Laporan Bulanan",
-        "time": "16:00 WIB",
-        "type": "Deadline",
-      },
-    ],
-    "2026-09-12": [
-      {
-        "title": "Koordinasi Tim Frontend",
-        "time": "10:00 - 11:30 WIB",
-        "type": "Meeting",
-      },
-    ],
-  };
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _assignmentStream;
 
-  // Helper Formatter Kunci Tanggal (yyyy-MM-dd)
+  static const List<String> _monthNames = [
+    "Januari",
+    "Februari",
+    "Maret",
+    "April",
+    "Mei",
+    "Juni",
+    "Juli",
+    "Agustus",
+    "September",
+    "Oktober",
+    "November",
+    "Desember",
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _initStream();
+  }
+
+  void _initStream() {
+    final user = _auth.currentUser;
+    if (user != null) {
+      _assignmentStream = _firestore
+          .collection('penugasan')
+          .where('staff_id', isEqualTo: user.uid)
+          .snapshots();
+    }
+  }
+
   String _dateKey(DateTime date) {
     return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
   }
 
-  // Pindah Bulan
+  DateTime? _asDate(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+    return null;
+  }
+
+  // Mengubah status DB menjadi label bahasa Indonesia yang ramah UI
+  String _statusUi(String rawStatus) {
+    switch (rawStatus.toLowerCase()) {
+      case 'berlangsung':
+        return 'Berlangsung';
+      case 'dikumpulkan':
+        return 'Menunggu Disetujui';
+      case 'revisi':
+        return 'Revisi';
+      case 'disetujui':
+        return 'Selesai';
+      case 'terkendala':
+        return 'Terkendala';
+      default:
+        return 'Pending';
+    }
+  }
+
   void _changeMonth(int offset) {
+    final DateTime newMonth = DateTime(
+      _focusedDay.year,
+      _focusedDay.month + offset,
+      1,
+    );
+    final DateTime now = DateTime.now();
+
     setState(() {
-      _focusedDay = DateTime(_focusedDay.year, _focusedDay.month + offset, 1);
+      _focusedDay = newMonth;
+      if (newMonth.year == now.year && newMonth.month == now.month) {
+        _selectedDay = DateTime(now.year, now.month, now.day);
+      } else {
+        _selectedDay = DateTime(newMonth.year, newMonth.month, 1);
+      }
     });
+  }
+
+  Future<Map<String, List<Map<String, dynamic>>>> _fetchTaskEvents(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
+  ) async {
+    final Map<String, List<Map<String, dynamic>>> events = {};
+
+    for (final assignment in assignments) {
+      try {
+        final assignmentData = assignment.data();
+        final tugasId = (assignmentData['tugas_id'] ?? '').toString();
+
+        if (tugasId.isEmpty) continue;
+
+        final tugasDoc = await _firestore
+            .collection('tugas')
+            .doc(tugasId)
+            .get();
+        if (!tugasDoc.exists) continue;
+
+        final tugasData = tugasDoc.data() ?? {};
+
+        final DateTime? tglMulai =
+            _asDate(tugasData['tanggal_mulai_tugas']) ??
+            _asDate(tugasData['tanggal_tugas_diberikan']);
+        final DateTime? tglDeadline = _asDate(
+          tugasData['tanggal_selesai_tugas'],
+        );
+
+        final String judulTugas = (tugasData['judul'] ?? 'Tugas Baru')
+            .toString();
+
+        // Membaca status real-time dari Firestore penugasan
+        final String rawStatus = (assignmentData['status'] ?? 'pending')
+            .toString();
+        final String statusTampil = _statusUi(rawStatus);
+
+        // 1. Tanggal Mulai Tugas Diberikan
+        if (tglMulai != null) {
+          final String keyMulai = _dateKey(tglMulai);
+          events.putIfAbsent(keyMulai, () => []).add({
+            "penugasan_id": assignment.id,
+            "title": judulTugas,
+            "time":
+                "${tglMulai.hour.toString().padLeft(2, '0')}:${tglMulai.minute.toString().padLeft(2, '0')} WIB",
+            "type": "Tugas Diberikan",
+            "is_deadline": false,
+            "status": statusTampil,
+            "raw_status": rawStatus,
+          });
+        }
+
+        // 2. Tanggal Deadline / Batas Selesai
+        if (tglDeadline != null) {
+          final String keyDeadline = _dateKey(tglDeadline);
+          events.putIfAbsent(keyDeadline, () => []).add({
+            "penugasan_id": assignment.id,
+            "title": "DEADLINE: $judulTugas",
+            "time":
+                "${tglDeadline.hour.toString().padLeft(2, '0')}:${tglDeadline.minute.toString().padLeft(2, '0')} WIB",
+            "type":
+                "Batas Selesai ($statusTampil)", // Status real-time disisipkan
+            "is_deadline": true,
+            "status": statusTampil,
+            "raw_status": rawStatus,
+          });
+        }
+      } catch (_) {}
+    }
+
+    return events;
+  }
+
+  void _showMonthYearPicker() {
+    int tempYear = _focusedDay.year;
+    int tempMonth = _focusedDay.month;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              titlePadding: const EdgeInsets.all(16),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: redMid),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear--;
+                      });
+                    },
+                  ),
+                  Text(
+                    "$tempYear",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: redDark,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, color: redMid),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear++;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 300,
+                height: 220,
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  itemCount: 12,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 2.0,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemBuilder: (context, index) {
+                    final isSelected = (index + 1) == tempMonth;
+                    return InkWell(
+                      onTap: () {
+                        setDialogState(() {
+                          tempMonth = index + 1;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isSelected ? redMid : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected ? redMid : Colors.transparent,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          _monthNames[index].substring(0, 3),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: isSelected ? Colors.white : redDark,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text(
+                    "Batal",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: redMid,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () {
+                    final DateTime newMonth = DateTime(tempYear, tempMonth, 1);
+                    final DateTime now = DateTime.now();
+
+                    setState(() {
+                      _focusedDay = newMonth;
+                      if (newMonth.year == now.year &&
+                          newMonth.month == now.month) {
+                        _selectedDay = DateTime(now.year, now.month, now.day);
+                      } else {
+                        _selectedDay = DateTime(
+                          newMonth.year,
+                          newMonth.month,
+                          1,
+                        );
+                      }
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text("Pilih"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Menentukan warna badge status berdasarkan kondisi pengerjaan staf
+  Color _getStatusColor(String rawStatus) {
+    switch (rawStatus.toLowerCase()) {
+      case 'disetujui':
+        return Colors.green.shade700;
+      case 'dikumpulkan':
+        return Colors.blue.shade700;
+      case 'revisi':
+        return Colors.amber.shade900;
+      case 'terkendala':
+        return Colors.red.shade700;
+      case 'berlangsung':
+        return Colors.orange.shade800;
+      default:
+        return Colors.grey.shade700;
+    }
+  }
+
+  Color _getStatusBgColor(String rawStatus) {
+    switch (rawStatus.toLowerCase()) {
+      case 'disetujui':
+        return Colors.green.shade50;
+      case 'dikumpulkan':
+        return Colors.blue.shade50;
+      case 'revisi':
+        return Colors.amber.shade50;
+      case 'terkendala':
+        return Colors.red.shade50;
+      case 'berlangsung':
+        return Colors.orange.shade50;
+      default:
+        return const Color(0xFFE3EEFA);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final double screenWidth = MediaQuery.of(context).size.width;
     final double scale = (screenWidth / 375).clamp(0.85, 1.25);
-    final String selectedKey = _dateKey(_selectedDay);
-    final List<Map<String, String>> currentEvents = _events[selectedKey] ?? [];
 
     return Scaffold(
       backgroundColor: bgLight,
-      body: Stack(
-        children: [
-          // ==========================================
-          // 1. LAYER BACKGROUND BIRU GRADASI (HEADER)
-          // ==========================================
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: ClipPath(
-              clipper: HeaderCurveClipper(curveHeightOffset: 150 * scale),
-              child: Container(
-                width: double.infinity,
-                height: 170 * scale,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [redLight, redMid, redDark],
-                    stops: [0.0, 0.45, 1.0],
-                  ),
-                ),
-                child: Stack(
-                  children: [
-                    Positioned(
-                      top: -30 * scale,
-                      right: -30 * scale,
-                      child: _decorCircle(
-                        150 * scale,
-                        Colors.white.withOpacity(0.08),
-                      ),
-                    ),
-                    Positioned(
-                      top: 40 * scale,
-                      left: -40 * scale,
-                      child: _decorCircle(
-                        120 * scale,
-                        accentGold.withOpacity(0.12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: _assignmentStream,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(child: Text("Gagal memuat data: ${snapshot.error}"));
+          }
 
-          // ==========================================
-          // 2. KONTEN UTAMA
-          // ==========================================
-          SafeArea(
-            child: Column(
-              children: [
-                // --- TOP BAR (Navigasi Back & Judul Kalender) ---
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 16 * scale,
-                    vertical: 10 * scale,
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(
-                          Icons.arrow_back_ios_new,
-                          color: Colors.white,
+          final assignments = snapshot.data?.docs ?? [];
+
+          return FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
+            future: _fetchTaskEvents(assignments),
+            builder: (context, taskSnapshot) {
+              final Map<String, List<Map<String, dynamic>>> events =
+                  taskSnapshot.data ?? {};
+
+              final String selectedKey = _dateKey(_selectedDay);
+              final List<Map<String, dynamic>> currentEvents = List.from(
+                events[selectedKey] ?? [],
+              );
+
+              // URUTAN DEADLINE DITARUH PALING ATAS
+              currentEvents.sort((a, b) {
+                final bool aIsDeadline = a["is_deadline"] ?? false;
+                final bool bIsDeadline = b["is_deadline"] ?? false;
+                if (aIsDeadline && !bIsDeadline) return -1;
+                if (!aIsDeadline && bIsDeadline) return 1;
+                return 0;
+              });
+
+              final bool isLoading =
+                  snapshot.connectionState == ConnectionState.waiting &&
+                  !snapshot.hasData;
+
+              return Stack(
+                children: [
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: ClipPath(
+                      clipper: HeaderCurveClipper(
+                        curveHeightOffset: 150 * scale,
+                      ),
+                      child: Container(
+                        width: double.infinity,
+                        height: 170 * scale,
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [redLight, redMid, redDark],
+                            stops: [0.0, 0.45, 1.0],
+                          ),
                         ),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      Text(
-                        "Kalender",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20 * scale,
-                          fontWeight: FontWeight.bold,
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              top: -30 * scale,
+                              right: -30 * scale,
+                              child: _decorCircle(
+                                150 * scale,
+                                Colors.white.withOpacity(0.08),
+                              ),
+                            ),
+                            Positioned(
+                              top: 40 * scale,
+                              left: -40 * scale,
+                              child: _decorCircle(
+                                120 * scale,
+                                accentGold.withOpacity(0.12),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                SizedBox(height: 10 * scale),
-
-                // --- CONTAINER KALENDER & DAFTAR TUGAS ---
-                Expanded(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 18 * scale),
-                      child: Column(
-                        children: [
-                          // KARTU KALENDER INTERAKTIF
-                          _buildCalendarCard(scale),
-
-                          SizedBox(height: 20 * scale),
-
-                          // DAFTAR PEKERJAAN PADA TANGGAL TERPILIH
-                          _buildTaskList(currentEvents, scale),
-                        ],
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          ),
-        ],
+                  SafeArea(
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 16 * scale,
+                            vertical: 10 * scale,
+                          ),
+                          child: Row(
+                            children: [
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_back_ios_new,
+                                  color: Colors.white,
+                                ),
+                                onPressed: () => Navigator.pop(context),
+                              ),
+                              Text(
+                                "Kalender Penugasan",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20 * scale,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(height: 10 * scale),
+                        Expanded(
+                          child: isLoading
+                              ? const Center(child: CircularProgressIndicator())
+                              : SingleChildScrollView(
+                                  physics: const BouncingScrollPhysics(),
+                                  child: Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 18 * scale,
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        _buildCalendarCard(events, scale),
+                                        SizedBox(height: 20 * scale),
+                                        _buildTaskList(currentEvents, scale),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          );
+        },
       ),
     );
   }
 
-  // ==========================================
-  // WIDGET KALENDER INTERAKTIF
-  // ==========================================
-  Widget _buildCalendarCard(double scale) {
-    final List<String> monthNames = [
-      "Januari",
-      "Februari",
-      "Maret",
-      "April",
-      "Mei",
-      "Juni",
-      "Juli",
-      "Agustus",
-      "September",
-      "Oktober",
-      "November",
-      "Desember",
-    ];
-
+  Widget _buildCalendarCard(
+    Map<String, List<Map<String, dynamic>>> events,
+    double scale,
+  ) {
     final int daysInMonth = DateTime(
       _focusedDay.year,
       _focusedDay.month + 1,
       0,
     ).day;
+
     final int firstWeekday = DateTime(
       _focusedDay.year,
       _focusedDay.month,
       1,
-    ).weekday; // 1 = Senin
+    ).weekday;
+
+    final int prevMonthDays = DateTime(
+      _focusedDay.year,
+      _focusedDay.month,
+      0,
+    ).day;
+
+    final int leadingPadding = firstWeekday - 1;
+    final int totalCells = ((leadingPadding + daysInMonth) / 7).ceil() * 7;
 
     return Container(
       padding: EdgeInsets.all(16 * scale),
@@ -222,85 +529,103 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
       ),
       child: Column(
         children: [
-          // Header Bulan & Panah Navigasi
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                "${monthNames[_focusedDay.month - 1]} ${_focusedDay.year}",
-                style: TextStyle(
-                  fontSize: 16 * scale,
-                  fontWeight: FontWeight.bold,
-                  color: redDark,
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.chevron_left, color: redMid, size: 26 * scale),
+                onPressed: () => _changeMonth(-1),
+              ),
+              InkWell(
+                onTap: _showMonthYearPicker,
+                borderRadius: BorderRadius.circular(8 * scale),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 8 * scale,
+                    vertical: 4 * scale,
+                  ),
+                  child: Text(
+                    "${_monthNames[_focusedDay.month - 1]} ${_focusedDay.year}",
+                    style: TextStyle(
+                      fontSize: 16 * scale,
+                      fontWeight: FontWeight.bold,
+                      color: redDark,
+                    ),
+                  ),
                 ),
               ),
-              Row(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      Icons.chevron_left,
-                      color: redMid,
-                      size: 24 * scale,
-                    ),
-                    onPressed: () => _changeMonth(-1),
-                  ),
-                  IconButton(
-                    icon: Icon(
-                      Icons.chevron_right,
-                      color: redMid,
-                      size: 24 * scale,
-                    ),
-                    onPressed: () => _changeMonth(1),
-                  ),
-                ],
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  Icons.chevron_right,
+                  color: redMid,
+                  size: 26 * scale,
+                ),
+                onPressed: () => _changeMonth(1),
               ),
             ],
           ),
           SizedBox(height: 10 * scale),
 
-          // Nama Hari (Sen, Sel, Rab, dst)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Ming"]
-                .map(
-                  (day) => SizedBox(
-                    width: 35 * scale,
-                    child: Text(
-                      day,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12 * scale,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
+            children: ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Ming"].map((
+              day,
+            ) {
+              final isMingguHeader = day == "Ming";
+              return SizedBox(
+                width: 35 * scale,
+                child: Text(
+                  day,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12 * scale,
+                    color: isMingguHeader
+                        ? Colors.red.shade600
+                        : Colors.grey.shade600,
                   ),
-                )
-                .toList(),
+                ),
+              );
+            }).toList(),
           ),
           Divider(height: 20 * scale),
 
-          // Grid Tanggal
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: (firstWeekday - 1) + daysInMonth,
+            itemCount: totalCells,
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
               mainAxisSpacing: 6,
               crossAxisSpacing: 6,
             ),
             itemBuilder: (context, index) {
-              if (index < firstWeekday - 1) {
-                return const SizedBox.shrink(); // Empty space sebelum tanggal 1
+              DateTime date;
+              bool isCurrentMonth = true;
+
+              if (index < leadingPadding) {
+                final int dayNum = prevMonthDays - (leadingPadding - index - 1);
+                date = DateTime(
+                  _focusedDay.year,
+                  _focusedDay.month - 1,
+                  dayNum,
+                );
+                isCurrentMonth = false;
+              } else if (index >= leadingPadding + daysInMonth) {
+                final int dayNum = index - (leadingPadding + daysInMonth) + 1;
+                date = DateTime(
+                  _focusedDay.year,
+                  _focusedDay.month + 1,
+                  dayNum,
+                );
+                isCurrentMonth = false;
+              } else {
+                final int dayNum = index - leadingPadding + 1;
+                date = DateTime(_focusedDay.year, _focusedDay.month, dayNum);
               }
 
-              final int dayNumber = index - (firstWeekday - 2);
-              final DateTime date = DateTime(
-                _focusedDay.year,
-                _focusedDay.month,
-                dayNumber,
-              );
               final String key = _dateKey(date);
 
               final bool isSelected =
@@ -308,13 +633,16 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                   date.month == _selectedDay.month &&
                   date.day == _selectedDay.day;
 
-              final bool hasEvents =
-                  _events.containsKey(key) && _events[key]!.isNotEmpty;
+              final bool isSunday = date.weekday == DateTime.sunday;
+              final List<Map<String, dynamic>> dayEvents = events[key] ?? [];
 
               return InkWell(
                 onTap: () {
                   setState(() {
                     _selectedDay = date;
+                    if (!isCurrentMonth) {
+                      _focusedDay = DateTime(date.year, date.month, 1);
+                    }
                   });
                 },
                 borderRadius: BorderRadius.circular(12 * scale),
@@ -322,33 +650,38 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                   decoration: BoxDecoration(
                     color: isSelected ? redMid : Colors.transparent,
                     borderRadius: BorderRadius.circular(12 * scale),
-                    border: isSelected
-                        ? null
-                        : Border.all(color: Colors.transparent),
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        "$dayNumber",
+                        "${date.day}",
                         style: TextStyle(
                           fontSize: 13 * scale,
-                          fontWeight: isSelected
+                          fontWeight: isSelected || (isSunday && isCurrentMonth)
                               ? FontWeight.bold
                               : FontWeight.normal,
-                          color: isSelected ? Colors.white : Colors.black87,
+                          color: isSelected
+                              ? Colors.white
+                              : (!isCurrentMonth
+                                    ? Colors.grey.shade400
+                                    : (isSunday
+                                          ? Colors.red.shade600
+                                          : Colors.black87)),
                         ),
                       ),
-
-                      // INDIKATOR TITIK TUGAS
-                      if (hasEvents) ...[
+                      if (dayEvents.isNotEmpty) ...[
                         SizedBox(height: 3 * scale),
                         Container(
                           width: 5 * scale,
                           height: 5 * scale,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: isSelected ? accentGold : redMid,
+                            color: isSelected
+                                ? accentGold
+                                : (isCurrentMonth
+                                      ? redMid
+                                      : redMid.withOpacity(0.4)),
                           ),
                         ),
                       ],
@@ -363,10 +696,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
     );
   }
 
-  // ==========================================
-  // WIDGET DAFTAR PEKERJAAN
-  // ==========================================
-  Widget _buildTaskList(List<Map<String, String>> events, double scale) {
+  Widget _buildTaskList(List<Map<String, dynamic>> events, double scale) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -374,7 +704,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              "Pekerjaan Hari Ini",
+              "Pekerjaan Tanggal Ini",
               style: TextStyle(
                 fontSize: 16 * scale,
                 fontWeight: FontWeight.bold,
@@ -391,7 +721,6 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
           ],
         ),
         SizedBox(height: 12 * scale),
-
         if (events.isEmpty)
           Container(
             width: double.infinity,
@@ -402,7 +731,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
             ),
             child: Center(
               child: Text(
-                "Tidak ada jadwal pekerjaan hari ini",
+                "Tidak ada jadwal pekerjaan pada tanggal ini",
                 style: TextStyle(
                   color: Colors.grey.shade500,
                   fontSize: 13 * scale,
@@ -417,76 +746,102 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
             itemCount: events.length,
             itemBuilder: (context, index) {
               final item = events[index];
-              return Container(
-                margin: EdgeInsets.only(bottom: 10 * scale),
-                padding: EdgeInsets.all(14 * scale),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16 * scale),
-                  border: Border(
-                    left: BorderSide(color: redMid, width: 4 * scale),
+              final bool isDeadline = item["is_deadline"] ?? false;
+              final String rawStatus = item["raw_status"] ?? "pending";
+
+              final Color statusTextColor = _getStatusColor(rawStatus);
+              final Color statusBgColor = _getStatusBgColor(rawStatus);
+
+              return InkWell(
+                onTap: () {
+                  if (item["penugasan_id"] != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            TugasDetailPage(penugasanId: item["penugasan_id"]),
+                      ),
+                    );
+                  }
+                },
+                borderRadius: BorderRadius.circular(16 * scale),
+                child: Container(
+                  margin: EdgeInsets.only(bottom: 10 * scale),
+                  padding: EdgeInsets.all(14 * scale),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16 * scale),
+                    border: Border(
+                      left: BorderSide(
+                        color: isDeadline ? Colors.red.shade600 : redMid,
+                        width: 4 * scale,
+                      ),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item["title"]!,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14 * scale,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item["title"]!,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14 * scale,
+                                color: isDeadline
+                                    ? Colors.red.shade900
+                                    : Colors.black87,
+                              ),
                             ),
-                          ),
-                          SizedBox(height: 4 * scale),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.access_time,
-                                size: 14 * scale,
-                                color: Colors.grey,
-                              ),
-                              SizedBox(width: 4 * scale),
-                              Text(
-                                item["time"]!,
-                                style: TextStyle(
-                                  fontSize: 11 * scale,
-                                  color: Colors.grey.shade600,
+                            SizedBox(height: 4 * scale),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.access_time,
+                                  size: 14 * scale,
+                                  color: Colors.grey,
                                 ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 10 * scale,
-                        vertical: 4 * scale,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE3EEFA),
-                        borderRadius: BorderRadius.circular(8 * scale),
-                      ),
-                      child: Text(
-                        item["type"]!,
-                        style: TextStyle(
-                          color: redMid,
-                          fontSize: 10 * scale,
-                          fontWeight: FontWeight.bold,
+                                SizedBox(width: 4 * scale),
+                                Text(
+                                  item["time"]!,
+                                  style: TextStyle(
+                                    fontSize: 11 * scale,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                  ],
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 10 * scale,
+                          vertical: 4 * scale,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusBgColor,
+                          borderRadius: BorderRadius.circular(8 * scale),
+                        ),
+                        child: Text(
+                          item["type"]!,
+                          style: TextStyle(
+                            color: statusTextColor,
+                            fontSize: 10 * scale,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               );
             },
@@ -504,7 +859,6 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
   }
 }
 
-// Custom Clipper Header
 class HeaderCurveClipper extends CustomClipper<Path> {
   final double curveHeightOffset;
 

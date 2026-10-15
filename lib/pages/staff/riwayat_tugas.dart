@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 // Definisi warna sesuai tema aplikasi
@@ -6,28 +8,30 @@ const Color kBiruSedang = Color(0xFF1976D2);
 const Color kBiruMuda = Color(0xFF42A5F5);
 const Color kBgLight = Color(0xFFF4F6F9);
 
-// Model Data Tugas (Tanpa Status Validasi)
+// Model Data Tugas Riwayat
 class TugasModel {
   String id;
+  String penugasanId;
   String judulTugas;
   String deskripsiTugas;
   String namaAtasan;
-  String statusTugas; // "Selesai"
-  String prioritasTugas; // "Rendah", "Sedang", "Tinggi"
-  DateTime tanggalMulai;
-  DateTime batasWaktu;
+  String statusTugas;
+  String prioritasTugas;
+  DateTime? tanggalMulai;
+  DateTime? batasWaktu;
   String? keteranganHasil;
   String? fileHasil;
 
   TugasModel({
     required this.id,
+    required this.penugasanId,
     required this.judulTugas,
     required this.deskripsiTugas,
     required this.namaAtasan,
     required this.statusTugas,
     required this.prioritasTugas,
-    required this.tanggalMulai,
-    required this.batasWaktu,
+    this.tanggalMulai,
+    this.batasWaktu,
     this.keteranganHasil,
     this.fileHasil,
   });
@@ -41,35 +45,97 @@ class RiwayatTugasPage extends StatefulWidget {
 }
 
 class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
-  // Dummy Data Riwayat
-  final List<TugasModel> _daftarRiwayat = [
-    TugasModel(
-      id: "1",
-      judulTugas: "Laporan Keuangan Bulanan",
-      deskripsiTugas:
-          "Menyusun dan menyajikan laporan rekonsiliasi kas bulan ini.",
-      namaAtasan: "Budi Santoso",
-      statusTugas: "Selesai",
-      prioritasTugas: "Tinggi",
-      tanggalMulai: DateTime.now().subtract(const Duration(days: 5)),
-      batasWaktu: DateTime.now().subtract(const Duration(days: 1)),
-      keteranganHasil:
-          "Laporan sudah selesai dikerjakan dan diverifikasi tim audit.",
-      fileHasil: "laporan_keuangan_final.pdf",
-    ),
-    TugasModel(
-      id: "2",
-      judulTugas: "Update Design Banner Website",
-      deskripsiTugas: "Membuat banner promo utama untuk halaman beranda.",
-      namaAtasan: "Siti Rahma",
-      statusTugas: "Selesai",
-      prioritasTugas: "Sedang",
-      tanggalMulai: DateTime.now().subtract(const Duration(days: 3)),
-      batasWaktu: DateTime.now().add(const Duration(days: 1)),
-      keteranganHasil: "Desain versi 1 sudah diunggah.",
-      fileHasil: "banner_v1.png",
-    ),
-  ];
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> get _assignmentStream {
+    final user = _auth.currentUser;
+    if (user == null) {
+      return const Stream.empty();
+    }
+
+    return _firestore
+        .collection('penugasan')
+        .where('staff_id', isEqualTo: user.uid)
+        .snapshots();
+  }
+
+  DateTime? _asDate(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+    return null;
+  }
+
+  String _capitalize(String value) {
+    if (value.isEmpty) return value;
+    return value[0].toUpperCase() + value.substring(1).toLowerCase();
+  }
+
+  Future<List<TugasModel>> _loadRiwayatTasks(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
+  ) async {
+    final List<TugasModel> result = [];
+
+    for (final assignment in assignments) {
+      try {
+        final assignmentData = assignment.data();
+        final status = (assignmentData['status'] ?? '')
+            .toString()
+            .toLowerCase();
+
+        // Riwayat HANYA menampilkan tugas yang sudah Selesai / Disetujui atasan
+        if (status != 'disetujui') {
+          continue;
+        }
+
+        final tugasId = (assignmentData['tugas_id'] ?? '').toString();
+        if (tugasId.isEmpty) continue;
+
+        final tugasDoc = await _firestore
+            .collection('tugas')
+            .doc(tugasId)
+            .get();
+        final tugasData = tugasDoc.data() ?? {};
+
+        final adminId = (tugasData['dibuat_oleh'] ?? '').toString();
+        Map<String, dynamic> adminData = {};
+
+        if (adminId.isNotEmpty) {
+          final adminDoc = await _firestore
+              .collection('users')
+              .doc(adminId)
+              .get();
+          adminData = adminDoc.data() ?? {};
+        }
+
+        result.add(
+          TugasModel(
+            id: tugasId,
+            penugasanId: assignment.id,
+            judulTugas: (tugasData['judul'] ?? '-').toString(),
+            deskripsiTugas: (tugasData['deskripsi'] ?? '-').toString(),
+            namaAtasan: (adminData['nama'] ?? 'Atasan').toString(),
+            statusTugas: "Selesai",
+            prioritasTugas: _capitalize(
+              (tugasData['prioritas'] ?? 'Sedang').toString(),
+            ),
+            tanggalMulai:
+                _asDate(tugasData['tanggal_mulai_tugas']) ??
+                _asDate(tugasData['tanggal_tugas_diberikan']),
+            batasWaktu: _asDate(tugasData['tanggal_selesai_tugas']),
+            keteranganHasil: (assignmentData['catatan_staff'] ?? '').toString(),
+            fileHasil:
+                (assignmentData['file_hasil_nama'] ?? '').toString().isEmpty
+                ? null
+                : assignmentData['file_hasil_nama'].toString(),
+          ),
+        );
+      } catch (_) {}
+    }
+
+    return result;
+  }
 
   // ==== POP-UP DETAIL RIWAYAT READ-ONLY ====
   void _tampilkanPopUpDetail(BuildContext context, TugasModel tugas) {
@@ -268,7 +334,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
 
           return Column(
             children: [
-              // HEADER
+              // HEADER GRADIENT
               ClipPath(
                 clipper: HeaderCurveClipper(),
                 child: Container(
@@ -320,96 +386,154 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                 ),
               ),
 
-              // DAFTAR CARD RIWAYAT TUGAS
+              // KONTEN DAFTAR RIWAYAT TUGAS DARI FIRESTORE
               Expanded(
-                child: ListView.builder(
-                  padding: EdgeInsets.fromLTRB(
-                    16 * scale,
-                    10 * scale,
-                    16 * scale,
-                    20 * scale,
-                  ),
-                  itemCount: _daftarRiwayat.length,
-                  itemBuilder: (context, index) {
-                    final tugas = _daftarRiwayat[index];
-                    return Card(
-                      margin: EdgeInsets.only(bottom: 12 * scale),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16 * scale),
-                      ),
-                      elevation: 2,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16 * scale),
-                        onTap: () {
-                          _tampilkanPopUpDetail(context, tugas);
-                        },
-                        child: Padding(
-                          padding: EdgeInsets.all(14 * scale),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  _badgePrioritas(tugas.prioritasTugas),
-                                  _badgeStatusSelesai(),
-                                ],
-                              ),
-                              SizedBox(height: 10 * scale),
-                              Text(
-                                tugas.judulTugas,
-                                style: TextStyle(
-                                  fontSize: 15 * scale,
-                                  fontWeight: FontWeight.bold,
-                                  color: kBiruTua,
+                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                  stream: _assignmentStream,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Text(
+                          "Gagal memuat riwayat:\n${snapshot.error}",
+                          textAlign: TextAlign.center,
+                        ),
+                      );
+                    }
+
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    final assignments = snapshot.data?.docs ?? [];
+
+                    return FutureBuilder<List<TugasModel>>(
+                      future: _loadRiwayatTasks(assignments),
+                      builder: (context, taskSnapshot) {
+                        if (taskSnapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+
+                        final daftarRiwayat = taskSnapshot.data ?? [];
+
+                        if (daftarRiwayat.isEmpty) {
+                          return Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.history_toggle_off_rounded,
+                                  size: 48,
+                                  color: Colors.grey,
                                 ),
-                              ),
-                              SizedBox(height: 4 * scale),
-                              Text(
-                                tugas.deskripsiTugas,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12 * scale,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                              Divider(height: 20 * scale),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    "Batas: ${_formatTanggal(tugas.batasWaktu)}",
-                                    style: TextStyle(
-                                      fontSize: 11 * scale,
-                                      color: Colors.grey[500],
-                                    ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  "Belum ada riwayat tugas yang selesai",
+                                  style: TextStyle(
+                                    color: Colors.grey.shade600,
+                                    fontSize: 13 * scale,
                                   ),
-                                  Row(
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        return ListView.builder(
+                          padding: EdgeInsets.fromLTRB(
+                            16 * scale,
+                            10 * scale,
+                            16 * scale,
+                            20 * scale,
+                          ),
+                          itemCount: daftarRiwayat.length,
+                          itemBuilder: (context, index) {
+                            final tugas = daftarRiwayat[index];
+                            return Card(
+                              margin: EdgeInsets.only(bottom: 12 * scale),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16 * scale),
+                              ),
+                              elevation: 2,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(16 * scale),
+                                onTap: () {
+                                  _tampilkanPopUpDetail(context, tugas);
+                                },
+                                child: Padding(
+                                  padding: EdgeInsets.all(14 * scale),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          _badgePrioritas(tugas.prioritasTugas),
+                                          _badgeStatusSelesai(),
+                                        ],
+                                      ),
+                                      SizedBox(height: 10 * scale),
                                       Text(
-                                        "Lihat Detail",
+                                        tugas.judulTugas,
                                         style: TextStyle(
-                                          fontSize: 12 * scale,
-                                          color: kBiruSedang,
+                                          fontSize: 15 * scale,
                                           fontWeight: FontWeight.bold,
+                                          color: kBiruTua,
                                         ),
                                       ),
-                                      Icon(
-                                        Icons.chevron_right,
-                                        size: 16 * scale,
-                                        color: kBiruSedang,
+                                      SizedBox(height: 4 * scale),
+                                      Text(
+                                        tugas.deskripsiTugas,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12 * scale,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                      Divider(height: 20 * scale),
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(
+                                            "Batas: ${_formatTanggal(tugas.batasWaktu)}",
+                                            style: TextStyle(
+                                              fontSize: 11 * scale,
+                                              color: Colors.grey[500],
+                                            ),
+                                          ),
+                                          Row(
+                                            children: [
+                                              Text(
+                                                "Lihat Detail",
+                                                style: TextStyle(
+                                                  fontSize: 12 * scale,
+                                                  color: kBiruSedang,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                              Icon(
+                                                Icons.chevron_right,
+                                                size: 16 * scale,
+                                                color: kBiruSedang,
+                                              ),
+                                            ],
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),
-                                ],
+                                ),
                               ),
-                            ],
-                          ),
-                        ),
-                      ),
+                            );
+                          },
+                        );
+                      },
                     );
                   },
                 ),
@@ -476,7 +600,8 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     );
   }
 
-  String _formatTanggal(DateTime dt, {bool jam = false}) {
+  String _formatTanggal(DateTime? dt, {bool jam = false}) {
+    if (dt == null) return "-";
     const bulan = [
       "Jan",
       "Feb",

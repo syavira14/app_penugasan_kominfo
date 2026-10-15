@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/user_model.dart';
-import '../auth/welcome_page.dart';
+import '../auth/login_page.dart';
 
 class StaffProfilPage extends StatefulWidget {
   const StaffProfilPage({super.key});
@@ -17,19 +17,11 @@ class StaffProfilPage extends StatefulWidget {
 }
 
 class _StaffProfilPageState extends State<StaffProfilPage> {
-  // ============================================================
-  // WARNA
-  // ============================================================
-
   static const Color redDark = Color(0xFF1A1464);
   static const Color redMid = Color(0xFF1D5FA0);
   static const Color redLight = Color(0xFF4FA6DE);
   static const Color accentGold = Color(0xFFFFC107);
   static const Color bgLight = Color(0xFFF7F9FB);
-
-  // ============================================================
-  // DATA
-  // ============================================================
 
   UserModel? currentUser;
 
@@ -38,19 +30,11 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
 
   final ImagePicker _picker = ImagePicker();
 
-  // ============================================================
-  // INIT
-  // ============================================================
-
   @override
   void initState() {
     super.initState();
     _fetchUserData();
   }
-
-  // ============================================================
-  // AMBIL DATA USER
-  // ============================================================
 
   Future<void> _fetchUserData() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -92,10 +76,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     }
   }
 
-  // ============================================================
-  // GANTI FOTO
-  // ============================================================
-
   void _gantiFoto() {
     showModalBottomSheet(
       context: context,
@@ -114,8 +94,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-
-                // KAMERA
                 ListTile(
                   leading: const Icon(Icons.camera_alt, color: redMid),
                   title: const Text('Kamera'),
@@ -124,8 +102,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                     _pickAndUploadImage(ImageSource.camera);
                   },
                 ),
-
-                // GALERI
                 ListTile(
                   leading: const Icon(Icons.photo_library, color: redMid),
                   title: const Text('Galeri Foto'),
@@ -142,10 +118,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     );
   }
 
-  // ============================================================
-  // PILIH FOTO + SIMPAN FIRESTORE
-  // ============================================================
-
   Future<void> _pickAndUploadImage(ImageSource source) async {
     try {
       final XFile? pickedFile = await _picker.pickImage(
@@ -155,9 +127,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
         maxHeight: 500,
       );
 
-      if (pickedFile == null) {
-        return;
-      }
+      if (pickedFile == null) return;
 
       if (mounted) {
         setState(() {
@@ -166,24 +136,16 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       }
 
       final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User belum login');
 
-      if (user == null) {
-        throw Exception('User belum login');
-      }
-
-      // Ambil file sebagai bytes
       final Uint8List bytes = await pickedFile.readAsBytes();
-
-      // Ubah gambar menjadi Base64
       final String fotoBase64 = base64Encode(bytes);
 
-      // Simpan ke Firestore
       await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
         'foto_base64': fotoBase64,
         'updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // Ambil data terbaru
       await _fetchUserData();
 
       if (mounted) {
@@ -212,18 +174,10 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     }
   }
 
-  // ============================================================
-  // UBAH INFORMASI PROFIL (NO HP & PASSWORD)
-  // ============================================================
-
   Future<void> _editProfil() async {
     final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
 
-    if (user == null) {
-      return;
-    }
-
-    // Controller
     final emailController = TextEditingController(
       text: user.email ?? currentUser?.email ?? '',
     );
@@ -232,7 +186,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     final newPasswordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
 
-    // Visibility password
     bool obscureCurrentPassword = true;
     bool obscureNewPassword = true;
     bool obscureConfirmPassword = true;
@@ -254,9 +207,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // ==================================================
-                    // EMAIL (READ ONLY / DIKUNCI)
-                    // ==================================================
                     TextField(
                       controller: emailController,
                       enabled: false,
@@ -271,12 +221,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         fillColor: Colors.grey.shade100,
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // ==================================================
-                    // NO HP
-                    // ==================================================
                     TextField(
                       controller: noHpController,
                       keyboardType: TextInputType.phone,
@@ -288,12 +233,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 22),
-
-                    // ==================================================
-                    // JUDUL PASSWORD
-                    // ==================================================
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
@@ -305,12 +245,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 10),
-
-                    // ==================================================
-                    // PASSWORD SAAT INI
-                    // ==================================================
                     TextField(
                       controller: currentPasswordController,
                       obscureText: obscureCurrentPassword,
@@ -334,12 +269,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // ==================================================
-                    // PASSWORD BARU
-                    // ==================================================
                     TextField(
                       controller: newPasswordController,
                       obscureText: obscureNewPassword,
@@ -363,12 +293,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // ==================================================
-                    // KONFIRMASI PASSWORD
-                    // ==================================================
                     TextField(
                       controller: confirmPasswordController,
                       obscureText: obscureConfirmPassword,
@@ -392,9 +317,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 8),
-
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
@@ -408,10 +331,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   ],
                 ),
               ),
-
-              // ========================================================
-              // TOMBOL SIMPAN & BATAL
-              // ========================================================
               actions: [
                 TextButton(
                   onPressed: () {
@@ -419,7 +338,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   },
                   child: const Text('Batal'),
                 ),
-
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: redMid,
@@ -439,7 +357,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                     final bool isChangingPassword =
                         newPassword.isNotEmpty || confirmPassword.isNotEmpty;
 
-                    // Validasi kata sandi
                     if (isChangingPassword) {
                       if (currentPassword.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -472,7 +389,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                     }
 
                     try {
-                      // 1. Re-authentifikasi dan Update Password Firebase
                       if (isChangingPassword) {
                         final credential = EmailAuthProvider.credential(
                           email: user.email!,
@@ -483,7 +399,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         await user.updatePassword(newPassword);
                       }
 
-                      // 2. Update Firestore
                       await FirebaseFirestore.instance
                           .collection('users')
                           .doc(user.uid)
@@ -492,7 +407,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                             'updated_at': FieldValue.serverTimestamp(),
                           }, SetOptions(merge: true));
 
-                      // Ambil data terbaru
                       await _fetchUserData();
 
                       if (dialogContext.mounted) {
@@ -539,10 +453,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     );
   }
 
-  // ============================================================
-  // BUILD
-  // ============================================================
-
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
@@ -559,7 +469,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       backgroundColor: bgLight,
       body: Stack(
         children: [
-          // HEADER
           Positioned(
             top: 0,
             left: 0,
@@ -598,12 +507,9 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
               ),
             ),
           ),
-
-          // CONTENT
           SafeArea(
             child: Column(
               children: [
-                // APP BAR
                 Padding(
                   padding: EdgeInsets.symmetric(
                     horizontal: 16 * scale,
@@ -641,7 +547,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
 
                 SizedBox(height: 8 * scale),
 
-                // SCROLL CONTENT
                 Expanded(
                   child: SingleChildScrollView(
                     physics: const BouncingScrollPhysics(),
@@ -649,7 +554,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                       padding: EdgeInsets.symmetric(horizontal: 20 * scale),
                       child: Column(
                         children: [
-                          // FOTO PROFIL
                           Center(
                             child: Column(
                               children: [
@@ -705,9 +609,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                                     ),
                                   ],
                                 ),
-
                                 SizedBox(height: 12 * scale),
-
                                 Text(
                                   currentUser?.nama.isNotEmpty == true
                                       ? currentUser!.nama
@@ -718,9 +620,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                                     color: Colors.black87,
                                   ),
                                 ),
-
                                 SizedBox(height: 4 * scale),
-
                                 Text(
                                   currentUser?.jabatan.isNotEmpty == true
                                       ? currentUser!.jabatan
@@ -734,10 +634,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                               ],
                             ),
                           ),
-
                           SizedBox(height: 24 * scale),
-
-                          // TOMBOL GANTI FOTO & UBAH INFO
                           Row(
                             children: [
                               Expanded(
@@ -748,9 +645,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                                   scale: scale,
                                 ),
                               ),
-
                               SizedBox(width: 10 * scale),
-
                               Expanded(
                                 child: _buildActionButton(
                                   icon: Icons.edit_outlined,
@@ -761,10 +656,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                               ),
                             ],
                           ),
-
                           SizedBox(height: 24 * scale),
-
-                          // INFORMASI AKUN
                           Align(
                             alignment: Alignment.centerLeft,
                             child: Text(
@@ -777,9 +669,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                               ),
                             ),
                           ),
-
                           SizedBox(height: 10 * scale),
-
                           Container(
                             padding: EdgeInsets.all(16 * scale),
                             decoration: BoxDecoration(
@@ -842,10 +732,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                               ],
                             ),
                           ),
-
                           SizedBox(height: 30 * scale),
-
-                          // BUTTON KELUAR
                           SizedBox(
                             width: double.infinity,
                             height: 52 * scale,
@@ -867,7 +754,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                                   Navigator.pushAndRemoveUntil(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) => const WelcomePage(),
+                                      builder: (_) => const LoginPage(),
                                     ),
                                     (_) => false,
                                   );
@@ -890,7 +777,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                               ),
                             ),
                           ),
-
                           SizedBox(height: 20 * scale),
                         ],
                       ),
@@ -904,10 +790,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       ),
     );
   }
-
-  // ============================================================
-  // FOTO PROFIL DARI BASE64
-  // ============================================================
 
   Widget _buildProfileImage(double scale) {
     final String fotoBase64 = currentUser?.fotoBase64 ?? '';
@@ -934,10 +816,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       return Icon(Icons.person, size: 55 * scale, color: Colors.white);
     }
   }
-
-  // ============================================================
-  // TOMBOL AKSI
-  // ============================================================
 
   Widget _buildActionButton({
     required IconData icon,
@@ -976,10 +854,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     );
   }
 
-  // ============================================================
-  // ITEM INFORMASI PROFIL
-  // ============================================================
-
   Widget _buildProfileItem({
     required IconData icon,
     required String title,
@@ -996,9 +870,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
           ),
           child: Icon(icon, color: redMid, size: 22 * scale),
         ),
-
         SizedBox(width: 14 * scale),
-
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1010,9 +882,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   color: Colors.grey.shade500,
                 ),
               ),
-
               SizedBox(height: 3 * scale),
-
               Text(
                 value,
                 style: TextStyle(
@@ -1027,10 +897,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       ],
     );
   }
-
-  // ============================================================
-  // MENU LAINNYA
-  // ============================================================
 
   void _showMoreMenu(BuildContext context) {
     showModalBottomSheet(
@@ -1058,22 +924,15 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
   }
 }
 
-// ================================================================
-// HEADER CURVE
-// ================================================================
-
 class HeaderCurveClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
     final path = Path();
-
     final h = size.height;
     final w = size.width;
 
     path.lineTo(0, h * 0.75);
-
     final controlPoint = Offset(w / 2, h);
-
     final endPoint = Offset(w, h * 0.75);
 
     path.quadraticBezierTo(
@@ -1084,14 +943,10 @@ class HeaderCurveClipper extends CustomClipper<Path> {
     );
 
     path.lineTo(w, 0);
-
     path.close();
-
     return path;
   }
 
   @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) {
-    return false;
-  }
+  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
 }

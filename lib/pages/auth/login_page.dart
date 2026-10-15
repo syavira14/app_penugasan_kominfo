@@ -135,89 +135,94 @@ class _LoginPageState extends State<LoginPage> {
           child: Column(
             children: [
               // =================================================
-              // HEADER DENGAN GELOMBANG SINOUS
+              // HEADER DENGAN GELOMBANG SINOUS (DIBEBRSIHKAN DARI CELA PUTIH)
               // =================================================
-              SizedBox(
-                height: 270,
-                width: double.infinity,
-                child: Stack(
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      height: 250,
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            AppColors.biruTua,
-                            AppColors.biruPrimary,
-                            AppColors.biruSedang,
-                          ],
-                        ),
-                        borderRadius: BorderRadius.only(
-                          bottomLeft: Radius.circular(32),
-                          bottomRight: Radius.circular(32),
+              ClipRRect(
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(32),
+                  bottomRight: Radius.circular(32),
+                ),
+                clipBehavior:
+                    Clip.antiAlias, // Mencegah celah/garis putih di pinggiran
+                child: SizedBox(
+                  height: 270,
+                  width: double.infinity,
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        height:
+                            270, // Disamakan tingginya agar menutup penuh sampai bawah
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              AppColors.biruTua,
+                              AppColors.biruPrimary,
+                              AppColors.biruSedang,
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    Positioned.fill(
-                      child: CustomPaint(painter: _BackgroundWavePainter()),
-                    ),
-                    Positioned.fill(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.15),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white.withOpacity(0.3),
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: Container(
-                                width: 56,
-                                height: 56,
-                                decoration: const BoxDecoration(
-                                  color: Colors.white,
+                      Positioned.fill(
+                        child: CustomPaint(painter: _BackgroundWavePainter()),
+                      ),
+                      Positioned.fill(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.15),
                                   shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.3),
+                                    width: 1.5,
+                                  ),
                                 ),
-                                child: const Icon(
-                                  Icons.lan_outlined,
-                                  color: AppColors.biruPrimary,
-                                  size: 30,
+                                child: Container(
+                                  width: 56,
+                                  height: 56,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.lan_outlined,
+                                    color: AppColors.biruPrimary,
+                                    size: 30,
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 14),
-                            const Text(
-                              'SIMTAS',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 22,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1.5,
+                              const SizedBox(height: 14),
+                              const Text(
+                                'SIMTAS',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.5,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Sistem Manajemen Penugasan Pegawai',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.85),
-                                fontSize: 12,
+                              const SizedBox(height: 2),
+                              Text(
+                                'Sistem Informasi Manajemen Tugas dan Staff',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.85),
+                                  fontSize: 12,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
 
@@ -256,7 +261,7 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                           const SizedBox(height: 4),
                           const Text(
-                            'Silakan masuk menggunakan Email/NIP dan kata sandi Anda.',
+                            'Silakan masuk menggunakan NIP dan kata sandi Anda.',
                             style: TextStyle(
                               color: AppColors.abuTeks,
                               fontSize: 13,
@@ -266,7 +271,7 @@ class _LoginPageState extends State<LoginPage> {
 
                           // INPUT EMAIL / NIP
                           const Text(
-                            'Email / NIP',
+                            'NIP',
                             style: TextStyle(
                               color: AppColors.abuHeader,
                               fontSize: 13,
@@ -283,7 +288,7 @@ class _LoginPageState extends State<LoginPage> {
                               color: AppColors.biruTua,
                             ),
                             decoration: _inputDecoration(
-                              hint: 'Masukkan Email atau NIP terdaftar',
+                              hint: 'Masukkan NIP terdaftar',
                               icon: Icons.email_outlined,
                             ),
                             onFieldSubmitted: (_) {
@@ -293,7 +298,7 @@ class _LoginPageState extends State<LoginPage> {
                             },
                             validator: (value) {
                               if (value == null || value.trim().isEmpty) {
-                                return 'Email / NIP wajib diisi';
+                                return 'NIP wajib diisi';
                               }
                               return null;
                             },
@@ -442,7 +447,7 @@ class _LoginPageState extends State<LoginPage> {
                                 SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
-                                    'Masuk menggunakan Email resmi terdaftar. Peran/Role akses ditentukan otomatis oleh sistem.',
+                                    'Masuk menggunakan NIP terdaftar. Peran/Role akses ditentukan otomatis oleh sistem.',
                                     style: TextStyle(
                                       color: AppColors.abuTeks,
                                       fontSize: 11.5,

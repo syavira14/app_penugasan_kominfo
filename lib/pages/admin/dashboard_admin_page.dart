@@ -7,6 +7,7 @@ import 'kelola_staff.dart';
 import 'status_staff.dart';
 import 'admin_kalender.dart';
 import 'riwayat_tugas_staff.dart';
+import 'laporan_kendala_admin_page.dart'; // IMPORT DITAMBAHKAN
 import 'profil_admin.dart';
 
 class DashboardAdminPage extends StatelessWidget {
@@ -293,21 +294,13 @@ class DashboardAdminPage extends StatelessWidget {
                             () => _buka(context, const RiwayatTugasStaffPage()),
                           ),
 
-                          // 6. LAPORAN KENDALA (MENU BARU)
+                          // 6. LAPORAN KENDALA (DISAMBUNGKAN KE HALAMAN)
                           _MenuCard(
                             'Laporan Kendala',
                             Icons.warning_amber_rounded,
-                            const Color(0xFFFF5252), // Warna Merah Aksen
-                            () {
-                              // Arahkan ke Halaman Laporan Kendala Admin
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Membuka daftar laporan kendala staf...',
-                                  ),
-                                ),
-                              );
-                            },
+                            const Color(0xFFFF5252),
+                            () =>
+                                _buka(context, const LaporanKendalaAdminPage()),
                           ),
 
                           // 7. PROFIL ADMIN

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../../widgets/app_layout.dart';
 import 'tugas_detail_page.dart';
 
 class StaffKalenderPage extends StatefulWidget {
@@ -12,11 +13,11 @@ class StaffKalenderPage extends StatefulWidget {
 }
 
 class _StaffKalenderPageState extends State<StaffKalenderPage> {
-  static const Color redDark = Color(0xFF1A1464);
-  static const Color redMid = Color(0xFF1D5FA0);
-  static const Color redLight = Color(0xFF4FA6DE);
+  static const Color kBiruTua = Color(0xFF1A1464);
+  static const Color kBiruSedang = Color(0xFF1D5FA0);
+  static const Color kBiruMuda = Color(0xFF4FA6DE);
   static const Color accentGold = Color(0xFFFFC107);
-  static const Color bgLight = Color(0xFFF7F9FB);
+  static const Color kBgLight = Color(0xFFF7F9FB);
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -68,7 +69,6 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
     return null;
   }
 
-  // Mengubah status DB menjadi label bahasa Indonesia yang ramah UI
   String _statusUi(String rawStatus) {
     switch (rawStatus.toLowerCase()) {
       case 'berlangsung':
@@ -134,12 +134,10 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
         final String judulTugas = (tugasData['judul'] ?? 'Tugas Baru')
             .toString();
 
-        // Membaca status real-time dari Firestore penugasan
         final String rawStatus = (assignmentData['status'] ?? 'pending')
             .toString();
         final String statusTampil = _statusUi(rawStatus);
 
-        // 1. Tanggal Mulai Tugas Diberikan
         if (tglMulai != null) {
           final String keyMulai = _dateKey(tglMulai);
           events.putIfAbsent(keyMulai, () => []).add({
@@ -154,7 +152,6 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
           });
         }
 
-        // 2. Tanggal Deadline / Batas Selesai
         if (tglDeadline != null) {
           final String keyDeadline = _dateKey(tglDeadline);
           events.putIfAbsent(keyDeadline, () => []).add({
@@ -162,8 +159,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
             "title": "DEADLINE: $judulTugas",
             "time":
                 "${tglDeadline.hour.toString().padLeft(2, '0')}:${tglDeadline.minute.toString().padLeft(2, '0')} WIB",
-            "type":
-                "Batas Selesai ($statusTampil)", // Status real-time disisipkan
+            "type": "Batas Selesai ($statusTampil)",
             "is_deadline": true,
             "status": statusTampil,
             "raw_status": rawStatus,
@@ -197,7 +193,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.chevron_left, color: redMid),
+                    icon: const Icon(Icons.chevron_left, color: kBiruSedang),
                     onPressed: () {
                       setDialogState(() {
                         tempYear--;
@@ -209,11 +205,11 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 18,
-                      color: redDark,
+                      color: kBiruTua,
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.chevron_right, color: redMid),
+                    icon: const Icon(Icons.chevron_right, color: kBiruSedang),
                     onPressed: () {
                       setDialogState(() {
                         tempYear++;
@@ -245,10 +241,14 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                       borderRadius: BorderRadius.circular(10),
                       child: Container(
                         decoration: BoxDecoration(
-                          color: isSelected ? redMid : Colors.grey.shade100,
+                          color: isSelected
+                              ? kBiruSedang
+                              : Colors.grey.shade100,
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(
-                            color: isSelected ? redMid : Colors.transparent,
+                            color: isSelected
+                                ? kBiruSedang
+                                : Colors.transparent,
                           ),
                         ),
                         alignment: Alignment.center,
@@ -257,7 +257,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 13,
-                            color: isSelected ? Colors.white : redDark,
+                            color: isSelected ? Colors.white : kBiruTua,
                           ),
                         ),
                       ),
@@ -275,7 +275,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: redMid,
+                    backgroundColor: kBiruSedang,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -310,7 +310,6 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
     );
   }
 
-  // Menentukan warna badge status berdasarkan kondisi pengerjaan staf
   Color _getStatusColor(String rawStatus) {
     switch (rawStatus.toLowerCase()) {
       case 'disetujui':
@@ -349,9 +348,10 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
   Widget build(BuildContext context) {
     final double screenWidth = MediaQuery.of(context).size.width;
     final double scale = (screenWidth / 375).clamp(0.85, 1.25);
+    final bool isWide = screenWidth >= 700;
 
     return Scaffold(
-      backgroundColor: bgLight,
+      backgroundColor: kBgLight,
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _assignmentStream,
         builder: (context, snapshot) {
@@ -372,7 +372,6 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                 events[selectedKey] ?? [],
               );
 
-              // URUTAN DEADLINE DITARUH PALING ATAS
               currentEvents.sort((a, b) {
                 final bool aIsDeadline = a["is_deadline"] ?? false;
                 final bool bIsDeadline = b["is_deadline"] ?? false;
@@ -385,100 +384,102 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                   snapshot.connectionState == ConnectionState.waiting &&
                   !snapshot.hasData;
 
-              return Stack(
+              return Column(
                 children: [
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: ClipPath(
-                      clipper: HeaderCurveClipper(
-                        curveHeightOffset: 150 * scale,
+                  // HEADER GRADIENT FLAT / LURUS
+                  Container(
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [kBiruMuda, kBiruSedang, kBiruTua],
+                        stops: [0.0, 0.5, 1.0],
                       ),
-                      child: Container(
-                        width: double.infinity,
-                        height: 170 * scale,
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [redLight, redMid, redDark],
-                            stops: [0.0, 0.45, 1.0],
+                    ),
+                    child: SafeArea(
+                      bottom: false,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16 * scale),
+                        child: ResponsiveContent(
+                          child: Row(
+                            children: [
+                              IconButton(
+                                onPressed: () => Navigator.maybePop(context),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                icon: Icon(
+                                  Icons.arrow_back,
+                                  color: Colors.white,
+                                  size: 24 * scale,
+                                ),
+                              ),
+                              Expanded(
+                                child: Center(
+                                  child: Text(
+                                    "Kalender Penugasan",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18 * scale,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              SizedBox(width: 24 * scale),
+                            ],
                           ),
-                        ),
-                        child: Stack(
-                          children: [
-                            Positioned(
-                              top: -30 * scale,
-                              right: -30 * scale,
-                              child: _decorCircle(
-                                150 * scale,
-                                Colors.white.withOpacity(0.08),
-                              ),
-                            ),
-                            Positioned(
-                              top: 40 * scale,
-                              left: -40 * scale,
-                              child: _decorCircle(
-                                120 * scale,
-                                accentGold.withOpacity(0.12),
-                              ),
-                            ),
-                          ],
                         ),
                       ),
                     ),
                   ),
-                  SafeArea(
-                    child: Column(
-                      children: [
-                        Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 16 * scale,
-                            vertical: 10 * scale,
-                          ),
-                          child: Row(
-                            children: [
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.arrow_back_ios_new,
-                                  color: Colors.white,
-                                ),
-                                onPressed: () => Navigator.pop(context),
+
+                  // CONTENT
+                  Expanded(
+                    child: isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : ResponsiveContent(
+                            child: Padding(
+                              padding: EdgeInsets.fromLTRB(
+                                0,
+                                16 * scale,
+                                0,
+                                12 * scale,
                               ),
-                              Text(
-                                "Kalender Penugasan",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20 * scale,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              child: SingleChildScrollView(
+                                physics: const BouncingScrollPhysics(),
+                                child: isWide
+                                    ? Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Expanded(
+                                            flex: 6,
+                                            child: _buildCalendarCard(
+                                              events,
+                                              scale,
+                                            ),
+                                          ),
+                                          SizedBox(width: 20 * scale),
+                                          Expanded(
+                                            flex: 5,
+                                            child: _buildTaskList(
+                                              currentEvents,
+                                              scale,
+                                            ),
+                                          ),
+                                        ],
+                                      )
+                                    : Column(
+                                        children: [
+                                          _buildCalendarCard(events, scale),
+                                          SizedBox(height: 20 * scale),
+                                          _buildTaskList(currentEvents, scale),
+                                        ],
+                                      ),
                               ),
-                            ],
+                            ),
                           ),
-                        ),
-                        SizedBox(height: 10 * scale),
-                        Expanded(
-                          child: isLoading
-                              ? const Center(child: CircularProgressIndicator())
-                              : SingleChildScrollView(
-                                  physics: const BouncingScrollPhysics(),
-                                  child: Padding(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 18 * scale,
-                                    ),
-                                    child: Column(
-                                      children: [
-                                        _buildCalendarCard(events, scale),
-                                        SizedBox(height: 20 * scale),
-                                        _buildTaskList(currentEvents, scale),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                        ),
-                      ],
-                    ),
                   ),
                 ],
               );
@@ -515,13 +516,13 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
     final int totalCells = ((leadingPadding + daysInMonth) / 7).ceil() * 7;
 
     return Container(
-      padding: EdgeInsets.all(16 * scale),
+      padding: EdgeInsets.all(12 * scale),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22 * scale),
+        borderRadius: BorderRadius.circular(20 * scale),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withOpacity(.05),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -534,7 +535,11 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
             children: [
               IconButton(
                 visualDensity: VisualDensity.compact,
-                icon: Icon(Icons.chevron_left, color: redMid, size: 26 * scale),
+                icon: Icon(
+                  Icons.chevron_left,
+                  color: kBiruSedang,
+                  size: 26 * scale,
+                ),
                 onPressed: () => _changeMonth(-1),
               ),
               InkWell(
@@ -548,9 +553,9 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                   child: Text(
                     "${_monthNames[_focusedDay.month - 1]} ${_focusedDay.year}",
                     style: TextStyle(
-                      fontSize: 16 * scale,
+                      fontSize: 15 * scale,
                       fontWeight: FontWeight.bold,
-                      color: redDark,
+                      color: kBiruTua,
                     ),
                   ),
                 ),
@@ -559,14 +564,14 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                 visualDensity: VisualDensity.compact,
                 icon: Icon(
                   Icons.chevron_right,
-                  color: redMid,
+                  color: kBiruSedang,
                   size: 26 * scale,
                 ),
                 onPressed: () => _changeMonth(1),
               ),
             ],
           ),
-          SizedBox(height: 10 * scale),
+          SizedBox(height: 4 * scale),
 
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -590,7 +595,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
               );
             }).toList(),
           ),
-          Divider(height: 20 * scale),
+          Divider(height: 12 * scale),
 
           GridView.builder(
             shrinkWrap: true,
@@ -598,8 +603,9 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
             itemCount: totalCells,
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              mainAxisSpacing: 6,
-              crossAxisSpacing: 6,
+              childAspectRatio: 1.25,
+              mainAxisSpacing: 3,
+              crossAxisSpacing: 3,
             ),
             itemBuilder: (context, index) {
               DateTime date;
@@ -648,7 +654,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                 borderRadius: BorderRadius.circular(12 * scale),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: isSelected ? redMid : Colors.transparent,
+                    color: isSelected ? kBiruSedang : Colors.transparent,
                     borderRadius: BorderRadius.circular(12 * scale),
                   ),
                   child: Column(
@@ -657,7 +663,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                       Text(
                         "${date.day}",
                         style: TextStyle(
-                          fontSize: 13 * scale,
+                          fontSize: 12 * scale,
                           fontWeight: isSelected || (isSunday && isCurrentMonth)
                               ? FontWeight.bold
                               : FontWeight.normal,
@@ -671,17 +677,17 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                         ),
                       ),
                       if (dayEvents.isNotEmpty) ...[
-                        SizedBox(height: 3 * scale),
+                        SizedBox(height: 2 * scale),
                         Container(
-                          width: 5 * scale,
-                          height: 5 * scale,
+                          width: 4 * scale,
+                          height: 4 * scale,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: isSelected
                                 ? accentGold
                                 : (isCurrentMonth
-                                      ? redMid
-                                      : redMid.withOpacity(0.4)),
+                                      ? kBiruSedang
+                                      : kBiruSedang.withOpacity(0.4)),
                           ),
                         ),
                       ],
@@ -706,9 +712,9 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
             Text(
               "Pekerjaan Tanggal Ini",
               style: TextStyle(
-                fontSize: 16 * scale,
+                fontSize: 17 * scale,
                 fontWeight: FontWeight.bold,
-                color: Colors.black87,
+                color: kBiruTua,
               ),
             ),
             Text(
@@ -764,24 +770,24 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                     );
                   }
                 },
-                borderRadius: BorderRadius.circular(16 * scale),
+                borderRadius: BorderRadius.circular(20 * scale),
                 child: Container(
-                  margin: EdgeInsets.only(bottom: 10 * scale),
-                  padding: EdgeInsets.all(14 * scale),
+                  margin: EdgeInsets.only(bottom: 12 * scale),
+                  padding: EdgeInsets.all(16 * scale),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(16 * scale),
+                    borderRadius: BorderRadius.circular(20 * scale),
                     border: Border(
                       left: BorderSide(
-                        color: isDeadline ? Colors.red.shade600 : redMid,
+                        color: isDeadline ? Colors.red.shade600 : kBiruSedang,
                         width: 4 * scale,
                       ),
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
+                        color: Colors.black.withOpacity(.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
                       ),
                     ],
                   ),
@@ -849,41 +855,4 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
       ],
     );
   }
-
-  Widget _decorCircle(double size, Color color) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-    );
-  }
-}
-
-class HeaderCurveClipper extends CustomClipper<Path> {
-  final double curveHeightOffset;
-
-  HeaderCurveClipper({required this.curveHeightOffset});
-
-  @override
-  Path getClip(Size size) {
-    final path = Path();
-    path.lineTo(0, curveHeightOffset - 20);
-
-    final controlPoint = Offset(size.width / 2, curveHeightOffset + 25);
-    final endPoint = Offset(size.width, curveHeightOffset - 20);
-
-    path.quadraticBezierTo(
-      controlPoint.dx,
-      controlPoint.dy,
-      endPoint.dx,
-      endPoint.dy,
-    );
-
-    path.lineTo(size.width, 0);
-    path.close();
-    return path;
-  }
-
-  @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) => true;
 }

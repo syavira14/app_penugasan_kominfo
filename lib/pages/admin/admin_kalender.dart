@@ -1,24 +1,8 @@
-import 'dart:convert';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../tugas/kelola_tugas_page.dart' hide AppColors;
-import '../../tugas/tugas_model.dart';
+import '../../tugas/kelola_tugas_page.dart';
 import 'admin_navbar.dart';
-
-// ==========================================
-// WARNA UTAMA APLIKASI
-// ==========================================
-class AppColors {
-  static const Color biruTua = Color(0xFF0011CC);
-  static const Color biruSedang = Color(0xFF0066FF);
-  static const Color cyan = Color(0xFF00CCFF);
-  static const Color putih = Colors.white;
-  static const Color abuTeks = Color(0xFF5A6472);
-  static const Color latarAbu = Color(0xFFF4F6FB);
-  static const Color oranyeWarning = Color(0xFFFF9800);
-}
 
 class AdminKalenderPage extends StatefulWidget {
   const AdminKalenderPage({super.key});
@@ -28,245 +12,676 @@ class AdminKalenderPage extends StatefulWidget {
 }
 
 class _AdminKalenderPageState extends State<AdminKalenderPage> {
-  static const _staffStorageKey = 'kelola_staff_list';
-  DateTime _bulanAktif = DateTime.now();
-  DateTime _tanggalTerpilih = DateTime.now();
-  Map<String, String> _fotoStaff = {};
+  // Warna Tema Admin
+  static const Color blueDark = Color(0xFF1B267B);
+  static const Color blueMid = Color(0xFF0066B3);
+  static const Color blueLight = Color(0xFF00A8E8);
+  static const Color accentGold = Color(0xFFFFC107);
+  static const Color bgLight = Color(0xFFF4F8FC);
 
-  final List<TugasModel> _daftarTugas = [
-    TugasModel(
-      id: '1',
-      judul: 'Pemeliharaan Server Data Center',
-      deskripsi: 'Pengecekan rutin dan pemeliharaan server utama.',
-      tempat: 'Ruang Server, Kantor Dinas Kominfo',
-      tanggal: DateTime(2026, 9, 10),
-      jam: const TimeOfDay(hour: 9, minute: 0),
-      staff: const ['Ahmad Fauzi'],
-      prioritas: 'Tinggi',
-    ),
-    TugasModel(
-      id: '2',
-      judul: 'Update Konten Portal Layanan Publik',
-      deskripsi: 'Memperbarui informasi layanan pada portal resmi.',
-      tempat: 'Kantor Dinas Kominfo Lt. 2',
-      tanggal: DateTime(2026, 9, 10),
-      jam: const TimeOfDay(hour: 13, minute: 30),
-      staff: const ['Siti Nurhaliza'],
-      prioritas: 'Sedang',
-    ),
-    TugasModel(
-      id: '3',
-      judul: 'Audit Keamanan Jaringan',
-      deskripsi: 'Pemeriksaan celah keamanan pada jaringan internal.',
-      tempat: 'Ruang IT, Kantor Dinas Kominfo',
-      tanggal: DateTime(2026, 9, 15),
-      jam: const TimeOfDay(hour: 10, minute: 0),
-      staff: const ['Budi Santoso', 'Ahmad Fauzi'],
-      prioritas: 'Tinggi',
-    ),
-    TugasModel(
-      id: '4',
-      judul: 'Dokumentasi Rapat Koordinasi',
-      deskripsi: 'Menyusun notulen dan dokumentasi hasil rapat.',
-      tempat: 'Ruang Rapat Utama',
-      tanggal: DateTime(2026, 9, 22),
-      jam: const TimeOfDay(hour: 14, minute: 0),
-      staff: const ['Siti Nurhaliza'],
-      prioritas: 'Rendah',
-    ),
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  DateTime _focusedDay = DateTime.now();
+  DateTime _selectedDay = DateTime.now();
+
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _assignmentStream;
+
+  static const List<String> _monthNames = [
+    "Januari",
+    "Februari",
+    "Maret",
+    "April",
+    "Mei",
+    "Juni",
+    "Juli",
+    "Agustus",
+    "September",
+    "Oktober",
+    "November",
+    "Desember",
   ];
 
   @override
   void initState() {
     super.initState();
-    _loadStaffPhotos();
+    _initStream();
   }
 
-  Future<void> _loadStaffPhotos() async {
-    final preferences = await SharedPreferences.getInstance();
-    final storedStaff = preferences.getString(_staffStorageKey);
-    if (!mounted || storedStaff == null) return;
+  void _initStream() {
+    // Admin membaca seluruh snapshot dari koleksi penugasan
+    _assignmentStream = _firestore.collection('penugasan').snapshots();
+  }
 
-    final decoded = jsonDecode(storedStaff);
-    if (decoded is! List) return;
+  String _dateKey(DateTime date) {
+    return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+  }
 
-    final photos = <String, String>{};
-    for (final item in decoded.whereType<Map>()) {
-      final name = item['nama']?.toString();
-      final photo = item['imageBase64']?.toString();
-      if (name != null && photo != null && photo.isNotEmpty) {
-        photos[name] = photo;
-      }
+  DateTime? _asDate(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
     }
-    if (mounted) setState(() => _fotoStaff = photos);
+    return null;
   }
 
-  List<TugasModel> _tugasPadaTanggal(DateTime tanggal) {
-    return _daftarTugas
-        .where((tugas) => DateUtils.isSameDay(tugas.tanggal, tanggal))
-        .toList();
+  String _statusUi(String rawStatus) {
+    switch (rawStatus.toLowerCase()) {
+      case 'berlangsung':
+        return 'Berlangsung';
+      case 'dikumpulkan':
+        return 'Menunggu Disetujui';
+      case 'revisi':
+        return 'Revisi';
+      case 'disetujui':
+        return 'Selesai';
+      case 'terkendala':
+        return 'Terkendala';
+      default:
+        return 'Pending';
+    }
   }
 
-  void _ubahBulan(int jumlah) {
+  void _changeMonth(int offset) {
+    final DateTime newMonth = DateTime(
+      _focusedDay.year,
+      _focusedDay.month + offset,
+      1,
+    );
+    final DateTime now = DateTime.now();
+
     setState(() {
-      _bulanAktif = DateTime(_bulanAktif.year, _bulanAktif.month + jumlah);
-      _tanggalTerpilih = DateTime(_bulanAktif.year, _bulanAktif.month, 1);
+      _focusedDay = newMonth;
+      if (newMonth.year == now.year && newMonth.month == now.month) {
+        _selectedDay = DateTime(now.year, now.month, now.day);
+      } else {
+        _selectedDay = DateTime(newMonth.year, newMonth.month, 1);
+      }
     });
+  }
+
+  Future<Map<String, List<Map<String, dynamic>>>> _fetchTaskEvents(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
+  ) async {
+    final Map<String, List<Map<String, dynamic>>> events = {};
+
+    for (final assignment in assignments) {
+      try {
+        final assignmentData = assignment.data();
+        final tugasId = (assignmentData['tugas_id'] ?? '').toString();
+
+        if (tugasId.isEmpty) continue;
+
+        final tugasDoc = await _firestore
+            .collection('tugas')
+            .doc(tugasId)
+            .get();
+        if (!tugasDoc.exists) continue;
+
+        final tugasData = tugasDoc.data() ?? {};
+
+        final DateTime? tglMulai =
+            _asDate(tugasData['tanggal_mulai_tugas']) ??
+            _asDate(tugasData['tanggal_tugas_diberikan']);
+        final DateTime? tglDeadline = _asDate(
+          tugasData['tanggal_selesai_tugas'],
+        );
+
+        final String judulTugas = (tugasData['judul'] ?? 'Tugas Baru')
+            .toString();
+        final String rawStatus = (assignmentData['status'] ?? 'pending')
+            .toString();
+        final String statusTampil = _statusUi(rawStatus);
+
+        // 1. Tanggal Mulai Tugas
+        if (tglMulai != null) {
+          final String keyMulai = _dateKey(tglMulai);
+          events.putIfAbsent(keyMulai, () => []).add({
+            "penugasan_id": assignment.id,
+            "title": judulTugas,
+            "time":
+                "${tglMulai.hour.toString().padLeft(2, '0')}:${tglMulai.minute.toString().padLeft(2, '0')} WIB",
+            "type": "Tugas Diberikan",
+            "is_deadline": false,
+            "status": statusTampil,
+            "raw_status": rawStatus,
+          });
+        }
+
+        // 2. Tanggal Deadline Tugas
+        if (tglDeadline != null) {
+          final String keyDeadline = _dateKey(tglDeadline);
+          events.putIfAbsent(keyDeadline, () => []).add({
+            "penugasan_id": assignment.id,
+            "title": "DEADLINE: $judulTugas",
+            "time":
+                "${tglDeadline.hour.toString().padLeft(2, '0')}:${tglDeadline.minute.toString().padLeft(2, '0')} WIB",
+            "type": "Batas Selesai ($statusTampil)",
+            "is_deadline": true,
+            "status": statusTampil,
+            "raw_status": rawStatus,
+          });
+        }
+      } catch (_) {}
+    }
+
+    return events;
+  }
+
+  void _showMonthYearPicker() {
+    int tempYear = _focusedDay.year;
+    int tempMonth = _focusedDay.month;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              titlePadding: const EdgeInsets.all(16),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: blueMid),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear--;
+                      });
+                    },
+                  ),
+                  Text(
+                    "$tempYear",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: blueDark,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, color: blueMid),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear++;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 300,
+                height: 220,
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  itemCount: 12,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 2.0,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemBuilder: (context, index) {
+                    final isSelected = (index + 1) == tempMonth;
+                    return InkWell(
+                      onTap: () {
+                        setDialogState(() {
+                          tempMonth = index + 1;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isSelected ? blueMid : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected ? blueMid : Colors.transparent,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          _monthNames[index].substring(0, 3),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: isSelected ? Colors.white : blueDark,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text(
+                    "Batal",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: blueMid,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () {
+                    final DateTime newMonth = DateTime(tempYear, tempMonth, 1);
+                    final DateTime now = DateTime.now();
+
+                    setState(() {
+                      _focusedDay = newMonth;
+                      if (newMonth.year == now.year &&
+                          newMonth.month == now.month) {
+                        _selectedDay = DateTime(now.year, now.month, now.day);
+                      } else {
+                        _selectedDay = DateTime(
+                          newMonth.year,
+                          newMonth.month,
+                          1,
+                        );
+                      }
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text("Pilih"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Color _getStatusColor(String rawStatus) {
+    switch (rawStatus.toLowerCase()) {
+      case 'disetujui':
+        return Colors.green.shade700;
+      case 'dikumpulkan':
+        return Colors.blue.shade700;
+      case 'revisi':
+        return Colors.amber.shade900;
+      case 'terkendala':
+        return Colors.red.shade700;
+      case 'berlangsung':
+        return Colors.orange.shade800;
+      default:
+        return Colors.grey.shade700;
+    }
+  }
+
+  Color _getStatusBgColor(String rawStatus) {
+    switch (rawStatus.toLowerCase()) {
+      case 'disetujui':
+        return Colors.green.shade50;
+      case 'dikumpulkan':
+        return Colors.blue.shade50;
+      case 'revisi':
+        return Colors.amber.shade50;
+      case 'terkendala':
+        return Colors.red.shade50;
+      case 'berlangsung':
+        return Colors.orange.shade50;
+      default:
+        return const Color(0xFFE3EEFA);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final tugasTerpilih = _tugasPadaTanggal(_tanggalTerpilih);
-    return withAdminReadableText(
-      context,
-      Scaffold(
-        backgroundColor: AppColors.latarAbu,
-        appBar: AppBar(
-          automaticallyImplyLeading: false,
-          toolbarHeight: 96,
-          backgroundColor: Colors.transparent,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(bottom: Radius.circular(30)),
-          ),
-          flexibleSpace: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF1B267B),
-                  Color(0xFF0066B3),
-                  Color(0xFF00A8E8),
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final double scale = (screenWidth / 375).clamp(0.85, 1.25);
+
+    return Scaffold(
+      backgroundColor: bgLight,
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: _assignmentStream,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(child: Text("Gagal memuat data: ${snapshot.error}"));
+          }
+
+          final assignments = snapshot.data?.docs ?? [];
+
+          return FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
+            future: _fetchTaskEvents(assignments),
+            builder: (context, taskSnapshot) {
+              final Map<String, List<Map<String, dynamic>>> events =
+                  taskSnapshot.data ?? {};
+
+              final String selectedKey = _dateKey(_selectedDay);
+              final List<Map<String, dynamic>> currentEvents = List.from(
+                events[selectedKey] ?? [],
+              );
+
+              currentEvents.sort((a, b) {
+                final bool aIsDeadline = a["is_deadline"] ?? false;
+                final bool bIsDeadline = b["is_deadline"] ?? false;
+                if (aIsDeadline && !bIsDeadline) return -1;
+                if (!aIsDeadline && bIsDeadline) return 1;
+                return 0;
+              });
+
+              final bool isLoading =
+                  snapshot.connectionState == ConnectionState.waiting &&
+                  !snapshot.hasData;
+
+              return Stack(
+                children: [
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: ClipPath(
+                      clipper: HeaderCurveClipper(
+                        curveHeightOffset: 150 * scale,
+                      ),
+                      child: Container(
+                        width: double.infinity,
+                        height: 170 * scale,
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [blueLight, blueMid, blueDark],
+                            stops: [0.0, 0.45, 1.0],
+                          ),
+                        ),
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              top: -30 * scale,
+                              right: -30 * scale,
+                              child: _decorCircle(
+                                150 * scale,
+                                Colors.white.withOpacity(0.08),
+                              ),
+                            ),
+                            Positioned(
+                              top: 40 * scale,
+                              left: -40 * scale,
+                              child: _decorCircle(
+                                120 * scale,
+                                accentGold.withOpacity(0.12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  SafeArea(
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 16 * scale,
+                            vertical: 10 * scale,
+                          ),
+                          child: Row(
+                            children: [
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_back_ios_new,
+                                  color: Colors.white,
+                                ),
+                                onPressed: () => Navigator.pop(context),
+                              ),
+                              Text(
+                                "Kalender Penugasan",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20 * scale,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(height: 10 * scale),
+                        Expanded(
+                          child: isLoading
+                              ? const Center(child: CircularProgressIndicator())
+                              : SingleChildScrollView(
+                                  physics: const BouncingScrollPhysics(),
+                                  child: Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 18 * scale,
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        _buildCalendarCard(events, scale),
+                                        SizedBox(height: 20 * scale),
+                                        _buildTaskList(currentEvents, scale),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
-              ),
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(30)),
-            ),
-          ),
-          title: const Text(
-            'Kalender Penugasan',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
-          children: [
-            _buildCalendarCard(),
-            const SizedBox(height: 22),
-            Text(
-              'Detail ${formatTanggalIndo(_tanggalTerpilih)}',
-              style: const TextStyle(
-                color: AppColors.biruTua,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 10),
-            if (tugasTerpilih.isEmpty)
-              _EmptyCalendarState(tanggal: _tanggalTerpilih)
-            else
-              ...tugasTerpilih.map(_buildTaskDetail),
-          ],
-        ),
-        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 2),
+              );
+            },
+          );
+        },
       ),
+      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 2),
     );
   }
 
-  Widget _buildCalendarCard() {
-    final firstDay = DateTime(_bulanAktif.year, _bulanAktif.month, 1);
-    final daysInMonth = DateTime(
-      _bulanAktif.year,
-      _bulanAktif.month + 1,
+  Widget _buildCalendarCard(
+    Map<String, List<Map<String, dynamic>>> events,
+    double scale,
+  ) {
+    final int daysInMonth = DateTime(
+      _focusedDay.year,
+      _focusedDay.month + 1,
       0,
     ).day;
-    final leadingDays = firstDay.weekday - 1;
-    final totalCells = ((leadingDays + daysInMonth + 6) ~/ 7) * 7;
+
+    final int firstWeekday = DateTime(
+      _focusedDay.year,
+      _focusedDay.month,
+      1,
+    ).weekday;
+
+    final int prevMonthDays = DateTime(
+      _focusedDay.year,
+      _focusedDay.month,
+      0,
+    ).day;
+
+    final int leadingPadding = firstWeekday - 1;
+    final int totalCells = ((leadingPadding + daysInMonth) / 7).ceil() * 7;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+      padding: EdgeInsets.all(16 * scale),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(22 * scale),
         boxShadow: [
           BoxShadow(
-            color: AppColors.biruTua.withOpacity(0.06),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               IconButton(
-                tooltip: 'Bulan sebelumnya',
-                onPressed: () => _ubahBulan(-1),
-                icon: const Icon(Icons.chevron_left_rounded),
-                color: AppColors.biruTua,
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  Icons.chevron_left,
+                  color: blueMid,
+                  size: 26 * scale,
+                ),
+                onPressed: () => _changeMonth(-1),
               ),
-              Text(
-                _namaBulan(_bulanAktif),
-                style: const TextStyle(
-                  color: AppColors.biruTua,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
+              InkWell(
+                onTap: _showMonthYearPicker,
+                borderRadius: BorderRadius.circular(8 * scale),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 8 * scale,
+                    vertical: 4 * scale,
+                  ),
+                  child: Text(
+                    "${_monthNames[_focusedDay.month - 1]} ${_focusedDay.year}",
+                    style: TextStyle(
+                      fontSize: 16 * scale,
+                      fontWeight: FontWeight.bold,
+                      color: blueDark,
+                    ),
+                  ),
                 ),
               ),
               IconButton(
-                tooltip: 'Bulan berikutnya',
-                onPressed: () => _ubahBulan(1),
-                icon: const Icon(Icons.chevron_right_rounded),
-                color: AppColors.biruTua,
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  Icons.chevron_right,
+                  color: blueMid,
+                  size: 26 * scale,
+                ),
+                onPressed: () => _changeMonth(1),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          const Row(
-            children: [
-              _WeekdayLabel('Sen'),
-              _WeekdayLabel('Sel'),
-              _WeekdayLabel('Rab'),
-              _WeekdayLabel('Kam'),
-              _WeekdayLabel('Jum'),
-              _WeekdayLabel('Sab'),
-              _WeekdayLabel('Min'),
-            ],
+          SizedBox(height: 10 * scale),
+
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Ming"].map((
+              day,
+            ) {
+              final isMingguHeader = day == "Ming";
+              return SizedBox(
+                width: 35 * scale,
+                child: Text(
+                  day,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12 * scale,
+                    color: isMingguHeader
+                        ? Colors.red.shade600
+                        : Colors.grey.shade600,
+                  ),
+                ),
+              );
+            }).toList(),
           ),
-          const SizedBox(height: 8),
+          Divider(height: 20 * scale),
+
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: totalCells,
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 4,
-              childAspectRatio: 0.78,
+              mainAxisSpacing: 6,
+              crossAxisSpacing: 6,
             ),
             itemBuilder: (context, index) {
-              final day = index - leadingDays + 1;
-              if (day < 1 || day > daysInMonth) return const SizedBox.shrink();
+              DateTime date;
+              bool isCurrentMonth = true;
 
-              final date = DateTime(_bulanAktif.year, _bulanAktif.month, day);
-              final selected = DateUtils.isSameDay(date, _tanggalTerpilih);
-              final today = DateUtils.isSameDay(date, DateTime.now());
-              final tasks = _tugasPadaTanggal(date);
+              if (index < leadingPadding) {
+                final int dayNum = prevMonthDays - (leadingPadding - index - 1);
+                date = DateTime(
+                  _focusedDay.year,
+                  _focusedDay.month - 1,
+                  dayNum,
+                );
+                isCurrentMonth = false;
+              } else if (index >= leadingPadding + daysInMonth) {
+                final int dayNum = index - (leadingPadding + daysInMonth) + 1;
+                date = DateTime(
+                  _focusedDay.year,
+                  _focusedDay.month + 1,
+                  dayNum,
+                );
+                isCurrentMonth = false;
+              } else {
+                final int dayNum = index - leadingPadding + 1;
+                date = DateTime(_focusedDay.year, _focusedDay.month, dayNum);
+              }
 
-              return _CalendarDay(
-                date: date,
-                selected: selected,
-                today: today,
-                tasks: tasks,
-                photos: _fotoStaff,
-                onTap: () => setState(() => _tanggalTerpilih = date),
+              final String key = _dateKey(date);
+
+              final bool isSelected =
+                  date.year == _selectedDay.year &&
+                  date.month == _selectedDay.month &&
+                  date.day == _selectedDay.day;
+
+              final bool isSunday = date.weekday == DateTime.sunday;
+              final List<Map<String, dynamic>> dayEvents = events[key] ?? [];
+
+              return InkWell(
+                onTap: () {
+                  setState(() {
+                    _selectedDay = date;
+                    if (!isCurrentMonth) {
+                      _focusedDay = DateTime(date.year, date.month, 1);
+                    }
+                  });
+                },
+                borderRadius: BorderRadius.circular(12 * scale),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: isSelected ? blueMid : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12 * scale),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        "${date.day}",
+                        style: TextStyle(
+                          fontSize: 13 * scale,
+                          fontWeight: isSelected || (isSunday && isCurrentMonth)
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color: isSelected
+                              ? Colors.white
+                              : (!isCurrentMonth
+                                    ? Colors.grey.shade400
+                                    : (isSunday
+                                          ? Colors.red.shade600
+                                          : Colors.black87)),
+                        ),
+                      ),
+                      if (dayEvents.isNotEmpty) ...[
+                        SizedBox(height: 3 * scale),
+                        Container(
+                          width: 5 * scale,
+                          height: 5 * scale,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isSelected
+                                ? accentGold
+                                : (isCurrentMonth
+                                      ? blueMid
+                                      : blueMid.withOpacity(0.4)),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               );
             },
           ),
@@ -275,269 +690,189 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
     );
   }
 
-  Widget _buildTaskDetail(TugasModel tugas) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const KelolaTugasPage()),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(15),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.assignment_rounded,
-                  color: AppColors.biruSedang,
-                  size: 27,
+  Widget _buildTaskList(List<Map<String, dynamic>> events, double scale) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              "Pekerjaan Tanggal Ini",
+              style: TextStyle(
+                fontSize: 16 * scale,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            Text(
+              "${_selectedDay.day}/${_selectedDay.month}/${_selectedDay.year}",
+              style: TextStyle(
+                fontSize: 12 * scale,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 12 * scale),
+        if (events.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(20 * scale),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16 * scale),
+            ),
+            child: Center(
+              child: Text(
+                "Tidak ada jadwal pekerjaan pada tanggal ini",
+                style: TextStyle(
+                  color: Colors.grey.shade500,
+                  fontSize: 13 * scale,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+              ),
+            ),
+          )
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: events.length,
+            itemBuilder: (context, index) {
+              final item = events[index];
+              final bool isDeadline = item["is_deadline"] ?? false;
+              final String rawStatus = item["raw_status"] ?? "pending";
+
+              final Color statusTextColor = _getStatusColor(rawStatus);
+              final Color statusBgColor = _getStatusBgColor(rawStatus);
+
+              return InkWell(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const KelolaTugasPage()),
+                  );
+                },
+                borderRadius: BorderRadius.circular(16 * scale),
+                child: Container(
+                  margin: EdgeInsets.only(bottom: 10 * scale),
+                  padding: EdgeInsets.all(14 * scale),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16 * scale),
+                    border: Border(
+                      left: BorderSide(
+                        color: isDeadline ? Colors.red.shade600 : blueMid,
+                        width: 4 * scale,
+                      ),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
                     children: [
-                      Text(
-                        tugas.judul,
-                        style: const TextStyle(
-                          color: AppColors.biruTua,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        '${formatJam(tugas.jam)}  |  ${tugas.tempat}',
-                        style: const TextStyle(
-                          color: AppColors.abuTeks,
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: tugas.staff
-                            .map(
-                              (staff) => _StaffChip(
-                                name: staff,
-                                photo: _fotoStaff[staff],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item["title"]!,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14 * scale,
+                                color: isDeadline
+                                    ? Colors.red.shade900
+                                    : Colors.black87,
                               ),
-                            )
-                            .toList(),
+                            ),
+                            SizedBox(height: 4 * scale),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.access_time,
+                                  size: 14 * scale,
+                                  color: Colors.grey,
+                                ),
+                                SizedBox(width: 4 * scale),
+                                Text(
+                                  item["time"]!,
+                                  style: TextStyle(
+                                    fontSize: 11 * scale,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 10 * scale,
+                          vertical: 4 * scale,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusBgColor,
+                          borderRadius: BorderRadius.circular(8 * scale),
+                        ),
+                        child: Text(
+                          item["type"]!,
+                          style: TextStyle(
+                            color: statusTextColor,
+                            fontSize: 10 * scale,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: AppColors.abuTeks,
-                ),
-              ],
-            ),
+              );
+            },
           ),
-        ),
-      ),
+      ],
     );
   }
 
-  String _namaBulan(DateTime date) {
-    const names = [
-      'Januari',
-      'Februari',
-      'Maret',
-      'April',
-      'Mei',
-      'Juni',
-      'Juli',
-      'Agustus',
-      'September',
-      'Oktober',
-      'November',
-      'Desember',
-    ];
-    return '${names[date.month - 1]} ${date.year}';
-  }
-}
-
-class _CalendarDay extends StatelessWidget {
-  final DateTime date;
-  final bool selected;
-  final bool today;
-  final List<TugasModel> tasks;
-  final Map<String, String> photos;
-  final VoidCallback onTap;
-
-  const _CalendarDay({
-    required this.date,
-    required this.selected,
-    required this.today,
-    required this.tasks,
-    required this.photos,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final background = selected
-        ? AppColors.biruSedang.withOpacity(0.22)
-        : today
-        ? AppColors.biruSedang
-        : Colors.transparent;
-    final foreground = today && !selected ? Colors.white : AppColors.biruTua;
-    final staff = tasks.expand((task) => task.staff).toSet().take(3).toList();
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: background,
-          borderRadius: BorderRadius.circular(12),
-          border: selected
-              ? Border.all(color: AppColors.biruSedang, width: 1.5)
-              : null,
-        ),
-        padding: const EdgeInsets.only(top: 5, left: 2, right: 2),
-        child: Column(
-          children: [
-            Text(
-              '${date.day}',
-              style: TextStyle(
-                color: foreground,
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 5),
-            if (staff.isNotEmpty)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: staff.map((name) {
-                  final image = photos[name];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 1),
-                    child: CircleAvatar(
-                      radius: 10,
-                      backgroundColor: Colors.white,
-                      backgroundImage: image == null
-                          ? null
-                          : MemoryImage(base64Decode(image)),
-                      child: image == null
-                          ? Text(
-                              name.substring(0, 1),
-                              style: const TextStyle(
-                                color: AppColors.biruTua,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            )
-                          : null,
-                    ),
-                  );
-                }).toList(),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StaffChip extends StatelessWidget {
-  final String name;
-  final String? photo;
-
-  const _StaffChip({required this.name, required this.photo});
-
-  @override
-  Widget build(BuildContext context) {
-    return Chip(
-      avatar: CircleAvatar(
-        radius: 11,
-        backgroundColor: AppColors.biruSedang.withOpacity(0.12),
-        backgroundImage: photo == null
-            ? null
-            : MemoryImage(base64Decode(photo!)),
-        child: photo == null
-            ? Text(
-                name.substring(0, 1),
-                style: const TextStyle(
-                  color: AppColors.biruTua,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                ),
-              )
-            : null,
-      ),
-      label: Text(name),
-      labelStyle: const TextStyle(
-        color: AppColors.biruTua,
-        fontSize: 12,
-        fontWeight: FontWeight.w600,
-      ),
-      backgroundColor: AppColors.biruSedang.withOpacity(0.08),
-      side: BorderSide.none,
-      padding: const EdgeInsets.symmetric(horizontal: 5),
-    );
-  }
-}
-
-class _WeekdayLabel extends StatelessWidget {
-  final String label;
-
-  const _WeekdayLabel(this.label);
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Center(
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: AppColors.abuTeks,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyCalendarState extends StatelessWidget {
-  final DateTime tanggal;
-
-  const _EmptyCalendarState({required this.tanggal});
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _decorCircle(double size, Color color) {
     return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        children: [
-          const Icon(
-            Icons.event_available_rounded,
-            color: AppColors.cyan,
-            size: 38,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Belum ada tugas pada ${formatTanggalIndo(tanggal)}',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.abuTeks, fontSize: 14),
-          ),
-        ],
-      ),
+      width: size,
+      height: size,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
     );
   }
+}
+
+class HeaderCurveClipper extends CustomClipper<Path> {
+  final double curveHeightOffset;
+
+  HeaderCurveClipper({required this.curveHeightOffset});
+
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    path.lineTo(0, curveHeightOffset - 20);
+
+    final controlPoint = Offset(size.width / 2, curveHeightOffset + 25);
+    final endPoint = Offset(size.width, curveHeightOffset - 20);
+
+    path.quadraticBezierTo(
+      controlPoint.dx,
+      controlPoint.dy,
+      endPoint.dx,
+      endPoint.dy,
+    );
+
+    path.lineTo(size.width, 0);
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(CustomClipper<Path> oldClipper) => true;
 }

@@ -4,6 +4,7 @@ import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
 import '../admin/dashboard_admin_page.dart';
 import '../staff/staff_dashboard.dart';
+import 'forgot_password_page.dart';
 
 class AppColors {
   static const Color biruTua = Color(0xFF0D1B2A);
@@ -55,7 +56,6 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      // Autentikasi via Firebase (Mengembalikan Map<String, dynamic>?)
       final userDataMap = await _authService.loginWithEmail(
         email: _identifierController.text.trim(),
         password: _passwordController.text,
@@ -63,11 +63,6 @@ class _LoginPageState extends State<LoginPage> {
 
       if (!mounted) return;
 
-      setState(() {
-        _isLoading = false;
-      });
-
-      // Peta data Map ke UserModel
       UserModel userModel;
       if (userDataMap != null) {
         userModel = UserModel.fromMap(userDataMap);
@@ -75,7 +70,10 @@ class _LoginPageState extends State<LoginPage> {
         throw Exception("Data pengguna tidak ditemukan di database.");
       }
 
-      // Navigasi Otomatis Berdasarkan Role pada UserModel
+      setState(() {
+        _isLoading = false;
+      });
+
       if (userModel.role.toLowerCase() == 'admin') {
         Navigator.pushReplacement(
           context,
@@ -94,7 +92,6 @@ class _LoginPageState extends State<LoginPage> {
         _isLoading = false;
       });
 
-      // Notifikasi Pesan Kesalahan
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(e.toString().replaceAll('Exception: ', '')),
@@ -106,23 +103,9 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   void _handleForgotPassword() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Row(
-          children: [
-            Icon(Icons.info_outline, color: Colors.white, size: 20),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Fitur reset kata sandi dikirim via link email Firebase.',
-              ),
-            ),
-          ],
-        ),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        backgroundColor: AppColors.biruPrimary,
-      ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
     );
   }
 
@@ -131,348 +114,447 @@ class _LoginPageState extends State<LoginPage> {
     return Scaffold(
       backgroundColor: AppColors.latar,
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              // =================================================
-              // HEADER DENGAN GELOMBANG SINOUS
-              // =================================================
-              SizedBox(
-                height: 270,
-                width: double.infinity,
-                child: Stack(
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      height: 250,
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            AppColors.biruTua,
-                            AppColors.biruPrimary,
-                            AppColors.biruSedang,
-                          ],
-                        ),
-                        borderRadius: BorderRadius.only(
-                          bottomLeft: Radius.circular(32),
-                          bottomRight: Radius.circular(32),
-                        ),
-                      ),
-                    ),
-                    Positioned.fill(
-                      child: CustomPaint(painter: _BackgroundWavePainter()),
-                    ),
-                    Positioned.fill(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.15),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white.withOpacity(0.3),
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: Container(
-                                width: 56,
-                                height: 56,
-                                decoration: const BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.lan_outlined,
-                                  color: AppColors.biruPrimary,
-                                  size: 30,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            const Text(
-                              'SIMTAS',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 22,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1.5,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Sistem Manajemen Penugasan Pegawai',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.85),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth > 600) {
+              return _buildDesktopLayout();
+            } else {
+              return _buildMobileLayout();
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  // =========================================================================
+  // LAYOUT MOBILE
+  // =========================================================================
+  Widget _buildMobileLayout() {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          _buildHeader(isDesktop: false),
+          _buildLoginFormCard(isDesktop: false),
+          const SizedBox(height: 16),
+          _buildFooter(),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  // =========================================================================
+  // LAYOUT DESKTOP (Split Screen)
+  // =========================================================================
+  Widget _buildDesktopLayout() {
+    return Row(
+      children: [
+        // 1. Bagian Kiri: Form Login (Latar Putih)
+        Expanded(
+          flex: 1,
+          child: Container(
+            color: AppColors.latar,
+            height: double.infinity,
+            padding: const EdgeInsets.all(40),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 450),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildLoginFormCard(isDesktop: true),
+                      const SizedBox(height: 24),
+                      _buildFooter(),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // 2. Bagian Kanan: Banner / Branding SIMTAS (Latar Biru)
+        Expanded(
+          flex: 1,
+          child: Container(
+            height: double.infinity,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  AppColors.biruTua,
+                  AppColors.biruPrimary,
+                  AppColors.biruSedang,
+                ],
+              ),
+            ),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: CustomPaint(painter: _BackgroundWavePainter()),
+                ),
+                Center(child: _buildHeaderContent(isDesktop: true)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // =========================================================================
+  // WIDGET REUSABLE: HEADER
+  // =========================================================================
+  Widget _buildHeader({required bool isDesktop}) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.only(
+        bottomLeft: Radius.circular(32),
+        bottomRight: Radius.circular(32),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        height: isDesktop ? double.infinity : 270,
+        width: double.infinity,
+        child: Stack(
+          children: [
+            Container(
+              width: double.infinity,
+              height: double.infinity,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    AppColors.biruTua,
+                    AppColors.biruPrimary,
+                    AppColors.biruSedang,
                   ],
                 ),
               ),
-
-              // =================================================
-              // KARTU ISIAN LOGIN
-              // =================================================
-              Transform.translate(
-                offset: const Offset(0, -30),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Container(
-                    padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF64748B).withOpacity(0.08),
-                          blurRadius: 24,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Form(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Selamat Datang',
-                            style: TextStyle(
-                              color: AppColors.biruTua,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Silakan masuk menggunakan Email/NIP dan kata sandi Anda.',
-                            style: TextStyle(
-                              color: AppColors.abuTeks,
-                              fontSize: 13,
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-
-                          // INPUT EMAIL / NIP
-                          const Text(
-                            'Email / NIP',
-                            style: TextStyle(
-                              color: AppColors.abuHeader,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _identifierController,
-                            keyboardType: TextInputType.emailAddress,
-                            textInputAction: TextInputAction.next,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: AppColors.biruTua,
-                            ),
-                            decoration: _inputDecoration(
-                              hint: 'Masukkan Email atau NIP terdaftar',
-                              icon: Icons.email_outlined,
-                            ),
-                            onFieldSubmitted: (_) {
-                              FocusScope.of(
-                                context,
-                              ).requestFocus(_passwordFocusNode);
-                            },
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Email / NIP wajib diisi';
-                              }
-                              return null;
-                            },
-                          ),
-
-                          const SizedBox(height: 18),
-
-                          // INPUT KATA SANDI
-                          const Text(
-                            'Kata Sandi',
-                            style: TextStyle(
-                              color: AppColors.abuHeader,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _passwordController,
-                            focusNode: _passwordFocusNode,
-                            obscureText: _obscurePassword,
-                            textInputAction: TextInputAction.done,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: AppColors.biruTua,
-                            ),
-                            onFieldSubmitted: (_) {
-                              if (!_isLoading) _handleLogin();
-                            },
-                            decoration: _inputDecoration(
-                              hint: 'Masukkan kata sandi',
-                              icon: Icons.lock_outline_rounded,
-                              suffixIcon: IconButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _obscurePassword = !_obscurePassword;
-                                  });
-                                },
-                                icon: Icon(
-                                  _obscurePassword
-                                      ? Icons.visibility_outlined
-                                      : Icons.visibility_off_outlined,
-                                  color: AppColors.abuTeks,
-                                  size: 20,
-                                ),
-                              ),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Kata sandi wajib diisi';
-                              }
-                              return null;
-                            },
-                          ),
-
-                          // LUPA PASSWORD
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton(
-                              onPressed: _handleForgotPassword,
-                              style: TextButton.styleFrom(
-                                padding: const EdgeInsets.only(
-                                  top: 8,
-                                  bottom: 8,
-                                ),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                              child: const Text(
-                                'Lupa kata sandi?',
-                                style: TextStyle(
-                                  color: AppColors.biruSedang,
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 16),
-
-                          // TOMBOL MASUK
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: ElevatedButton(
-                              onPressed: _isLoading ? null : _handleLogin,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.biruSedang,
-                                foregroundColor: Colors.white,
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              child: _isLoading
-                                  ? const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.5,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                              Colors.white,
-                                            ),
-                                      ),
-                                    )
-                                  : const Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Text(
-                                          'Masuk ',
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        SizedBox(width: 8),
-                                        Icon(
-                                          Icons.arrow_forward_rounded,
-                                          size: 18,
-                                        ),
-                                      ],
-                                    ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 20),
-
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: AppColors.latar,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: AppColors.abuBorder),
-                            ),
-                            child: const Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(
-                                  Icons.verified_user_outlined,
-                                  color: AppColors.biruSedang,
-                                  size: 18,
-                                ),
-                                SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(
-                                    'Masuk menggunakan Email resmi terdaftar. Peran/Role akses ditentukan otomatis oleh sistem.',
-                                    style: TextStyle(
-                                      color: AppColors.abuTeks,
-                                      fontSize: 11.5,
-                                      height: 1.4,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+            ),
+            Positioned.fill(
+              child: CustomPaint(painter: _BackgroundWavePainter()),
+            ),
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Center(child: _buildHeaderContent(isDesktop: isDesktop)),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-              Padding(
-                padding: const EdgeInsets.only(bottom: 24),
-                child: Text(
-                  'Dinas Komunikasi dan Informatika',
-                  style: TextStyle(
-                    color: AppColors.abuTeks.withOpacity(0.8),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+  Widget _buildHeaderContent({required bool isDesktop}) {
+    final double logoSize = isDesktop ? 110.0 : 70.0;
+    final double iconPadding = isDesktop ? 8.0 : 4.0;
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(
+          padding: EdgeInsets.all(isDesktop ? 12 : 8),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.18),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.white.withOpacity(0.35),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.12),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
+          child: Container(
+            width: logoSize,
+            height: logoSize,
+            padding: EdgeInsets.all(iconPadding),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            child: ClipOval(
+              child: Image.asset(
+                'assets/images/logokominfo.png',
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return Icon(
+                    Icons.image_not_supported_rounded,
+                    color: AppColors.biruPrimary,
+                    size: isDesktop ? 45 : 30,
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+        SizedBox(height: isDesktop ? 16 : 8),
+        Text(
+          'SIMTAS',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: isDesktop ? 26 : 20,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.5,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Sistem Informasi Manajemen Tugas dan Staff',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.85),
+            fontSize: isDesktop ? 13.5 : 11,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // =========================================================================
+  // WIDGET REUSABLE: KARTU FORM LOGIN
+  // =========================================================================
+  Widget _buildLoginFormCard({required bool isDesktop}) {
+    Widget cardContent = Container(
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF64748B).withOpacity(0.08),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Selamat Datang',
+              style: TextStyle(
+                color: AppColors.biruTua,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Silakan masuk menggunakan NIP dan kata sandi Anda.',
+              style: TextStyle(color: AppColors.abuTeks, fontSize: 14),
+            ),
+            const SizedBox(height: 28),
+
+            // INPUT NIP
+            _buildInputLabel('NIP'),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _identifierController,
+              keyboardType: TextInputType.emailAddress,
+              textInputAction: TextInputAction.next,
+              style: const TextStyle(fontSize: 14, color: AppColors.biruTua),
+              decoration: _inputDecoration(
+                hint: 'Masukkan NIP terdaftar',
+                icon: Icons.badge_outlined,
+              ),
+              onFieldSubmitted: (_) {
+                FocusScope.of(context).requestFocus(_passwordFocusNode);
+              },
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'NIP wajib diisi';
+                }
+                return null;
+              },
+            ),
+
+            const SizedBox(height: 20),
+
+            // INPUT KATA SANDI
+            _buildInputLabel('Kata Sandi'),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _passwordController,
+              focusNode: _passwordFocusNode,
+              obscureText: _obscurePassword,
+              textInputAction: TextInputAction.done,
+              style: const TextStyle(fontSize: 14, color: AppColors.biruTua),
+              onFieldSubmitted: (_) {
+                if (!_isLoading) _handleLogin();
+              },
+              decoration: _inputDecoration(
+                hint: 'Masukkan kata sandi',
+                icon: Icons.lock_outline_rounded,
+                suffixIcon: IconButton(
+                  onPressed: () {
+                    setState(() {
+                      _obscurePassword = !_obscurePassword;
+                    });
+                  },
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    color: AppColors.abuTeks,
+                    size: 20,
+                  ),
+                ),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Kata sandi wajib diisi';
+                }
+                return null;
+              },
+            ),
+
+            // LUPA PASSWORD
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _handleForgotPassword,
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.only(top: 8, bottom: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text(
+                  'Lupa kata sandi?',
+                  style: TextStyle(
+                    color: AppColors.biruSedang,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // TOMBOL MASUK
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _handleLogin,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color.fromARGB(255, 37, 99, 235),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      )
+                    : const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Masuk ',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          Icon(Icons.arrow_forward_rounded, size: 18),
+                        ],
+                      ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // INFO BOX
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.latar,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.abuBorder),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.verified_user_outlined,
+                    color: AppColors.biruSedang,
+                    size: 20,
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Masuk menggunakan NIP terdaftar. Peran/Role akses ditentukan otomatis oleh sistem.',
+                      style: TextStyle(
+                        color: AppColors.abuTeks,
+                        fontSize: 12.5,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (isDesktop) {
+      return cardContent;
+    } else {
+      return Transform.translate(
+        offset: const Offset(0, -30),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: cardContent,
+        ),
+      );
+    }
+  }
+
+  Widget _buildInputLabel(String label) {
+    return Text(
+      label,
+      style: const TextStyle(
+        color: AppColors.abuHeader,
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+
+  Widget _buildFooter() {
+    return Center(
+      child: Text(
+        'Dinas Komunikasi dan Informatika',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: AppColors.abuTeks.withOpacity(0.8),
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
         ),
       ),
     );
@@ -485,12 +567,12 @@ class _LoginPageState extends State<LoginPage> {
   }) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: AppColors.abuTeks, fontSize: 13.5),
+      hintStyle: const TextStyle(color: AppColors.abuTeks, fontSize: 14),
       prefixIcon: Icon(icon, color: AppColors.abuTeks, size: 20),
       suffixIcon: suffixIcon,
       filled: true,
       fillColor: AppColors.latar,
-      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: AppColors.abuBorder),
@@ -502,6 +584,10 @@ class _LoginPageState extends State<LoginPage> {
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: AppColors.biruSedang, width: 1.5),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1),
       ),
     );
   }

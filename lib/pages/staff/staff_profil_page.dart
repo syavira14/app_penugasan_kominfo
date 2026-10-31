@@ -7,7 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/user_model.dart';
-import '../auth/welcome_page.dart';
+import '../../widgets/app_layout.dart';
+import '../auth/login_page.dart';
 
 class StaffProfilPage extends StatefulWidget {
   const StaffProfilPage({super.key});
@@ -17,19 +18,10 @@ class StaffProfilPage extends StatefulWidget {
 }
 
 class _StaffProfilPageState extends State<StaffProfilPage> {
-  // ============================================================
-  // WARNA
-  // ============================================================
-
-  static const Color redDark = Color(0xFF1A1464);
-  static const Color redMid = Color(0xFF1D5FA0);
-  static const Color redLight = Color(0xFF4FA6DE);
-  static const Color accentGold = Color(0xFFFFC107);
-  static const Color bgLight = Color(0xFFF7F9FB);
-
-  // ============================================================
-  // DATA
-  // ============================================================
+  static const Color kBiruTua = Color(0xFF1A1464);
+  static const Color kBiruSedang = Color(0xFF1D5FA0);
+  static const Color kBiruMuda = Color(0xFF4FA6DE);
+  static const Color kBgLight = Color(0xFFF7F9FB);
 
   UserModel? currentUser;
 
@@ -38,19 +30,11 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
 
   final ImagePicker _picker = ImagePicker();
 
-  // ============================================================
-  // INIT
-  // ============================================================
-
   @override
   void initState() {
     super.initState();
     _fetchUserData();
   }
-
-  // ============================================================
-  // AMBIL DATA USER
-  // ============================================================
 
   Future<void> _fetchUserData() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -92,13 +76,10 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     }
   }
 
-  // ============================================================
-  // GANTI FOTO
-  // ============================================================
-
   void _gantiFoto() {
     showModalBottomSheet(
       context: context,
+      constraints: const BoxConstraints(maxWidth: 640),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
@@ -114,20 +95,16 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-
-                // KAMERA
                 ListTile(
-                  leading: const Icon(Icons.camera_alt, color: redMid),
+                  leading: const Icon(Icons.camera_alt, color: kBiruSedang),
                   title: const Text('Kamera'),
                   onTap: () {
                     Navigator.pop(ctx);
                     _pickAndUploadImage(ImageSource.camera);
                   },
                 ),
-
-                // GALERI
                 ListTile(
-                  leading: const Icon(Icons.photo_library, color: redMid),
+                  leading: const Icon(Icons.photo_library, color: kBiruSedang),
                   title: const Text('Galeri Foto'),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -142,10 +119,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     );
   }
 
-  // ============================================================
-  // PILIH FOTO + SIMPAN FIRESTORE
-  // ============================================================
-
   Future<void> _pickAndUploadImage(ImageSource source) async {
     try {
       final XFile? pickedFile = await _picker.pickImage(
@@ -155,9 +128,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
         maxHeight: 500,
       );
 
-      if (pickedFile == null) {
-        return;
-      }
+      if (pickedFile == null) return;
 
       if (mounted) {
         setState(() {
@@ -166,24 +137,16 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       }
 
       final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User belum login');
 
-      if (user == null) {
-        throw Exception('User belum login');
-      }
-
-      // Ambil file sebagai bytes
       final Uint8List bytes = await pickedFile.readAsBytes();
-
-      // Ubah gambar menjadi Base64
       final String fotoBase64 = base64Encode(bytes);
 
-      // Simpan ke Firestore
       await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
         'foto_base64': fotoBase64,
         'updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // Ambil data terbaru
       await _fetchUserData();
 
       if (mounted) {
@@ -212,18 +175,10 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     }
   }
 
-  // ============================================================
-  // UBAH INFORMASI PROFIL (NO HP & PASSWORD)
-  // ============================================================
-
   Future<void> _editProfil() async {
     final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
 
-    if (user == null) {
-      return;
-    }
-
-    // Controller
     final emailController = TextEditingController(
       text: user.email ?? currentUser?.email ?? '',
     );
@@ -232,7 +187,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     final newPasswordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
 
-    // Visibility password
     bool obscureCurrentPassword = true;
     bool obscureNewPassword = true;
     bool obscureConfirmPassword = true;
@@ -254,9 +208,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // ==================================================
-                    // EMAIL (READ ONLY / DIKUNCI)
-                    // ==================================================
                     TextField(
                       controller: emailController,
                       enabled: false,
@@ -271,12 +222,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         fillColor: Colors.grey.shade100,
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // ==================================================
-                    // NO HP
-                    // ==================================================
                     TextField(
                       controller: noHpController,
                       keyboardType: TextInputType.phone,
@@ -288,12 +234,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 22),
-
-                    // ==================================================
-                    // JUDUL PASSWORD
-                    // ==================================================
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
@@ -301,16 +242,11 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
-                          color: redMid,
+                          color: kBiruSedang,
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 10),
-
-                    // ==================================================
-                    // PASSWORD SAAT INI
-                    // ==================================================
                     TextField(
                       controller: currentPasswordController,
                       obscureText: obscureCurrentPassword,
@@ -334,12 +270,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // ==================================================
-                    // PASSWORD BARU
-                    // ==================================================
                     TextField(
                       controller: newPasswordController,
                       obscureText: obscureNewPassword,
@@ -363,12 +294,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // ==================================================
-                    // KONFIRMASI PASSWORD
-                    // ==================================================
                     TextField(
                       controller: confirmPasswordController,
                       obscureText: obscureConfirmPassword,
@@ -392,9 +318,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 8),
-
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
@@ -408,10 +332,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   ],
                 ),
               ),
-
-              // ========================================================
-              // TOMBOL SIMPAN & BATAL
-              // ========================================================
               actions: [
                 TextButton(
                   onPressed: () {
@@ -419,10 +339,9 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   },
                   child: const Text('Batal'),
                 ),
-
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: redMid,
+                    backgroundColor: kBiruSedang,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -439,7 +358,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                     final bool isChangingPassword =
                         newPassword.isNotEmpty || confirmPassword.isNotEmpty;
 
-                    // Validasi kata sandi
                     if (isChangingPassword) {
                       if (currentPassword.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -472,7 +390,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                     }
 
                     try {
-                      // 1. Re-authentifikasi dan Update Password Firebase
                       if (isChangingPassword) {
                         final credential = EmailAuthProvider.credential(
                           email: user.email!,
@@ -483,7 +400,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                         await user.updatePassword(newPassword);
                       }
 
-                      // 2. Update Firestore
                       await FirebaseFirestore.instance
                           .collection('users')
                           .doc(user.uid)
@@ -492,7 +408,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                             'updated_at': FieldValue.serverTimestamp(),
                           }, SetOptions(merge: true));
 
-                      // Ambil data terbaru
                       await _fetchUserData();
 
                       if (dialogContext.mounted) {
@@ -539,375 +454,325 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     );
   }
 
-  // ============================================================
-  // BUILD
-  // ============================================================
-
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final screenWidth = MediaQuery.of(context).size.width;
-    final scale = (screenWidth / 375).clamp(0.85, 1.25);
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final double scale = (screenWidth / 375).clamp(0.85, 1.25);
+    final bool isWide = screenWidth >= 900;
 
     if (_isLoading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator(color: redMid)),
+        body: Center(child: CircularProgressIndicator(color: kBiruSedang)),
       );
     }
 
-    return Scaffold(
-      backgroundColor: bgLight,
-      body: Stack(
-        children: [
-          // HEADER
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: ClipPath(
-              clipper: HeaderCurveClipper(),
-              child: Container(
-                height: screenHeight * 0.38,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [redLight, redMid, redDark],
-                  ),
-                ),
-                child: Stack(
-                  children: [
-                    Positioned(
-                      top: -30,
-                      right: -20,
-                      child: CircleAvatar(
-                        radius: 80,
-                        backgroundColor: Colors.white.withOpacity(0.05),
-                      ),
-                    ),
-                    Positioned(
-                      top: 40,
-                      left: -40,
-                      child: CircleAvatar(
-                        radius: 60,
-                        backgroundColor: accentGold.withOpacity(0.1),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // CONTENT
-          SafeArea(
-            child: Column(
+    final List<Widget> kolomProfil = [
+      Center(
+        child: Column(
+          children: [
+            Stack(
               children: [
-                // APP BAR
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 16 * scale,
-                    vertical: 10 * scale,
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(
-                          Icons.arrow_back_ios_new,
-                          color: Colors.white,
-                        ),
-                        onPressed: () {
-                          Navigator.pop(context);
-                        },
-                      ),
-                      Text(
-                        'Profil Saya',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20 * scale,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.more_vert, color: Colors.white),
-                        onPressed: () {
-                          _showMoreMenu(context);
-                        },
+                Container(
+                  padding: EdgeInsets.all(4 * scale),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 5),
                       ),
                     ],
                   ),
+                  child: CircleAvatar(
+                    radius: 50 * scale,
+                    backgroundColor: kBiruSedang,
+                    child: _isUploading
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : _buildProfileImage(scale),
+                  ),
                 ),
-
-                SizedBox(height: 8 * scale),
-
-                // SCROLL CONTENT
-                Expanded(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 20 * scale),
-                      child: Column(
-                        children: [
-                          // FOTO PROFIL
-                          Center(
-                            child: Column(
-                              children: [
-                                Stack(
-                                  children: [
-                                    Container(
-                                      padding: EdgeInsets.all(4 * scale),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        shape: BoxShape.circle,
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: Colors.black.withOpacity(
-                                              0.1,
-                                            ),
-                                            blurRadius: 10,
-                                            offset: const Offset(0, 5),
-                                          ),
-                                        ],
-                                      ),
-                                      child: CircleAvatar(
-                                        radius: 50 * scale,
-                                        backgroundColor: redMid,
-                                        child: _isUploading
-                                            ? const CircularProgressIndicator(
-                                                color: Colors.white,
-                                              )
-                                            : _buildProfileImage(scale),
-                                      ),
-                                    ),
-                                    Positioned(
-                                      right: 0,
-                                      bottom: 0,
-                                      child: GestureDetector(
-                                        onTap: _isUploading ? null : _gantiFoto,
-                                        child: Container(
-                                          padding: EdgeInsets.all(9 * scale),
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: redMid,
-                                              width: 2,
-                                            ),
-                                          ),
-                                          child: Icon(
-                                            Icons.camera_alt_outlined,
-                                            color: redMid,
-                                            size: 19 * scale,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-
-                                SizedBox(height: 12 * scale),
-
-                                Text(
-                                  currentUser?.nama.isNotEmpty == true
-                                      ? currentUser!.nama
-                                      : 'Tanpa Nama',
-                                  style: TextStyle(
-                                    fontSize: 20 * scale,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.black87,
-                                  ),
-                                ),
-
-                                SizedBox(height: 4 * scale),
-
-                                Text(
-                                  currentUser?.jabatan.isNotEmpty == true
-                                      ? currentUser!.jabatan
-                                      : '-',
-                                  style: TextStyle(
-                                    color: Colors.grey.shade600,
-                                    fontSize: 13 * scale,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          SizedBox(height: 24 * scale),
-
-                          // TOMBOL GANTI FOTO & UBAH INFO
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildActionButton(
-                                  icon: Icons.camera_alt_outlined,
-                                  title: 'Ganti Foto',
-                                  onTap: _isUploading ? () {} : _gantiFoto,
-                                  scale: scale,
-                                ),
-                              ),
-
-                              SizedBox(width: 10 * scale),
-
-                              Expanded(
-                                child: _buildActionButton(
-                                  icon: Icons.edit_outlined,
-                                  title: 'Ubah Info',
-                                  onTap: _editProfil,
-                                  scale: scale,
-                                ),
-                              ),
-                            ],
-                          ),
-
-                          SizedBox(height: 24 * scale),
-
-                          // INFORMASI AKUN
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'INFORMASI AKUN',
-                              style: TextStyle(
-                                fontSize: 13 * scale,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey.shade600,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ),
-
-                          SizedBox(height: 10 * scale),
-
-                          Container(
-                            padding: EdgeInsets.all(16 * scale),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(22 * scale),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.04),
-                                  blurRadius: 15,
-                                  offset: const Offset(0, 6),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              children: [
-                                _buildProfileItem(
-                                  icon: Icons.badge_outlined,
-                                  title: 'NIP',
-                                  value: currentUser?.nip.isNotEmpty == true
-                                      ? currentUser!.nip
-                                      : '-',
-                                  scale: scale,
-                                ),
-                                Divider(
-                                  height: 22 * scale,
-                                  color: Colors.grey.shade200,
-                                ),
-                                _buildProfileItem(
-                                  icon: Icons.email_outlined,
-                                  title: 'Email',
-                                  value: currentUser?.email.isNotEmpty == true
-                                      ? currentUser!.email
-                                      : '-',
-                                  scale: scale,
-                                ),
-                                Divider(
-                                  height: 22 * scale,
-                                  color: Colors.grey.shade200,
-                                ),
-                                _buildProfileItem(
-                                  icon: Icons.phone_outlined,
-                                  title: 'No. HP / WhatsApp',
-                                  value: currentUser?.noHp.isNotEmpty == true
-                                      ? currentUser!.noHp
-                                      : '-',
-                                  scale: scale,
-                                ),
-                                Divider(
-                                  height: 22 * scale,
-                                  color: Colors.grey.shade200,
-                                ),
-                                _buildProfileItem(
-                                  icon: Icons.work_outline,
-                                  title: 'Jabatan',
-                                  value: currentUser?.jabatan.isNotEmpty == true
-                                      ? currentUser!.jabatan
-                                      : '-',
-                                  scale: scale,
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          SizedBox(height: 30 * scale),
-
-                          // BUTTON KELUAR
-                          SizedBox(
-                            width: double.infinity,
-                            height: 52 * scale,
-                            child: ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFFFEBEE),
-                                foregroundColor: Colors.red.shade700,
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(
-                                    16 * scale,
-                                  ),
-                                ),
-                              ),
-                              onPressed: () async {
-                                await FirebaseAuth.instance.signOut();
-
-                                if (context.mounted) {
-                                  Navigator.pushAndRemoveUntil(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => const WelcomePage(),
-                                    ),
-                                    (_) => false,
-                                  );
-                                }
-                              },
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.logout, size: 20 * scale),
-                                  SizedBox(width: 8 * scale),
-                                  Text(
-                                    'KELUAR',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 14 * scale,
-                                      letterSpacing: 1.0,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-
-                          SizedBox(height: 20 * scale),
-                        ],
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: GestureDetector(
+                    onTap: _isUploading ? null : _gantiFoto,
+                    child: Container(
+                      padding: EdgeInsets.all(9 * scale),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: kBiruSedang, width: 2),
+                      ),
+                      child: Icon(
+                        Icons.camera_alt_outlined,
+                        color: kBiruSedang,
+                        size: 19 * scale,
                       ),
                     ),
                   ),
                 ),
               ],
             ),
+            SizedBox(height: 12 * scale),
+            Text(
+              currentUser?.nama.isNotEmpty == true
+                  ? currentUser!.nama
+                  : 'Tanpa Nama',
+              style: TextStyle(
+                fontSize: 20 * scale,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            SizedBox(height: 4 * scale),
+            Text(
+              currentUser?.jabatan.isNotEmpty == true
+                  ? currentUser!.jabatan
+                  : '-',
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 13 * scale,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+      SizedBox(height: 24 * scale),
+      Row(
+        children: [
+          Expanded(
+            child: _buildActionButton(
+              icon: Icons.camera_alt_outlined,
+              title: 'Ganti Foto',
+              onTap: _isUploading ? () {} : _gantiFoto,
+              scale: scale,
+            ),
+          ),
+          SizedBox(width: 10 * scale),
+          Expanded(
+            child: _buildActionButton(
+              icon: Icons.edit_outlined,
+              title: 'Ubah Info',
+              onTap: _editProfil,
+              scale: scale,
+            ),
+          ),
+        ],
+      ),
+    ];
+
+    final List<Widget> kolomInfo = [
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'INFORMASI AKUN',
+          style: TextStyle(
+            fontSize: 13 * scale,
+            fontWeight: FontWeight.bold,
+            color: kBiruTua,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+      SizedBox(height: 10 * scale),
+      Container(
+        padding: EdgeInsets.all(16 * scale),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20 * scale),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            _buildProfileItem(
+              icon: Icons.badge_outlined,
+              title: 'NIP',
+              value: currentUser?.nip.isNotEmpty == true
+                  ? currentUser!.nip
+                  : '-',
+              scale: scale,
+            ),
+            Divider(height: 22 * scale, color: Colors.grey.shade200),
+            _buildProfileItem(
+              icon: Icons.email_outlined,
+              title: 'Email',
+              value: currentUser?.email.isNotEmpty == true
+                  ? currentUser!.email
+                  : '-',
+              scale: scale,
+            ),
+            Divider(height: 22 * scale, color: Colors.grey.shade200),
+            _buildProfileItem(
+              icon: Icons.phone_outlined,
+              title: 'No. HP / WhatsApp',
+              value: currentUser?.noHp.isNotEmpty == true
+                  ? currentUser!.noHp
+                  : '-',
+              scale: scale,
+            ),
+            Divider(height: 22 * scale, color: Colors.grey.shade200),
+            _buildProfileItem(
+              icon: Icons.work_outline,
+              title: 'Jabatan',
+              value: currentUser?.jabatan.isNotEmpty == true
+                  ? currentUser!.jabatan
+                  : '-',
+              scale: scale,
+            ),
+          ],
+        ),
+      ),
+    ];
+
+    final List<Widget> kolomKeluar = [
+      SizedBox(
+        width: double.infinity,
+        height: 52 * scale,
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFFFEBEE),
+            foregroundColor: Colors.red.shade700,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16 * scale),
+            ),
+          ),
+          onPressed: () async {
+            await FirebaseAuth.instance.signOut();
+
+            if (context.mounted) {
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginPage()),
+                (_) => false,
+              );
+            }
+          },
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.logout, size: 20 * scale),
+              SizedBox(width: 8 * scale),
+              Text(
+                'KELUAR',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14 * scale,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ];
+
+    return Scaffold(
+      backgroundColor: kBgLight,
+      body: Column(
+        children: [
+          // HEADER GRADIENT FLAT / LURUS
+          Container(
+            width: double.infinity,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [kBiruMuda, kBiruSedang, kBiruTua],
+                stops: [0.0, 0.5, 1.0],
+              ),
+            ),
+            child: SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 16 * scale),
+                child: ResponsiveContent(
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.maybePop(context),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        icon: Icon(
+                          Icons.arrow_back,
+                          color: Colors.white,
+                          size: 24 * scale,
+                        ),
+                      ),
+                      Expanded(
+                        child: Center(
+                          child: Text(
+                            'Profil Saya',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18 * scale,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: 24 * scale),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // CONTENT
+          Expanded(
+            child: ResponsiveContent(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(0, 16 * scale, 0, 12 * scale),
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: isWide
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              flex: 4,
+                              child: Column(children: kolomProfil),
+                            ),
+                            SizedBox(width: 32 * scale),
+                            Expanded(
+                              flex: 6,
+                              child: Column(
+                                children: [
+                                  ...kolomInfo,
+                                  SizedBox(height: 30 * scale),
+                                  ...kolomKeluar,
+                                ],
+                              ),
+                            ),
+                          ],
+                        )
+                      : Column(
+                          children: [
+                            ...kolomProfil,
+                            SizedBox(height: 24 * scale),
+                            ...kolomInfo,
+                            SizedBox(height: 30 * scale),
+                            ...kolomKeluar,
+                          ],
+                        ),
+                ),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
-
-  // ============================================================
-  // FOTO PROFIL DARI BASE64
-  // ============================================================
 
   Widget _buildProfileImage(double scale) {
     final String fotoBase64 = currentUser?.fotoBase64 ?? '';
@@ -935,10 +800,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     }
   }
 
-  // ============================================================
-  // TOMBOL AKSI
-  // ============================================================
-
   Widget _buildActionButton({
     required IconData icon,
     required String title,
@@ -951,7 +812,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
         onPressed: onTap,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.white,
-          foregroundColor: redMid,
+          foregroundColor: kBiruSedang,
           elevation: 0,
           padding: EdgeInsets.symmetric(vertical: 10 * scale),
           shape: RoundedRectangleBorder(
@@ -976,10 +837,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     );
   }
 
-  // ============================================================
-  // ITEM INFORMASI PROFIL
-  // ============================================================
-
   Widget _buildProfileItem({
     required IconData icon,
     required String title,
@@ -994,11 +851,9 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
             color: const Color(0xFFE3EEFA),
             borderRadius: BorderRadius.circular(12 * scale),
           ),
-          child: Icon(icon, color: redMid, size: 22 * scale),
+          child: Icon(icon, color: kBiruSedang, size: 22 * scale),
         ),
-
         SizedBox(width: 14 * scale),
-
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1010,9 +865,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   color: Colors.grey.shade500,
                 ),
               ),
-
               SizedBox(height: 3 * scale),
-
               Text(
                 value,
                 style: TextStyle(
@@ -1026,72 +879,5 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
         ),
       ],
     );
-  }
-
-  // ============================================================
-  // MENU LAINNYA
-  // ============================================================
-
-  void _showMoreMenu(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.info_outline),
-                title: const Text('Tentang SIMTAS'),
-                onTap: () {
-                  Navigator.pop(context);
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-// ================================================================
-// HEADER CURVE
-// ================================================================
-
-class HeaderCurveClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final path = Path();
-
-    final h = size.height;
-    final w = size.width;
-
-    path.lineTo(0, h * 0.75);
-
-    final controlPoint = Offset(w / 2, h);
-
-    final endPoint = Offset(w, h * 0.75);
-
-    path.quadraticBezierTo(
-      controlPoint.dx,
-      controlPoint.dy,
-      endPoint.dx,
-      endPoint.dy,
-    );
-
-    path.lineTo(w, 0);
-
-    path.close();
-
-    return path;
-  }
-
-  @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) {
-    return false;
   }
 }

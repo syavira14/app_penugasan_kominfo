@@ -6,30 +6,23 @@ class PenugasanService {
 
   final String _collection = 'penugasan';
 
-  /// ============================================================
-  /// MENGAMBIL SEMUA PENUGASAN BERDASARKAN ID TUGAS
-  /// ============================================================
+  /// Mengambil semua penugasan berdasarkan ID tugas.
   Stream<List<Map<String, dynamic>>> streamPenugasanByTugas(String tugasId) {
     return _firestore
         .collection(_collection)
         .where('tugas_id', isEqualTo: tugasId)
         .snapshots()
         .map((snapshot) {
-          return snapshot.docs.map((doc) {
-            return {'id': doc.id, ...doc.data()};
-          }).toList();
-        });
+      return snapshot.docs.map((doc) {
+        return {'id': doc.id, ...doc.data()};
+      }).toList();
+    });
   }
 
-  /// ============================================================
-  /// MENGAMBIL SATU PENUGASAN
-  /// ============================================================
+  /// Mengambil satu penugasan berdasarkan ID.
   Future<Map<String, dynamic>?> getPenugasanById(String penugasanId) async {
     try {
-      final doc = await _firestore
-          .collection(_collection)
-          .doc(penugasanId)
-          .get();
+      final doc = await _firestore.collection(_collection).doc(penugasanId).get();
 
       if (!doc.exists) {
         return null;
@@ -41,14 +34,9 @@ class PenugasanService {
     }
   }
 
-  /// ============================================================
-  /// MENGUBAH STATUS PENUGASAN
-  ///
-  /// Catatan:
-  /// Admin TIDAK mengubah status pengerjaan secara bebas.
-  /// Fungsi ini digunakan hanya untuk proses yang memang
-  /// dilakukan oleh sistem/admin, seperti revisi dan persetujuan.
-  /// ============================================================
+  /// Memperbarui status sesuai aturan transisi penugasan.
+  /// Admin hanya menggunakan fungsi ini untuk tindakan yang diizinkan,
+  /// seperti meminta revisi atau menyetujui hasil tugas.
   Future<void> updateStatus({
     required String penugasanId,
     required String status,
@@ -74,9 +62,7 @@ class PenugasanService {
     }
   }
 
-  /// ============================================================
-  /// ADMIN MEMINTA REVISI
-  /// ============================================================
+  /// Admin meminta revisi hasil pekerjaan.
   Future<void> mintaRevisi({
     required String penugasanId,
     required String catatanRevisi,
@@ -92,9 +78,7 @@ class PenugasanService {
     );
   }
 
-  /// ============================================================
-  /// ADMIN MENYETUJUI HASIL TUGAS
-  /// ============================================================
+  /// Admin menyetujui hasil tugas.
   Future<void> setujuiTugas({required String penugasanId}) async {
     await updateStatus(penugasanId: penugasanId, status: 'disetujui');
   }

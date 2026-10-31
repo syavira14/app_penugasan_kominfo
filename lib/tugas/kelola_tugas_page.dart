@@ -69,11 +69,12 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
             });
           },
           onError: (Object error) {
-            if (mounted)
+            if (mounted) {
               _tampilkanSnackbar(
                 'Gagal memperbarui status: $error',
                 error: true,
               );
+            }
           },
         );
   }

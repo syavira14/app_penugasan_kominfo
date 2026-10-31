@@ -6,9 +6,9 @@ import '../../services/riwayat_penugasan_service.dart';
 import 'package:flutter/material.dart';
 
 // Definisi warna sesuai tema aplikasi
-const Color kBiruTua = Color(0xFF0D47A1);
-const Color kBiruSedang = Color(0xFF1976D2);
-const Color kBiruMuda = Color(0xFF42A5F5);
+const Color kBiruTua = Color(0xFF0011CC);
+const Color kBiruSedang = Color(0xFF0066FF);
+const Color kBiruMuda = Color(0xFF00CCFF);
 const Color kBgLight = Color(0xFFF4F6F9);
 
 // Model Data Tugas (Tanpa Status Validasi)
@@ -90,11 +90,12 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
         });
       },
       onError: (Object error) {
-        if (mounted)
+        if (mounted) {
           setState(() {
             _loading = false;
             _error = 'Gagal memuat riwayat: $error';
           });
+        }
       },
     );
   }

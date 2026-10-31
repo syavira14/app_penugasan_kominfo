@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/user_model.dart';
-import '../auth/welcome_page.dart';
+import '../auth/login_page.dart';
 import 'admin_navbar.dart';
 
 class ProfilAdminPage extends StatefulWidget {
@@ -18,19 +18,11 @@ class ProfilAdminPage extends StatefulWidget {
 }
 
 class _ProfilAdminPageState extends State<ProfilAdminPage> {
-  // ============================================================
-  // WARNA TEMA ADMIN
-  // ============================================================
-
   static const Color blueDark = Color(0xFF1B267B);
   static const Color blueMid = Color(0xFF0066B3);
   static const Color blueLight = Color(0xFF00A8E8);
   static const Color accentGold = Color(0xFFFFC107);
   static const Color bgLight = Color(0xFFF4F8FC);
-
-  // ============================================================
-  // DATA
-  // ============================================================
 
   UserModel? currentUser;
 
@@ -39,19 +31,11 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
 
   final ImagePicker _picker = ImagePicker();
 
-  // ============================================================
-  // INIT
-  // ============================================================
-
   @override
   void initState() {
     super.initState();
     _fetchUserData();
   }
-
-  // ============================================================
-  // AMBIL DATA USER (ADMIN)
-  // ============================================================
 
   Future<void> _fetchUserData() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -93,10 +77,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     }
   }
 
-  // ============================================================
-  // GANTI FOTO
-  // ============================================================
-
   void _gantiFoto() {
     showModalBottomSheet(
       context: context,
@@ -115,8 +95,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-
-                // KAMERA
                 ListTile(
                   leading: const Icon(Icons.camera_alt, color: blueMid),
                   title: const Text('Kamera'),
@@ -125,8 +103,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                     _pickAndUploadImage(ImageSource.camera);
                   },
                 ),
-
-                // GALERI
                 ListTile(
                   leading: const Icon(Icons.photo_library, color: blueMid),
                   title: const Text('Galeri Foto'),
@@ -143,10 +119,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     );
   }
 
-  // ============================================================
-  // PILIH FOTO + SIMPAN FIRESTORE
-  // ============================================================
-
   Future<void> _pickAndUploadImage(ImageSource source) async {
     try {
       final XFile? pickedFile = await _picker.pickImage(
@@ -156,9 +128,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
         maxHeight: 500,
       );
 
-      if (pickedFile == null) {
-        return;
-      }
+      if (pickedFile == null) return;
 
       if (mounted) {
         setState(() {
@@ -172,19 +142,14 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
         throw Exception('User belum login');
       }
 
-      // Ambil file sebagai bytes
       final Uint8List bytes = await pickedFile.readAsBytes();
-
-      // Ubah gambar menjadi Base64
       final String fotoBase64 = base64Encode(bytes);
 
-      // Simpan ke Firestore
       await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
         'foto_base64': fotoBase64,
         'updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // Ambil data terbaru
       await _fetchUserData();
 
       if (mounted) {
@@ -215,18 +180,10 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     }
   }
 
-  // ============================================================
-  // UBAH INFORMASI PROFIL (NO HP & PASSWORD)
-  // ============================================================
-
   Future<void> _editProfil() async {
     final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
 
-    if (user == null) {
-      return;
-    }
-
-    // Controller
     final emailController = TextEditingController(
       text: user.email ?? currentUser?.email ?? '',
     );
@@ -235,7 +192,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     final newPasswordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
 
-    // Visibility password
     bool obscureCurrentPassword = true;
     bool obscureNewPassword = true;
     bool obscureConfirmPassword = true;
@@ -257,9 +213,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // ==================================================
-                    // EMAIL (READ ONLY / DIKUNCI)
-                    // ==================================================
                     TextField(
                       controller: emailController,
                       enabled: false,
@@ -274,12 +227,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                         fillColor: Colors.grey.shade100,
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // ==================================================
-                    // NO HP
-                    // ==================================================
                     TextField(
                       controller: noHpController,
                       keyboardType: TextInputType.phone,
@@ -291,12 +239,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 22),
-
-                    // ==================================================
-                    // JUDUL PASSWORD
-                    // ==================================================
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
@@ -308,12 +251,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 10),
-
-                    // ==================================================
-                    // PASSWORD SAAT INI
-                    // ==================================================
                     TextField(
                       controller: currentPasswordController,
                       obscureText: obscureCurrentPassword,
@@ -337,12 +275,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // ==================================================
-                    // PASSWORD BARU
-                    // ==================================================
                     TextField(
                       controller: newPasswordController,
                       obscureText: obscureNewPassword,
@@ -366,12 +299,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // ==================================================
-                    // KONFIRMASI PASSWORD
-                    // ==================================================
                     TextField(
                       controller: confirmPasswordController,
                       obscureText: obscureConfirmPassword,
@@ -395,9 +323,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 8),
-
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
@@ -411,10 +337,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                   ],
                 ),
               ),
-
-              // ========================================================
-              // TOMBOL SIMPAN & BATAL
-              // ========================================================
               actions: [
                 TextButton(
                   onPressed: () {
@@ -422,7 +344,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                   },
                   child: const Text('Batal'),
                 ),
-
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: blueMid,
@@ -442,7 +363,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                     final bool isChangingPassword =
                         newPassword.isNotEmpty || confirmPassword.isNotEmpty;
 
-                    // Validasi kata sandi
                     if (isChangingPassword) {
                       if (currentPassword.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -475,7 +395,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                     }
 
                     try {
-                      // 1. Re-authentifikasi dan Update Password Firebase
                       if (isChangingPassword) {
                         final credential = EmailAuthProvider.credential(
                           email: user.email!,
@@ -486,7 +405,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                         await user.updatePassword(newPassword);
                       }
 
-                      // 2. Update Firestore
                       await FirebaseFirestore.instance
                           .collection('users')
                           .doc(user.uid)
@@ -495,7 +413,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                             'updated_at': FieldValue.serverTimestamp(),
                           }, SetOptions(merge: true));
 
-                      // Ambil data terbaru
                       await _fetchUserData();
 
                       if (dialogContext.mounted) {
@@ -542,10 +459,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     );
   }
 
-  // ============================================================
-  // BUILD
-  // ============================================================
-
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
@@ -562,7 +475,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
       backgroundColor: bgLight,
       body: Stack(
         children: [
-          // HEADER
           Positioned(
             top: 0,
             left: 0,
@@ -601,12 +513,9 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
               ),
             ),
           ),
-
-          // CONTENT
           SafeArea(
             child: Column(
               children: [
-                // APP BAR
                 Padding(
                   padding: EdgeInsets.symmetric(
                     horizontal: 16 * scale,
@@ -644,7 +553,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
 
                 SizedBox(height: 8 * scale),
 
-                // SCROLL CONTENT
                 Expanded(
                   child: SingleChildScrollView(
                     physics: const BouncingScrollPhysics(),
@@ -652,7 +560,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                       padding: EdgeInsets.symmetric(horizontal: 20 * scale),
                       child: Column(
                         children: [
-                          // FOTO PROFIL
                           Center(
                             child: Column(
                               children: [
@@ -708,9 +615,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                     ),
                                   ],
                                 ),
-
                                 SizedBox(height: 12 * scale),
-
                                 Text(
                                   currentUser?.nama.isNotEmpty == true
                                       ? currentUser!.nama
@@ -721,13 +626,11 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                     color: Colors.black87,
                                   ),
                                 ),
-
                                 SizedBox(height: 4 * scale),
-
                                 Text(
                                   currentUser?.jabatan.isNotEmpty == true
                                       ? currentUser!.jabatan
-                                      : 'Administrator SITUGAS',
+                                      : 'Administrator SIMTAS',
                                   style: TextStyle(
                                     color: Colors.grey.shade600,
                                     fontSize: 13 * scale,
@@ -737,10 +640,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                               ],
                             ),
                           ),
-
                           SizedBox(height: 24 * scale),
-
-                          // TOMBOL GANTI FOTO & UBAH INFO
                           Row(
                             children: [
                               Expanded(
@@ -751,9 +651,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                   scale: scale,
                                 ),
                               ),
-
                               SizedBox(width: 10 * scale),
-
                               Expanded(
                                 child: _buildActionButton(
                                   icon: Icons.edit_outlined,
@@ -764,10 +662,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                               ),
                             ],
                           ),
-
                           SizedBox(height: 24 * scale),
-
-                          // INFORMASI AKUN
                           Align(
                             alignment: Alignment.centerLeft,
                             child: Text(
@@ -780,9 +675,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                               ),
                             ),
                           ),
-
                           SizedBox(height: 10 * scale),
-
                           Container(
                             padding: EdgeInsets.all(16 * scale),
                             decoration: BoxDecoration(
@@ -845,10 +738,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                               ],
                             ),
                           ),
-
                           SizedBox(height: 30 * scale),
-
-                          // BUTTON KELUAR
                           SizedBox(
                             width: double.infinity,
                             height: 52 * scale,
@@ -870,7 +760,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                   Navigator.pushAndRemoveUntil(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) => const WelcomePage(),
+                                      builder: (_) => const LoginPage(),
                                     ),
                                     (_) => false,
                                   );
@@ -893,7 +783,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                               ),
                             ),
                           ),
-
                           SizedBox(height: 20 * scale),
                         ],
                       ),
@@ -908,10 +797,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
       bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 4),
     );
   }
-
-  // ============================================================
-  // FOTO PROFIL DARI BASE64
-  // ============================================================
 
   Widget _buildProfileImage(double scale) {
     final String fotoBase64 = currentUser?.fotoBase64 ?? '';
@@ -938,10 +823,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
       return Icon(Icons.person, size: 55 * scale, color: Colors.white);
     }
   }
-
-  // ============================================================
-  // TOMBOL AKSI
-  // ============================================================
 
   Widget _buildActionButton({
     required IconData icon,
@@ -980,10 +861,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     );
   }
 
-  // ============================================================
-  // ITEM INFORMASI PROFIL
-  // ============================================================
-
   Widget _buildProfileItem({
     required IconData icon,
     required String title,
@@ -1000,9 +877,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
           ),
           child: Icon(icon, color: blueMid, size: 22 * scale),
         ),
-
         SizedBox(width: 14 * scale),
-
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1014,9 +889,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                   color: Colors.grey.shade500,
                 ),
               ),
-
               SizedBox(height: 3 * scale),
-
               Text(
                 value,
                 style: TextStyle(
@@ -1032,10 +905,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     );
   }
 
-  // ============================================================
-  // MENU LAINNYA
-  // ============================================================
-
   void _showMoreMenu(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -1049,7 +918,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
             children: [
               ListTile(
                 leading: const Icon(Icons.info_outline),
-                title: const Text('Tentang SITUGAS'),
+                title: const Text('Tentang SIMTAS'),
                 onTap: () {
                   Navigator.pop(context);
                 },
@@ -1062,22 +931,15 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
   }
 }
 
-// ================================================================
-// HEADER CURVE
-// ================================================================
-
 class HeaderCurveClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
     final path = Path();
-
     final h = size.height;
     final w = size.width;
 
     path.lineTo(0, h * 0.75);
-
     final controlPoint = Offset(w / 2, h);
-
     final endPoint = Offset(w, h * 0.75);
 
     path.quadraticBezierTo(
@@ -1088,14 +950,10 @@ class HeaderCurveClipper extends CustomClipper<Path> {
     );
 
     path.lineTo(w, 0);
-
     path.close();
-
     return path;
   }
 
   @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) {
-    return false;
-  }
+  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
 }

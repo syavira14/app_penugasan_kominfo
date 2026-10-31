@@ -8,6 +8,7 @@ import 'kelola_staff.dart';
 import 'status_staff.dart';
 import 'admin_kalender.dart';
 import 'riwayat_tugas_staff.dart';
+import 'laporan_kendala_admin_page.dart'; // IMPORT DITAMBAHKAN
 import 'profil_admin.dart';
 
 class DashboardAdminPage extends StatelessWidget {
@@ -25,14 +26,7 @@ class DashboardAdminPage extends StatelessWidget {
   static const int dikerjakan = 32;
   static const int selesai = 74;
 
-  static const List<int> tugasBulanan = [
-    40,
-    49,
-    67,
-    81,
-    98,
-    113,
-  ];
+  static const List<int> tugasBulanan = [40, 49, 67, 81, 98, 113];
 
   static const List<String> namaBulan = [
     'Jan',
@@ -45,11 +39,7 @@ class DashboardAdminPage extends StatelessWidget {
 
   // Fungsi navigasi halaman
   void _buka(BuildContext context, Widget halaman) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => halaman,
-      ),
-    );
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => halaman));
   }
 
   @override
@@ -58,8 +48,7 @@ class DashboardAdminPage extends StatelessWidget {
 
     final padding = lebar < 400 ? 14.0 : 20.0;
 
-    final kontenLebar =
-        lebar > 1050 ? 1000.0 : double.infinity;
+    final kontenLebar = lebar > 1050 ? 1000.0 : double.infinity;
 
     return Scaffold(
       backgroundColor: latar,
@@ -81,10 +70,7 @@ class DashboardAdminPage extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF0011CC),
-                    Color(0xFF06067E),
-                  ],
+                  colors: [Color(0xFF0011CC), Color(0xFF06067E)],
                 ),
               ),
             ),
@@ -105,9 +91,7 @@ class DashboardAdminPage extends StatelessWidget {
                 onPressed: () {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text(
-                        'Halaman notifikasi belum tersedia.',
-                      ),
+                      content: Text('Halaman notifikasi belum tersedia.'),
                     ),
                   );
                 },
@@ -120,25 +104,16 @@ class DashboardAdminPage extends StatelessWidget {
 
               // Tombol profil admin
               Padding(
-                padding: const EdgeInsets.only(
-                  left: 8,
-                  right: 18,
-                ),
+                padding: const EdgeInsets.only(left: 8, right: 18),
                 child: InkWell(
-                  onTap: () => _buka(
-                    context,
-                    const ProfilAdminPage(),
-                  ),
+                  onTap: () => _buka(context, const ProfilAdminPage()),
                   customBorder: const CircleBorder(),
                   child: const CircleAvatar(
                     radius: 23,
                     backgroundColor: Color(0xFFBCEAFF),
                     child: Text(
                       'A',
-                      style: TextStyle(
-                        fontSize: 25,
-                        color: Color(0xFF126092),
-                      ),
+                      style: TextStyle(fontSize: 25, color: Color(0xFF126092)),
                     ),
                   ),
                 ),
@@ -152,21 +127,13 @@ class DashboardAdminPage extends StatelessWidget {
           SliverToBoxAdapter(
             child: Center(
               child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: kontenLebar,
-                ),
+                constraints: BoxConstraints(maxWidth: kontenLebar),
 
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    padding,
-                    20,
-                    padding,
-                    36,
-                  ),
+                  padding: EdgeInsets.fromLTRB(padding, 20, padding, 36),
 
                   child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
 
                     children: [
                       // ==================================
@@ -175,12 +142,10 @@ class DashboardAdminPage extends StatelessWidget {
                       GridView.count(
                         crossAxisCount: 2,
                         shrinkWrap: true,
-                        physics:
-                            const NeverScrollableScrollPhysics(),
+                        physics: const NeverScrollableScrollPhysics(),
                         mainAxisSpacing: 12,
                         crossAxisSpacing: 12,
-                        childAspectRatio:
-                            lebar < 370 ? 1.55 : 2.15,
+                        childAspectRatio: lebar < 370 ? 1.55 : 2.15,
 
                         children: [
                           // Total tugas
@@ -189,37 +154,29 @@ class DashboardAdminPage extends StatelessWidget {
                             value: '$totalTugas',
                             icon: Icons.groups_rounded,
                             color: biru,
-                            onTap: () => _buka(
-                              context,
-                              const KelolaTugasPage(),
-                            ),
+                            onTap: () =>
+                                _buka(context, const KelolaTugasPage()),
                           ),
 
                           // Belum selesai
                           _StatCard(
                             label: 'Tugas Belum Selesai',
                             value: '$belumSelesai',
-                            icon: Icons
-                                .format_list_bulleted_rounded,
+                            icon: Icons.format_list_bulleted_rounded,
                             color: const Color(0xFFF51E2D),
-                            onTap: () => _buka(
-                              context,
-                              const KelolaTugasPage(),
-                            ),
+                            onTap: () =>
+                                _buka(context, const KelolaTugasPage()),
                           ),
 
                           // Dikerjakan
                           _StatCard(
                             label: 'Dikerjakan',
                             value: '$dikerjakan',
-                            icon:
-                                Icons.access_time_filled_rounded,
+                            icon: Icons.access_time_filled_rounded,
                             color: const Color(0xFFFFBC00),
                             darkText: true,
-                            onTap: () => _buka(
-                              context,
-                              const KelolaTugasPage(),
-                            ),
+                            onTap: () =>
+                                _buka(context, const KelolaTugasPage()),
                           ),
 
                           // Selesai
@@ -228,10 +185,8 @@ class DashboardAdminPage extends StatelessWidget {
                             value: '$selesai',
                             icon: Icons.check_rounded,
                             color: const Color(0xFF6BCB76),
-                            onTap: () => _buka(
-                              context,
-                              const KelolaTugasPage(),
-                            ),
+                            onTap: () =>
+                                _buka(context, const KelolaTugasPage()),
                           ),
                         ],
                       ),
@@ -243,19 +198,11 @@ class DashboardAdminPage extends StatelessWidget {
                       // ==================================
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.fromLTRB(
-                          16,
-                          20,
-                          16,
-                          18,
-                        ),
-                        decoration: _dekorasi(
-                          Colors.white,
-                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 20, 16, 18),
+                        decoration: _dekorasi(Colors.white),
 
                         child: const Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
 
                           children: [
                             Text(
@@ -297,17 +244,15 @@ class DashboardAdminPage extends StatelessWidget {
                       const SizedBox(height: 14),
 
                       // ==================================
-                      // ENAM MENU UTAMA ADMIN
+                      // TUJUH MENU UTAMA ADMIN
                       // ==================================
                       GridView.count(
                         crossAxisCount: 2,
                         shrinkWrap: true,
-                        physics:
-                            const NeverScrollableScrollPhysics(),
+                        physics: const NeverScrollableScrollPhysics(),
                         mainAxisSpacing: 12,
                         crossAxisSpacing: 12,
-                        childAspectRatio:
-                            lebar < 370 ? 1.65 : 2.55,
+                        childAspectRatio: lebar < 370 ? 1.65 : 2.55,
 
                         children: [
                           // 1. KELOLA STAFF
@@ -315,10 +260,7 @@ class DashboardAdminPage extends StatelessWidget {
                             'Kelola Staff',
                             Icons.groups_rounded,
                             biru,
-                            () => _buka(
-                              context,
-                              const KelolaStaffPage(),
-                            ),
+                            () => _buka(context, const KelolaStaffPage()),
                           ),
 
                           // 2. KELOLA TUGAS
@@ -326,10 +268,7 @@ class DashboardAdminPage extends StatelessWidget {
                             'Kelola Tugas',
                             Icons.edit_note_rounded,
                             cyan,
-                            () => _buka(
-                              context,
-                              const KelolaTugasPage(),
-                            ),
+                            () => _buka(context, const KelolaTugasPage()),
                           ),
 
                           // 3. STATUS STAFF
@@ -337,10 +276,7 @@ class DashboardAdminPage extends StatelessWidget {
                             'Status Staff',
                             Icons.supervisor_account_rounded,
                             cyan,
-                            () => _buka(
-                              context,
-                              const StatusStaffPage(),
-                            ),
+                            () => _buka(context, const StatusStaffPage()),
                           ),
 
                           // 4. KALENDER
@@ -348,10 +284,7 @@ class DashboardAdminPage extends StatelessWidget {
                             'Kalender',
                             Icons.calendar_month_rounded,
                             biru,
-                            () => _buka(
-                              context,
-                              const AdminKalenderPage(),
-                            ),
+                            () => _buka(context, const AdminKalenderPage()),
                           ),
 
                           // 5. RIWAYAT TUGAS STAFF
@@ -359,22 +292,25 @@ class DashboardAdminPage extends StatelessWidget {
                             'Riwayat Tugas Staff',
                             Icons.history_rounded,
                             biru,
-                            () => _buka(
-                              context,
-                              const RiwayatTugasStaffPage(),
-                            ),
+                            () => _buka(context, const RiwayatTugasStaffPage()),
                           ),
 
-                          // 6. PROFIL ADMIN
+                          // 6. LAPORAN KENDALA (DISAMBUNGKAN KE HALAMAN)
+                          _MenuCard(
+                            'Laporan Kendala',
+                            Icons.warning_amber_rounded,
+                            const Color(0xFFFF5252),
+                            () =>
+                                _buka(context, const LaporanKendalaAdminPage()),
+                          ),
+
+                          // 7. PROFIL ADMIN
                           _MenuCard(
                             'Profil Admin',
                             Icons.manage_accounts_rounded,
                             cyan,
-                            () => _buka(
-                              context,
-                              const ProfilAdminPage(),
-                            ),
-                          )
+                            () => _buka(context, const ProfilAdminPage()),
+                          ),
                         ],
                       ),
                     ],
@@ -389,10 +325,7 @@ class DashboardAdminPage extends StatelessWidget {
       // ==========================================
       // BOTTOM NAVIGATION BAR
       // ==========================================
-      bottomNavigationBar:
-          const AdminBottomNavigationBar(
-        currentIndex: 0,
-      ),
+      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 0),
     );
   }
 }
@@ -436,8 +369,7 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textColor =
-        darkText ? Colors.black : Colors.white;
+    final textColor = darkText ? Colors.black : Colors.white;
 
     return Material(
       color: Colors.transparent,
@@ -450,10 +382,7 @@ class _StatCard extends StatelessWidget {
           decoration: _dekorasi(color),
 
           child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
 
             child: Row(
               children: [
@@ -462,16 +391,10 @@ class _StatCard extends StatelessWidget {
                   width: 46,
                   height: 52,
                   decoration: BoxDecoration(
-                    color:
-                        Colors.black.withOpacity(0.13),
-                    borderRadius:
-                        BorderRadius.circular(14),
+                    color: Colors.black.withOpacity(0.13),
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(
-                    icon,
-                    color: textColor,
-                    size: 30,
-                  ),
+                  child: Icon(icon, color: textColor, size: 30),
                 ),
 
                 const SizedBox(width: 10),
@@ -479,10 +402,8 @@ class _StatCard extends StatelessWidget {
                 // Informasi statistik
                 Expanded(
                   child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment.start,
-                    mainAxisAlignment:
-                        MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
 
                     children: [
                       Text(
@@ -528,12 +449,7 @@ class _MenuCard extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
 
-  const _MenuCard(
-    this.label,
-    this.icon,
-    this.color,
-    this.onTap,
-  );
+  const _MenuCard(this.label, this.icon, this.color, this.onTap);
 
   @override
   Widget build(BuildContext context) {
@@ -548,18 +464,12 @@ class _MenuCard extends StatelessWidget {
           decoration: _dekorasi(color),
 
           child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 13,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 13),
 
             child: Row(
               children: [
                 // Ikon menu
-                Icon(
-                  icon,
-                  color: Colors.black,
-                  size: 39,
-                ),
+                Icon(icon, color: Colors.black, size: 39),
 
                 const SizedBox(width: 12),
 
@@ -592,10 +502,7 @@ class _GrafikBulanan extends StatelessWidget {
   final List<int> data;
   final List<String> bulan;
 
-  const _GrafikBulanan({
-    required this.data,
-    required this.bulan,
-  });
+  const _GrafikBulanan({required this.data, required this.bulan});
 
   @override
   Widget build(BuildContext context) {
@@ -610,25 +517,14 @@ class _GrafikBulanan extends StatelessWidget {
           width: 31,
 
           child: Column(
-            mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
-            crossAxisAlignment:
-                CrossAxisAlignment.end,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
 
             children: [
-              for (final n in [
-                120,
-                90,
-                60,
-                30,
-                0,
-              ])
+              for (final n in [120, 90, 60, 30, 0])
                 Text(
                   '$n',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.black87,
-                  ),
+                  style: const TextStyle(fontSize: 12, color: Colors.black87),
                 ),
 
               const SizedBox(height: 22),
@@ -649,56 +545,39 @@ class _GrafikBulanan extends StatelessWidget {
                   children: [
                     // Garis horizontal
                     Column(
-                      mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
 
                       children: List.generate(
                         5,
                         (_) => Container(
                           height: 1,
-                          color:
-                              const Color(0xFFD4D4D4),
+                          color: const Color(0xFFD4D4D4),
                         ),
                       ),
                     ),
 
                     // Batang per bulan
                     Row(
-                      crossAxisAlignment:
-                          CrossAxisAlignment.end,
+                      crossAxisAlignment: CrossAxisAlignment.end,
 
                       children: List.generate(
                         data.length,
                         (i) => Expanded(
                           child: Padding(
-                            padding:
-                                const EdgeInsets.symmetric(
-                              horizontal: 6,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
 
                             child: FractionallySizedBox(
-                              heightFactor:
-                                  (data[i] / batas)
-                                      .clamp(0.0, 1.0),
-                              alignment:
-                                  Alignment.bottomCenter,
+                              heightFactor: (data[i] / batas).clamp(0.0, 1.0),
+                              alignment: Alignment.bottomCenter,
 
                               child: Container(
                                 decoration: BoxDecoration(
                                   color: i.isEven
-                                      ? const Color(
-                                          0xFF26C5E4,
-                                        )
-                                      : const Color(
-                                          0xFF070D9B,
-                                        ),
+                                      ? const Color(0xFF26C5E4)
+                                      : const Color(0xFF070D9B),
 
-                                  borderRadius:
-                                      const BorderRadius
-                                          .vertical(
-                                    top: Radius.circular(
-                                      4,
-                                    ),
+                                  borderRadius: const BorderRadius.vertical(
+                                    top: Radius.circular(4),
                                   ),
                                 ),
                               ),
@@ -722,10 +601,7 @@ class _GrafikBulanan extends StatelessWidget {
                     child: Text(
                       b,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Colors.black,
-                      ),
+                      style: const TextStyle(fontSize: 13, color: Colors.black),
                     ),
                   );
                 }).toList(),

@@ -1,5 +1,183 @@
+import 'dart:convert';
+import 'dart:math' as math;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'admin_navbar.dart';
+
+import '../../widgets/admin_header.dart';
+import 'admin_sidebar.dart';
+
+// ─────────────────────────── Konstanta & Helper ───────────────────────────
+
+const _navy = Color(0xFF1A1464);
+const _blue = Color(0xFF1D5FA0);
+const _sky = Color(0xFF4FA6DE);
+const _bg = Color(0xFFF4F7FB);
+const _maxActive = 5;
+const _maxMonthlyTotal = 15;
+const _sideWidth = 360.0;
+
+const _months = [
+  'Januari',
+  'Februari',
+  'Maret',
+  'April',
+  'Mei',
+  'Juni',
+  'Juli',
+  'Agustus',
+  'September',
+  'Oktober',
+  'November',
+  'Desember',
+];
+const _shortMonths = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'Mei',
+  'Jun',
+  'Jul',
+  'Agu',
+  'Sep',
+  'Okt',
+  'Nov',
+  'Des',
+];
+
+String _taskStatus(dynamic value) {
+  switch ((value ?? 'pending').toString().toLowerCase()) {
+    case 'berlangsung':
+      return 'Berlangsung';
+    case 'dikumpulkan':
+      return 'Dikumpulkan';
+    case 'revisi':
+      return 'Revisi';
+    case 'terkendala':
+      return 'Terkendala';
+    case 'disetujui':
+    case 'selesai':
+      return 'Selesai';
+    case 'antrean':
+    case 'menunggu giliran':
+      return 'Antrean';
+    default:
+      return 'Pending';
+  }
+}
+
+String _priorityOf(Map<String, dynamic> a, Map<String, dynamic>? task) {
+  final p =
+      (a['prioritas'] ??
+              a['priority'] ??
+              task?['prioritas'] ??
+              task?['priority'] ??
+              'sedang')
+          .toString()
+          .toLowerCase();
+  if (p.contains('tinggi') || p == 'high') return 'Tinggi';
+  if (p.contains('rendah') || p == 'low') return 'Rendah';
+  return 'Sedang';
+}
+
+DateTime? _parseDate(dynamic v) {
+  if (v is Timestamp) return v.toDate();
+  if (v is DateTime) return v;
+  if (v is String && v.isNotEmpty) return DateTime.tryParse(v);
+  return null;
+}
+
+String _fmtDate(DateTime? d) =>
+    d == null ? '-' : '${d.day} ${_shortMonths[d.month - 1]} ${d.year}';
+
+bool _isActive(Map<String, dynamic> t) =>
+    t['status'] != 'Selesai' && t['status'] != 'Antrean';
+
+Color _prioColor(String p) {
+  if (p == 'Tinggi') return Colors.red.shade600;
+  if (p == 'Rendah') return Colors.green.shade600;
+  return Colors.amber.shade700;
+}
+
+Color _statusColor(String s) {
+  switch (s) {
+    case 'Berlangsung':
+      return Colors.orange.shade800;
+    case 'Dikumpulkan':
+      return Colors.deepPurple.shade400;
+    case 'Revisi':
+      return Colors.deepOrange.shade600;
+    case 'Terkendala':
+      return Colors.red.shade700;
+    case 'Selesai':
+      return Colors.green.shade700;
+    case 'Antrean':
+      return Colors.blueGrey.shade600;
+    default:
+      return Colors.blueGrey.shade500;
+  }
+}
+
+Widget _pill(String text, Color color, {IconData? icon}) => Container(
+  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+  decoration: BoxDecoration(
+    color: color.withOpacity(.12),
+    borderRadius: BorderRadius.circular(20),
+  ),
+  child: Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (icon != null) ...[
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 4),
+      ],
+      Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ],
+  ),
+);
+
+Widget _workBadge(String status) => status == 'Sibuk'
+    ? _pill('Sibuk', Colors.orange.shade800, icon: Icons.work_rounded)
+    : _pill('Tersedia', Colors.green.shade700, icon: Icons.check_circle);
+
+Widget _avatar(Map<String, dynamic> s, double radius) {
+  final b = (s['foto_base64'] ?? '').toString();
+  ImageProvider? image;
+  if (b.isNotEmpty) {
+    try {
+      image = MemoryImage(base64Decode(b));
+    } catch (_) {}
+  }
+  return CircleAvatar(
+    radius: radius,
+    backgroundColor: const Color(0xFFE2EFFB),
+    backgroundImage: image,
+    child: image == null
+        ? Icon(Icons.person, color: _blue, size: radius + 4)
+        : null,
+  );
+}
+
+BoxDecoration _card([double r = 16]) => BoxDecoration(
+  color: Colors.white,
+  borderRadius: BorderRadius.circular(r),
+  boxShadow: [
+    BoxShadow(
+      color: _navy.withOpacity(.05),
+      blurRadius: 14,
+      offset: const Offset(0, 4),
+    ),
+  ],
+);
+
+// ─────────────────────────────── Halaman Utama ───────────────────────────────
 
 class StatusStaffPage extends StatefulWidget {
   const StatusStaffPage({super.key});
@@ -8,339 +186,1431 @@ class StatusStaffPage extends StatefulWidget {
   State<StatusStaffPage> createState() => _StatusStaffPageState();
 }
 
-class _StatusStaffPageState extends State<StatusStaffPage> {
-  String selectedFilter = "Semua";
+class _StatusStaffPageState extends State<StatusStaffPage>
+    with AutomaticKeepAliveClientMixin {
+  static const _perPage = 10;
+  final db = FirebaseFirestore.instance;
+  final search = TextEditingController();
+  String query = '';
+  String filter = 'Semua';
+  int page = 0;
+  late Future<List<Map<String, dynamic>>> _assignFuture;
 
-  // Data Dummy Staf
-  final List<Map<String, String>> staffList = [
-    {
-      "nama": "Syavira Fitri",
-      "jabatan": "Pranata Humas",
-      "wa": "081234567890",
-      "status": "Tersedia",
-    },
-    {
-      "nama": "Ahmad Dahlan",
-      "jabatan": "Staf IT",
-      "wa": "081398765432",
-      "status": "Sibuk",
-    },
-    {
-      "nama": "Budi Prayitno",
-      "jabatan": "Desainer Grafis",
-      "wa": "081122334455",
-      "status": "Tersedia",
-    },
-    {
-      "nama": "Siti Nurhaliza",
-      "jabatan": "Pengelola Data",
-      "wa": "085711223344",
-      "status": "Cuti",
-    },
-  ];
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _assignFuture = _loadAssignments();
+  }
+
+  @override
+  void dispose() {
+    search.dispose();
+    super.dispose();
+  }
+
+  Future<List<Map<String, dynamic>>> _loadAssignments() async {
+    final snaps = await Future.wait([
+      db.collection('penugasan').get(),
+      db.collection('tugas').get(),
+    ]);
+    final tugas = {for (final d in snaps[1].docs) d.id: d.data()};
+    final out = <Map<String, dynamic>>[];
+    for (final doc in snaps[0].docs) {
+      final a = doc.data();
+      final task = tugas[(a['tugas_id'] ?? '').toString()];
+
+      final tanggalTugas = _parseDate(
+        task?['tanggal_selesai_tugas'] ??
+            task?['tanggal_mulai_tugas'] ??
+            task?['tanggal_tugas_diberikan'] ??
+            a['deadline'] ??
+            a['tenggat'],
+      );
+
+      out.add({
+        'id': doc.id,
+        'uid':
+            (a['staff_uid'] ??
+                    a['staff_id'] ??
+                    a['uid_staff'] ??
+                    a['user_id'] ??
+                    '')
+                .toString(),
+        'nama': (a['staff_nama'] ?? a['nama_staff'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase(),
+        'nip': (a['staff_nip'] ?? a['nip_staff'] ?? '').toString(),
+        'judul':
+            (task?['judul'] ??
+                    a['judul'] ??
+                    a['tugas_judul'] ??
+                    'Tugas tanpa judul')
+                .toString(),
+        'status': _taskStatus(a['status']),
+        'prioritas': _priorityOf(a, task),
+        'deadline': tanggalTugas,
+      });
+    }
+    return out;
+  }
+
+  List<Map<String, dynamic>> _tasksFor(
+    Map<String, dynamic> staff,
+    String uid,
+    List<Map<String, dynamic>> assignments,
+  ) {
+    final name = (staff['nama'] ?? '').toString().trim().toLowerCase();
+    final nip = (staff['nip'] ?? '').toString();
+    return assignments.where((a) {
+      final byUid = (a['uid'] as String).isNotEmpty && a['uid'] == uid;
+      final byName = name.isNotEmpty && a['nama'] == name;
+      final byNip = nip.isNotEmpty && a['nip'] == nip;
+      return byUid || byName || byNip;
+    }).toList();
+  }
+
+  List<Map<String, dynamic>> _buildRows(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    List<Map<String, dynamic>> assignments,
+  ) {
+    final rows = <Map<String, dynamic>>[];
+    for (final doc in docs) {
+      final staff = doc.data();
+      final role = (staff['role'] ?? 'staff').toString().toLowerCase();
+      if (role == 'admin' || role == 'atasan') continue;
+      final tasks = _tasksFor(staff, doc.id, assignments);
+      final active = tasks.where(_isActive).toList()
+        ..sort((a, b) {
+          final da = a['deadline'] as DateTime?;
+          final dbl = b['deadline'] as DateTime?;
+          if (da == null && dbl == null) return 0;
+          if (da == null) return 1;
+          if (dbl == null) return -1;
+          return da.compareTo(dbl);
+        });
+      rows.add({
+        'id': doc.id,
+        'staff': staff,
+        'tasks': tasks,
+        'active': active,
+        'current': active.isEmpty ? null : active.first,
+        'status': active.length >= _maxActive ? 'Sibuk' : 'Tersedia',
+      });
+    }
+    return rows;
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Filter Data Berdasarkan Filter Chip
-    final filteredList = staffList.where((staff) {
-      if (selectedFilter == "Semua") return true;
-      return staff['status'] == selectedFilter;
+    super.build(context);
+    final wide = MediaQuery.of(context).size.width >= 900;
+    return Scaffold(
+      backgroundColor: _bg,
+      drawer: wide ? null : const AdminSidebar(currentIndex: 3, isDrawer: true),
+      body: Row(
+        children: [
+          if (wide) const AdminSidebar(currentIndex: 3),
+          Expanded(
+            child: Column(
+              children: [
+                AdminHeader(title: 'Status Karyawan', showSidebar: wide),
+                Expanded(
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: db.collection('users').snapshots(),
+                    builder: (context, snap) {
+                      if (snap.hasError) {
+                        return _message('Gagal memuat staff: ${snap.error}');
+                      }
+                      if (!snap.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      return FutureBuilder<List<Map<String, dynamic>>>(
+                        future: _assignFuture,
+                        builder: (context, aSnap) {
+                          if (aSnap.hasError) {
+                            return _message(
+                              'Gagal memuat penugasan: ${aSnap.error}',
+                            );
+                          }
+                          if (!aSnap.hasData) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+                          final all = _buildRows(snap.data!.docs, aSnap.data!);
+                          return _content(all, wide);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _content(List<Map<String, dynamic>> all, bool wide) {
+    final q = query.toLowerCase().trim();
+    final filtered = all.where((r) {
+      final s = r['staff'] as Map<String, dynamic>;
+      bool has(String k) => (s[k] ?? '').toString().toLowerCase().contains(q);
+      final matches = q.isEmpty || has('nama') || has('nip') || has('jabatan');
+      return matches && (filter == 'Semua' || r['status'] == filter);
     }).toList();
 
-    return withAdminReadableText(
-      context,
-      Scaffold(
-        backgroundColor: const Color(0xFFF4F8FC),
-        body: SingleChildScrollView(
-          child: Column(
-            children: [
-              // --- HEADER DENGAN GRADASI ---
-              Container(
-                height: 160,
-                padding: const EdgeInsets.fromLTRB(20, 52, 20, 24),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Color(0xFF1B267B),
-                      Color(0xFF0066B3),
-                      Color(0xFF00A8E8),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.vertical(
-                    bottom: Radius.circular(30),
-                  ),
-                ),
-                child: const Row(
+    final pages = math.max(1, (filtered.length / _perPage).ceil());
+    final pg = page.clamp(0, pages - 1);
+    final shown = filtered.skip(pg * _perPage).take(_perPage).toList();
+
+    return LayoutBuilder(
+      builder: (context, c) {
+        final twoCol = c.maxWidth >= 1100;
+        final main = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Ringkasan sekarang tampil juga di mobile (versi ringkas).
+            _summary(all, compact: !wide),
+            SizedBox(height: wide ? 16 : 12),
+            _toolbar(wide),
+            const SizedBox(height: 14),
+            if (shown.isEmpty)
+              _empty()
+            else if (wide)
+              _tableCard(shown, pg, pages)
+            else
+              Column(children: [_mobileList(shown), _pager(pg, pages)]),
+          ],
+        );
+        final side = Column(
+          children: [
+            _workloadCard(),
+            const SizedBox(height: 16),
+            _statusInfoCard(),
+          ],
+        );
+        return SingleChildScrollView(
+          padding: EdgeInsets.all(wide ? 24 : 16),
+          child: !wide
+              // Mobile: kartu keterangan ditaruh di bawah daftar staff.
+              ? Column(children: [main, const SizedBox(height: 16), side])
+              : twoCol
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Status & Ketersediaan Staff",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            "Pantau kondisi staff secara real-time",
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    Expanded(child: main),
+                    const SizedBox(width: 20),
+                    SizedBox(width: _sideWidth, child: side),
                   ],
+                )
+              : Column(children: [main, const SizedBox(height: 16), side]),
+        );
+      },
+    );
+  }
+
+  Widget _toolbar(bool wide) {
+    final searchField = TextField(
+      controller: search,
+      onChanged: (v) => setState(() {
+        query = v;
+        page = 0;
+      }),
+      decoration: InputDecoration(
+        hintText: 'Cari nama, jabatan, atau NIP...',
+        hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+        prefixIcon: const Icon(Icons.search),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(vertical: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(30),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+    final segmented = Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: ['Semua', 'Tersedia', 'Sibuk'].map((f) {
+          final sel = filter == f;
+          return InkWell(
+            borderRadius: BorderRadius.circular(24),
+            onTap: () => setState(() {
+              filter = f;
+              page = 0;
+            }),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
+              decoration: BoxDecoration(
+                color: sel ? _blue : Colors.transparent,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Text(
+                f,
+                style: TextStyle(
+                  color: sel ? Colors.white : _navy,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12.5,
                 ),
               ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+    if (wide) {
+      return Row(
+        children: [
+          Expanded(child: searchField),
+          const SizedBox(width: 12),
+          segmented,
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [searchField, const SizedBox(height: 10), segmented],
+    );
+  }
 
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    // --- 1. SEARCH BAR DI ATAS FILTER ---
-                    Container(
-                      height: 45,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(25),
-                        border: Border.all(color: Colors.grey.shade300),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: const TextField(
-                        decoration: InputDecoration(
-                          hintText: "Cari nama atau jabatan...",
-                          prefixIcon: Icon(
-                            Icons.search,
-                            size: 20,
-                            color: Colors.grey,
+  Widget _summary(List<Map<String, dynamic>> rows, {bool compact = false}) {
+    final total = rows.length;
+    final busy = rows.where((r) => r['status'] == 'Sibuk').length;
+    final available = total - busy;
+
+    final items = [
+      [
+        'Total Staff',
+        '$total Karyawan',
+        Icons.groups_rounded,
+        _blue,
+        const Color(0xFFEAF3FC),
+      ],
+      [
+        'Tersedia',
+        '$available Karyawan',
+        Icons.check_circle_rounded,
+        Colors.green.shade700,
+        const Color(0xFFE9F7EF),
+      ],
+      [
+        'Sibuk',
+        '$busy Karyawan',
+        Icons.work_rounded,
+        Colors.orange.shade700,
+        const Color(0xFFFFF3DF),
+      ],
+    ];
+
+    return Row(
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0) SizedBox(width: compact ? 8 : 12),
+          Expanded(
+            child: Container(
+              padding: EdgeInsets.all(compact ? 10 : 16),
+              decoration: BoxDecoration(
+                color: items[i][4] as Color,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: (items[i][3] as Color).withOpacity(.15),
+                ),
+              ),
+              child: compact
+                  // Mobile: susunan vertikal supaya muat di layar sempit.
+                  ? Column(
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: (items[i][3] as Color).withOpacity(
+                            .15,
                           ),
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.only(top: 10),
+                          child: Icon(
+                            items[i][2] as IconData,
+                            size: 16,
+                            color: items[i][3] as Color,
+                          ),
                         ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 14),
-
-                    // --- 2. FILTER CHIPS (Semua, Tersedia, Sibuk, Cuti) ---
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: ["Semua", "Tersedia", "Sibuk", "Cuti"].map((
-                          filter,
-                        ) {
-                          final isSelected = selectedFilter == filter;
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(filter),
-                              selected: isSelected,
-                              selectedColor: const Color(0xFF0066B3),
-                              backgroundColor: Colors.white,
-                              side: BorderSide(
-                                color: isSelected
-                                    ? const Color(0xFF0066B3)
-                                    : Colors.grey.shade300,
-                              ),
-                              labelStyle: TextStyle(
-                                color: isSelected
-                                    ? Colors.white
-                                    : Colors.black87,
-                                fontWeight: isSelected
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                                fontSize: 12,
-                              ),
-                              onSelected: (val) {
-                                setState(() => selectedFilter = filter);
-                              },
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // --- 3. GRID STAFF CARD (2 KOLOM BERSAMPINGAN) ---
-                    GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            childAspectRatio:
-                                0.68, // Menyesuaikan proporsi card
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
+                        const SizedBox(height: 6),
+                        Text(
+                          items[i][0] as String,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: items[i][3] as Color,
+                            fontWeight: FontWeight.w600,
                           ),
-                      itemCount: filteredList.length,
-                      itemBuilder: (context, index) {
-                        final staff = filteredList[index];
-                        bool isTersedia = staff['status'] == "Tersedia";
-                        bool isSibuk = staff['status'] == "Sibuk";
-
-                        return Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.04),
-                                blurRadius: 8,
-                                offset: const Offset(0, 3),
-                              ),
-                            ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          items[i][1] as String,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: _navy,
                           ),
-                          child: Stack(
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 24,
+                          backgroundColor: (items[i][3] as Color).withOpacity(
+                            .15,
+                          ),
+                          child: Icon(
+                            items[i][2] as IconData,
+                            color: items[i][3] as Color,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // --- BADGE STATUS DI POJOK KANAN ATAS ---
-                              Positioned(
-                                top: 0,
-                                right: 0,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: isTersedia
-                                        ? Colors.green.shade100
-                                        : (isSibuk
-                                              ? Colors.orange.shade100
-                                              : Colors.red.shade100),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    staff['status']!,
-                                    style: TextStyle(
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.bold,
-                                      color: isTersedia
-                                          ? Colors.green.shade800
-                                          : (isSibuk
-                                                ? Colors.orange.shade800
-                                                : Colors.red.shade800),
-                                    ),
-                                  ),
+                              Text(
+                                items[i][0] as String,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: items[i][3] as Color,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-
-                              // --- ISI KONTEN CARD ---
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  const SizedBox(height: 10),
-                                  // Foto Profil Lingkaran
-                                  const CircleAvatar(
-                                    radius: 26,
-                                    backgroundColor: Color(0xFF0066B3),
-                                    child: Icon(
-                                      Icons.person,
-                                      color: Colors.white,
-                                      size: 28,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-
-                                  // Text Detail Staf
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          staff['nama']!,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          staff['jabatan']!,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            fontSize: 11,
-                                            color: Color(0xFF0066B3),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          "WA: ${staff['wa']}",
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            fontSize: 10,
-                                            color: Colors.grey,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-
-                                  const Spacer(),
-
-                                  // --- SIMBOL IKON TAMBAH TUGAS (KHUSUS STATUS TERSEDIA) ---
-                                  if (isTersedia)
-                                    SizedBox(
-                                      width: double.infinity,
-                                      height: 32,
-                                      child: ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(
-                                            0xFF0066B3,
-                                          ),
-                                          padding: EdgeInsets.zero,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                          ),
-                                        ),
-                                        onPressed: () {
-                                          // Aksi Beri Perintah Tugas
-                                        },
-                                        child: const Icon(
-                                          Icons
-                                              .add_task_rounded, // Simbol Ikon Tambah
-                                          color: Colors.white,
-                                          size: 18,
-                                        ),
-                                      ),
-                                    )
-                                  else
-                                    const SizedBox(
-                                      height: 32,
-                                    ), // Spacer transparan agar tinggi card tetap sama
-                                ],
+                              const SizedBox(height: 4),
+                              Text(
+                                items[i][1] as String,
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: _navy,
+                                ),
                               ),
                             ],
                           ),
-                        );
-                      },
+                        ),
+                      ],
                     ),
-                  ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _tableCard(List<Map<String, dynamic>> rows, int pg, int pages) {
+    Widget head(String t, int flex) => Expanded(
+      flex: flex,
+      child: Text(
+        t,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: Colors.grey.shade600,
+        ),
+      ),
+    );
+    return Container(
+      decoration: _card(),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: Row(
+              children: [
+                head('Nama Karyawan', 22),
+                head('Batas Kuota', 16),
+                head('Aktif', 12),
+                head('Tinggi', 12),
+                head('Sedang', 12),
+                head('Rendah', 12),
+                head('Status Karyawan', 18),
+                head('Detail', 12),
+              ],
+            ),
+          ),
+          for (final r in rows) _tableRow(r),
+          _pager(pg, pages),
+        ],
+      ),
+    );
+  }
+
+  Widget _tableRow(Map<String, dynamic> r) {
+    final s = r['staff'] as Map<String, dynamic>;
+    final ts = r['tasks'] as List<Map<String, dynamic>>;
+    final now = DateTime.now();
+
+    final currentMonthTasks = ts.where((t) {
+      final date = t['deadline'] as DateTime?;
+      return date == null || (date.month == now.month && date.year == now.year);
+    }).length;
+
+    int count(String p) => ts.where((t) {
+      final date = t['deadline'] as DateTime?;
+      final sameMonth =
+          date == null || (date.month == now.month && date.year == now.year);
+      return t['prioritas'] == p && sameMonth;
+    }).length;
+
+    return InkWell(
+      onTap: () => _detail(r),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: Colors.grey.shade200)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 22,
+              child: Row(
+                children: [
+                  _avatar(s, 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (s['nama'] ?? 'Staff').toString(),
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15.5,
+                            color: _navy,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          (s['jabatan'] ?? '-').toString(),
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              flex: 16,
+              child: Text(
+                '$currentMonthTasks/$_maxMonthlyTotal',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.bold,
+                  color: _navy,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 12,
+              child: Text(
+                '${(r['active'] as List).length}/5',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 12,
+              child: Text(
+                '${count('Tinggi')}/5',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.red.shade700,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 12,
+              child: Text(
+                '${count('Sedang')}/5',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.orange.shade800,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 12,
+              child: Text(
+                '${count('Rendah')}/5',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.green.shade700,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 18,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: _workBadge(r['status'] as String),
+              ),
+            ),
+            Expanded(
+              flex: 12,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: () => _detail(r),
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text(
+                    'Detail',
+                    style: TextStyle(
+                      color: _blue,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pager(int pg, int pages) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+    decoration: BoxDecoration(
+      border: Border(top: BorderSide(color: Colors.grey.shade200)),
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          tooltip: 'Halaman sebelumnya',
+          onPressed: pg > 0 ? () => setState(() => page = pg - 1) : null,
+          icon: const Icon(Icons.chevron_left),
+          color: Colors.grey.shade700,
+          disabledColor: Colors.grey.shade300,
+          visualDensity: VisualDensity.compact,
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            '${pg + 1} / $pages',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: _navy,
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Halaman berikutnya',
+          onPressed: pg < pages - 1
+              ? () => setState(() => page = pg + 1)
+              : null,
+          icon: const Icon(Icons.chevron_right),
+          color: Colors.grey.shade700,
+          disabledColor: Colors.grey.shade300,
+          visualDensity: VisualDensity.compact,
+        ),
+      ],
+    ),
+  );
+
+  Widget _mobileList(List<Map<String, dynamic>> rows) => Column(
+    children: rows.map((r) {
+      final s = r['staff'] as Map<String, dynamic>;
+      final active = r['active'] as List<Map<String, dynamic>>;
+      final ts = r['tasks'] as List<Map<String, dynamic>>;
+      final now = DateTime.now();
+
+      int count(String p) => ts.where((t) {
+        final date = t['deadline'] as DateTime?;
+        final sameMonth =
+            date == null || (date.month == now.month && date.year == now.year);
+        return t['prioritas'] == p && sameMonth;
+      }).length;
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: _card(),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                _avatar(s, 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        (s['nama'] ?? 'Staff').toString(),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: _navy,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        (s['jabatan'] ?? '-').toString(),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _workBadge(r['status'] as String),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _mobileStatBox('Aktif', '${active.length}/5', _blue),
+                _mobileStatBox(
+                  'Tinggi',
+                  '${count('Tinggi')}/5',
+                  Colors.red.shade700,
+                ),
+                _mobileStatBox(
+                  'Sedang',
+                  '${count('Sedang')}/5',
+                  Colors.orange.shade800,
+                ),
+                _mobileStatBox(
+                  'Rendah',
+                  '${count('Rendah')}/5',
+                  Colors.green.shade700,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _detail(r),
+                icon: const Icon(Icons.open_in_new, size: 16),
+                label: const Text('Lihat Detail Karyawan'),
+              ),
+            ),
+          ],
+        ),
+      );
+    }).toList(),
+  );
+
+  Widget _mobileStatBox(String label, String value, Color color) => Expanded(
+    child: Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(.08),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+          Text(
+            label,
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 10),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _workloadCard() {
+    final now = DateTime.now();
+    Widget box(String label, Color color) => Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: CircleAvatar(radius: 4, backgroundColor: color),
+                ),
+                const SizedBox(width: 6),
+                // Dua baris (tanpa ellipsis) supaya tidak terpotong.
+                Flexible(
+                  child: Text(
+                    'Prioritas\n$label',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '5 tugas',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                color: _navy,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _card(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.calendar_month, color: _blue, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Ringkasan Beban Kerja Bulan Ini',
+                  style: TextStyle(fontWeight: FontWeight.bold, color: _navy),
                 ),
               ),
             ],
           ),
+          Padding(
+            padding: const EdgeInsets.only(left: 28, top: 2),
+            child: Text(
+              '${_months[now.month - 1]} ${now.year}',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              box('Tinggi', Colors.red.shade600),
+              const SizedBox(width: 8),
+              box('Sedang', Colors.amber.shade700),
+              const SizedBox(width: 8),
+              box('Rendah', Colors.green.shade600),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEAF3FC),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info, color: _blue, size: 16),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Setiap karyawan mendapatkan 15 tugas per bulan (5 tinggi, 5 sedang, 5 rendah).\nMaksimal 5 tugas dapat dikerjakan secara bersamaan.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF425466),
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusInfoCard() {
+    Widget item(
+      IconData icon,
+      Color color,
+      String title,
+      String l1,
+      String l2,
+    ) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: color.withOpacity(.15),
+            child: Icon(icon, color: color),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(l1, style: const TextStyle(fontSize: 11.5)),
+                Text(
+                  l2,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _card(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.assignment_ind, color: _blue, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Status Karyawan',
+                style: TextStyle(fontWeight: FontWeight.bold, color: _navy),
+              ),
+            ],
+          ),
+          const Divider(height: 24),
+          item(
+            Icons.check_circle,
+            Colors.green.shade700,
+            'Tersedia',
+            'Jumlah tugas aktif < $_maxActive',
+            'Masih ada kapasitas untuk menerima tugas baru.',
+          ),
+          const Divider(height: 8),
+          item(
+            Icons.work_rounded,
+            Colors.orange.shade700,
+            'Sibuk',
+            'Jumlah tugas aktif = $_maxActive',
+            'Sedang mengerjakan tugas sesuai kapasitas.',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _empty() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(28),
+    decoration: _card(),
+    child: const Center(child: Text('Data karyawan tidak ditemukan.')),
+  );
+
+  Widget _message(String text) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Text(text, textAlign: TextAlign.center),
+    ),
+  );
+
+  void _detail(Map<String, dynamic> row) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StatusStaffDetailPage(
+          staff: Map<String, dynamic>.from(row['staff'] as Map),
+          tasks: List<Map<String, dynamic>>.from(row['tasks'] as List),
         ),
-        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 3),
+      ),
+    );
+  }
+}
+
+// ────────────────────────────── Halaman Detail ──────────────────────────────
+
+class StatusStaffDetailPage extends StatefulWidget {
+  final Map<String, dynamic> staff;
+  final List<Map<String, dynamic>> tasks;
+
+  const StatusStaffDetailPage({
+    super.key,
+    required this.staff,
+    required this.tasks,
+  });
+
+  @override
+  State<StatusStaffDetailPage> createState() => _StatusStaffDetailPageState();
+}
+
+class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
+  late int _selectedMonth;
+  late int _selectedYear;
+  late List<int> _availableYears;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _selectedMonth = now.month;
+    _selectedYear = now.year;
+
+    final years = <int>{now.year};
+    for (final t in widget.tasks) {
+      final d = t['deadline'] as DateTime?;
+      if (d != null) years.add(d.year);
+    }
+    _availableYears = years.toList()..sort();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wide = MediaQuery.of(context).size.width >= 900;
+
+    final filteredTasks = widget.tasks.where((t) {
+      final date = t['deadline'] as DateTime?;
+      if (date == null) return false;
+      return date.month == _selectedMonth && date.year == _selectedYear;
+    }).toList();
+
+    final active = filteredTasks.where(_isActive).toList()
+      ..sort((a, b) {
+        final da = a['deadline'] as DateTime?;
+        final dbl = b['deadline'] as DateTime?;
+        if (da == null && dbl == null) return 0;
+        if (da == null) return 1;
+        if (dbl == null) return -1;
+        return da.compareTo(dbl);
+      });
+
+    final others = filteredTasks.where((t) => !_isActive(t)).toList();
+
+    int count(String p) =>
+        filteredTasks.where((t) => t['prioritas'] == p).length;
+
+    final dynamicStatus = active.length >= _maxActive ? 'Sibuk' : 'Tersedia';
+
+    final phone =
+        (widget.staff['no_hp'] ??
+                widget.staff['telepon'] ??
+                widget.staff['no_telp'] ??
+                widget.staff['phone'] ??
+                '-')
+            .toString();
+
+    final Widget bodyContent = SingleChildScrollView(
+      padding: EdgeInsets.all(wide ? 24 : 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: _card(),
+            child: Row(
+              children: [
+                _avatar(widget.staff, 30),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        (widget.staff['nama'] ?? 'Staff').toString(),
+                        style: const TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.bold,
+                          color: _navy,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        (widget.staff['jabatan'] ?? '-').toString(),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Icon(Icons.phone, size: 14, color: _blue),
+                          const SizedBox(width: 5),
+                          Flexible(
+                            child: Text(
+                              phone,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                _workBadge(dynamicStatus),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: _card(14),
+            child: Row(
+              children: [
+                const Icon(Icons.filter_alt_rounded, color: _blue),
+                const SizedBox(width: 10),
+                const Text(
+                  'Periode Kinerja:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: _navy,
+                    fontSize: 13,
+                  ),
+                ),
+                const Spacer(),
+
+                DropdownButton<int>(
+                  value: _selectedMonth,
+                  underline: const SizedBox(),
+                  icon: const Icon(Icons.arrow_drop_down, color: _blue),
+                  items: List.generate(12, (index) {
+                    return DropdownMenuItem(
+                      value: index + 1,
+                      child: Text(
+                        _months[index],
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    );
+                  }),
+                  onChanged: (val) {
+                    if (val != null) setState(() => _selectedMonth = val);
+                  },
+                ),
+                const SizedBox(width: 12),
+
+                DropdownButton<int>(
+                  value: _selectedYear,
+                  underline: const SizedBox(),
+                  icon: const Icon(Icons.arrow_drop_down, color: _blue),
+                  items: _availableYears.map((y) {
+                    return DropdownMenuItem(
+                      value: y,
+                      child: Text(
+                        '$y',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (val) {
+                    if (val != null) setState(() => _selectedYear = val);
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEAF3FC),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _blue.withOpacity(.2)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Tugas aktif periode ini',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: _navy,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${active.length}/$_maxActive',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _navy,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: LinearProgressIndicator(
+                    value: (active.length / _maxActive).clamp(0.0, 1.0),
+                    minHeight: 10,
+                    backgroundColor: Colors.white,
+                    valueColor: const AlwaysStoppedAnimation(_blue),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Maksimal $_maxActive tugas aktif per karyawan',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          Text(
+            'Kinerja Periode ${_months[_selectedMonth - 1]} $_selectedYear',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: _navy,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              for (final p in const ['Tinggi', 'Sedang', 'Rendah']) ...[
+                Expanded(
+                  child: Container(
+                    margin: EdgeInsets.only(right: p == 'Rendah' ? 0 : 10),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: _prioColor(p).withOpacity(.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _prioColor(p).withOpacity(.2)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 4,
+                              backgroundColor: _prioColor(p),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              p,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${count(p)}',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: _prioColor(p),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 18),
+
+          const Text(
+            'Rincian Tugas Aktif',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: _navy,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _taskList(
+            active,
+            'Belum ada tugas aktif untuk karyawan pada periode ini.',
+          ),
+          if (others.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            const Text(
+              'Antrean & Riwayat',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: _navy,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _taskList(others, ''),
+          ],
+
+          const SizedBox(height: 24),
+
+          Center(
+            child: SizedBox(
+              width: 200,
+              height: 44,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _navy,
+                  side: const BorderSide(color: _blue, width: 1.5),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                label: const Text(
+                  'Kembali',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+
+    return Scaffold(
+      backgroundColor: _bg,
+      drawer: wide ? null : const AdminSidebar(currentIndex: 3, isDrawer: true),
+      body: Row(
+        children: [
+          if (wide) const AdminSidebar(currentIndex: 3),
+          Expanded(
+            child: Column(
+              children: [
+                AdminHeader(title: 'Detail Status Staff', showSidebar: wide),
+                Expanded(child: bodyContent),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _taskList(List<Map<String, dynamic>> list, String emptyText) {
+    if (list.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: _card(14),
+        child: Text(
+          emptyText,
+          style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+        ),
+      );
+    }
+    return Container(
+      decoration: _card(14),
+      child: Column(
+        children: [
+          for (var i = 0; i < list.length; i++)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                border: i == 0
+                    ? null
+                    : Border(top: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: Row(
+                children: [
+                  _pill(
+                    list[i]['prioritas'] as String,
+                    _prioColor(list[i]['prioritas'] as String),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      list[i]['judul'].toString(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _pill(
+                    list[i]['status'] as String,
+                    _statusColor(list[i]['status'] as String),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    _fmtDate(list[i]['deadline'] as DateTime?),
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

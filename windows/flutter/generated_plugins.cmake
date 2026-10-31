@@ -1,8 +1,10 @@
+
 #
 # Generated file, do not edit.
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  app_links
   cloud_firestore
   file_saver
   file_selector_windows
@@ -10,6 +12,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_core
   firebase_storage
   geolocator_windows
+  syncfusion_pdfviewer_windows
   url_launcher_windows
 )
 

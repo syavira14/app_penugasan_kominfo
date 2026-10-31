@@ -1,7 +1,10 @@
+import 'dart:async';
+import '../services/penugasan_workflow.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../pages/admin/admin_navbar.dart';
+import '../pages/admin/riwayat_tugas_staff.dart';
 import 'detail_tugas_admin_page.dart';
 
 class AppColors {
@@ -16,16 +19,13 @@ class AppColors {
   static const Color oranyeWarning = Color(0xFFFF9800);
 }
 
-enum SortBy {
-  terbaru,
-  namaAZ,
-  tanggal,
-}
+enum SortBy { terbaru, namaAZ, tanggal }
 
 enum FilterStatus {
   semua,
   pending,
   berlangsung,
+  terkendala,
   dikumpulkan,
   revisi,
   disetujui,
@@ -44,6 +44,40 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
   final TextEditingController _searchController = TextEditingController();
 
   String _searchQuery = '';
+  final Map<String, List<String>> _statusesByTugas = {};
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _assignmentSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _assignmentSubscription = _firestore
+        .collection('penugasan')
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (!mounted) return;
+            setState(() {
+              _statusesByTugas.clear();
+              for (final doc in snapshot.docs) {
+                final data = doc.data();
+                final taskId = (data['tugas_id'] ?? '').toString();
+                (_statusesByTugas[taskId] ??= []).add(
+                  (data['status'] ?? 'pending').toString().toLowerCase(),
+                );
+              }
+            });
+          },
+          onError: (Object error) {
+            if (mounted) {
+              _tampilkanSnackbar(
+                'Gagal memperbarui status: $error',
+                error: true,
+              );
+            }
+          },
+        );
+  }
 
   SortBy _sortBy = SortBy.terbaru;
 
@@ -51,18 +85,15 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
 
   DateTime? _selectedDate;
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> get _tugasStream {
-    return _firestore
-        .collection('tugas')
-        .orderBy(
-          'tanggal_tugas_diberikan',
-          descending: true,
-        )
-        .snapshots();
-  }
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _tugasStream =
+      _firestore
+          .collection('tugas')
+          .orderBy('tanggal_tugas_diberikan', descending: true)
+          .snapshots();
 
   @override
   void dispose() {
+    _assignmentSubscription?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -88,20 +119,14 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
   Future<void> _bukaTambahTugas() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => const DetailTugasAdminPage(),
-      ),
+      MaterialPageRoute(builder: (_) => const DetailTugasAdminPage()),
     );
   }
 
   Future<void> _bukaEditTugas(String tugasId) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => DetailTugasAdminPage(
-          tugasId: tugasId,
-        ),
-      ),
+      MaterialPageRoute(builder: (_) => DetailTugasAdminPage(tugasId: tugasId)),
     );
   }
 
@@ -109,18 +134,12 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => DetailTugasAdminPage(
-          tugasId: tugasId,
-          modeLihat: true,
-        ),
+        builder: (_) => DetailTugasAdminPage(tugasId: tugasId, modeLihat: true),
       ),
     );
   }
 
-  Future<void> _konfirmasiHapus(
-    String tugasId,
-    String judul,
-  ) async {
+  Future<void> _konfirmasiHapus(String tugasId, String judul) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -145,9 +164,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
               },
               child: const Text(
                 'Batal',
-                style: TextStyle(
-                  color: AppColors.abuTeks,
-                ),
+                style: TextStyle(color: AppColors.abuTeks),
               ),
             ),
             ElevatedButton(
@@ -173,10 +190,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     try {
       final assignments = await _firestore
           .collection('penugasan')
-          .where(
-            'tugas_id',
-            isEqualTo: tugasId,
-          )
+          .where('tugas_id', isEqualTo: tugasId)
           .get();
 
       final batch = _firestore.batch();
@@ -185,24 +199,17 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
         batch.delete(doc.reference);
       }
 
-      batch.delete(
-        _firestore.collection('tugas').doc(tugasId),
-      );
+      batch.delete(_firestore.collection('tugas').doc(tugasId));
 
       await batch.commit();
 
       if (!mounted) return;
 
-      _tampilkanSnackbar(
-        'Tugas "$judul" telah dihapus',
-      );
+      _tampilkanSnackbar('Tugas "$judul" telah dihapus');
     } catch (e) {
       if (!mounted) return;
 
-      _tampilkanSnackbar(
-        'Gagal menghapus tugas: $e',
-        error: true,
-      );
+      _tampilkanSnackbar('Gagal menghapus tugas: $e', error: true);
     }
   }
 
@@ -212,66 +219,42 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     final result = docs.where((doc) {
       final data = doc.data();
 
-      final judul = (data['judul'] ?? '')
-          .toString()
-          .toLowerCase();
+      final judul = (data['judul'] ?? '').toString().toLowerCase();
 
-      final tempat = (data['tempat_tugas'] ?? '')
-          .toString()
-          .toLowerCase();
+      final tempat = (data['tempat_tugas'] ?? '').toString().toLowerCase();
 
-      final query = _searchQuery
-          .trim()
-          .toLowerCase();
+      final query = _searchQuery.trim().toLowerCase();
 
       final cocokSearch =
-          query.isEmpty ||
-          judul.contains(query) ||
-          tempat.contains(query);
+          query.isEmpty || judul.contains(query) || tempat.contains(query);
 
-      final start =
-          _asDate(data['tanggal_mulai_tugas']);
+      final start = _asDate(data['tanggal_mulai_tugas']);
 
       final cocokTanggal =
           _selectedDate == null ||
-          (
-            start != null &&
-            DateUtils.isSameDay(
-              start,
-              _selectedDate!,
-            )
-          );
+          (start != null && DateUtils.isSameDay(start, _selectedDate!));
 
-      return cocokSearch && cocokTanggal;
+      final statuses = _statusesByTugas[doc.id] ?? ['pending'];
+      final sudahDisetujui = assignmentGroupStatus(statuses) == 'disetujui';
+      final cocokStatus =
+          _filterStatus == FilterStatus.semua ||
+          statuses.contains(_filterStatus.name);
+      return cocokSearch && cocokTanggal && cocokStatus && !sudahDisetujui;
     }).toList();
 
     if (_sortBy == SortBy.namaAZ) {
-      result.sort(
-        (a, b) {
-          return (a.data()['judul'] ?? '')
-              .toString()
-              .compareTo(
-                (b.data()['judul'] ?? '')
-                    .toString(),
-              );
-        },
-      );
+      result.sort((a, b) {
+        return (a.data()['judul'] ?? '').toString().compareTo(
+          (b.data()['judul'] ?? '').toString(),
+        );
+      });
     } else if (_sortBy == SortBy.tanggal) {
-      result.sort(
-        (a, b) {
-          return (
-            _asDate(
-                  a.data()['tanggal_mulai_tugas'],
-                ) ??
-                DateTime(1900)
-          ).compareTo(
-            _asDate(
-                  b.data()['tanggal_mulai_tugas'],
-                ) ??
-                DateTime(1900),
-          );
-        },
-      );
+      result.sort((a, b) {
+        return (_asDate(a.data()['tanggal_mulai_tugas']) ?? DateTime(1900))
+            .compareTo(
+              _asDate(b.data()['tanggal_mulai_tugas']) ?? DateTime(1900),
+            );
+      });
     }
 
     return result;
@@ -289,21 +272,13 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     return null;
   }
 
-  void _tampilkanSnackbar(
-    String pesan, {
-    bool error = false,
-  }) {
+  void _tampilkanSnackbar(String pesan, {bool error = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(pesan),
-        backgroundColor:
-            error
-                ? Colors.red.shade700
-                : AppColors.biruTua,
+        backgroundColor: error ? Colors.red.shade700 : AppColors.biruTua,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
@@ -320,9 +295,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
           automaticallyImplyLeading: false,
           toolbarHeight: 96,
           shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(
-              bottom: Radius.circular(32),
-            ),
+            borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
           ),
           flexibleSpace: Container(
             decoration: const BoxDecoration(
@@ -335,9 +308,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              borderRadius: BorderRadius.vertical(
-                bottom: Radius.circular(32),
-              ),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
             ),
           ),
           title: const Text(
@@ -355,12 +326,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
 
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(
-                16,
-                0,
-                16,
-                12,
-              ),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               color: AppColors.latarAbu,
               child: Column(
                 children: [
@@ -371,12 +337,9 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                         _searchQuery = value;
                       });
                     },
-                    style: const TextStyle(
-                      fontSize: 13.5,
-                    ),
+                    style: const TextStyle(fontSize: 13.5),
                     decoration: InputDecoration(
-                      hintText:
-                          'Cari judul atau tempat tugas...',
+                      hintText: 'Cari judul atau tempat tugas...',
                       hintStyle: const TextStyle(
                         color: AppColors.abuTeks,
                         fontSize: 13,
@@ -385,26 +348,22 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                         Icons.search_rounded,
                         color: AppColors.biruSedang,
                       ),
-                      suffixIcon:
-                          _searchQuery.isEmpty
-                              ? null
-                              : IconButton(
-                                onPressed: () {
-                                  _searchController.clear();
+                      suffixIcon: _searchQuery.isEmpty
+                          ? null
+                          : IconButton(
+                              onPressed: () {
+                                _searchController.clear();
 
-                                  setState(() {
-                                    _searchQuery = '';
-                                  });
-                                },
-                                icon: const Icon(
-                                  Icons.close,
-                                ),
-                              ),
+                                setState(() {
+                                  _searchQuery = '';
+                                });
+                              },
+                              icon: const Icon(Icons.close),
+                            ),
                       filled: true,
                       fillColor: Colors.white,
                       border: OutlineInputBorder(
-                        borderRadius:
-                            BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide.none,
                       ),
                     ),
@@ -418,9 +377,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                       children: [
                         _FilterChip(
                           label: _filterLabel(),
-                          selected:
-                              _filterStatus !=
-                              FilterStatus.semua,
+                          selected: _filterStatus != FilterStatus.semua,
                           onTap: _bukaFilterStatus,
                         ),
 
@@ -428,20 +385,17 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
 
                         _FilterChip(
                           label: _sortLabel(),
-                          selected:
-                              _sortBy != SortBy.terbaru,
+                          selected: _sortBy != SortBy.terbaru,
                           onTap: _bukaSort,
                         ),
 
                         const SizedBox(width: 8),
 
                         _FilterChip(
-                          label:
-                              _selectedDate == null
-                                  ? 'Tanggal'
-                                  : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
-                          selected:
-                              _selectedDate != null,
+                          label: _selectedDate == null
+                              ? 'Tanggal'
+                              : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
+                          selected: _selectedDate != null,
                           onTap: _pilihTanggal,
                         ),
 
@@ -454,10 +408,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                                 _selectedDate = null;
                               });
                             },
-                            icon: const Icon(
-                              Icons.close,
-                              size: 18,
-                            ),
+                            icon: const Icon(Icons.close, size: 18),
                           ),
                         ],
                       ],
@@ -468,111 +419,63 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
             ),
 
             Expanded(
-              child:
-                  StreamBuilder<
-                    QuerySnapshot<
-                      Map<String, dynamic>
-                    >
-                  >(
-                    stream: _tugasStream,
-                    builder: (context, snapshot) {
-                      if (snapshot.hasError) {
-                        return Center(
-                          child: Text(
-                            'Gagal memuat tugas:\n${snapshot.error}',
-                          ),
-                        );
-                      }
+              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: _tugasStream,
+                builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Text('Gagal memuat tugas:\n${snapshot.error}'),
+                    );
+                  }
 
-                      if (snapshot.connectionState ==
-                          ConnectionState.waiting) {
-                        return const Center(
-                          child:
-                              CircularProgressIndicator(),
-                        );
-                      }
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
 
-                      final docs = _filterDocs(
-                        snapshot.data?.docs ?? [],
-                      );
+                  final docs = _filterDocs(snapshot.data?.docs ?? []);
 
-                      if (docs.isEmpty) {
-                        return _EmptyState(
-                          query: _searchQuery,
-                        );
-                      }
+                  if (docs.isEmpty) {
+                    return _EmptyState(query: _searchQuery);
+                  }
 
-                      return ListView.separated(
-                        padding:
-                            const EdgeInsets.all(16),
-                        itemCount: docs.length,
-                        separatorBuilder:
-                            (_, __) =>
-                                const SizedBox(
-                                  height: 12,
-                                ),
-                        itemBuilder:
-                            (context, index) {
-                          final doc = docs[index];
+                  return ListView.separated(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: docs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
+                      final doc = docs[index];
 
-                          return _TugasCard(
-                            doc: doc,
-                            firestore: _firestore,
-                            onTap:
-                                () =>
-                                    _bukaDetailTugas(
-                                      doc.id,
-                                    ),
-                            onEdit:
-                                () =>
-                                    _bukaEditTugas(
-                                      doc.id,
-                                    ),
-                            onDelete:
-                                () =>
-                                    _konfirmasiHapus(
-                                      doc.id,
-                                      (
-                                            doc.data()[
-                                                  'judul'
-                                                ] ??
-                                                'Tugas'
-                                          )
-                                          .toString(),
-                                    ),
-                          );
-                        },
+                      return _TugasCard(
+                        doc: doc,
+                        firestore: _firestore,
+                        onTap: () => _bukaDetailTugas(doc.id),
+                        onEdit: () => _bukaEditTugas(doc.id),
+                        onDelete: () => _konfirmasiHapus(
+                          doc.id,
+                          (doc.data()['judul'] ?? 'Tugas').toString(),
+                        ),
                       );
                     },
-                  ),
+                  );
+                },
+              ),
             ),
           ],
         ),
 
-        floatingActionButton:
-            FloatingActionButton.extended(
-              onPressed: _bukaTambahTugas,
-              backgroundColor:
-                  AppColors.biruTua,
-              icon: const Icon(
-                Icons.add_rounded,
-                color: Colors.white,
-              ),
-              label: const Text(
-                'Tambah Tugas',
-                style: TextStyle(
-                  color: Colors.white,
-                ),
-              ),
-            ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _bukaTambahTugas,
+          backgroundColor: AppColors.biruTua,
+          icon: const Icon(Icons.add_rounded, color: Colors.white),
+          label: const Text(
+            'Tambah Tugas',
+            style: TextStyle(color: Colors.white),
+          ),
+        ),
 
-        floatingActionButtonLocation:
-            FloatingActionButtonLocation.endFloat,
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
 
-        bottomNavigationBar:
-            const AdminBottomNavigationBar(
-              currentIndex: 1,
-            ),
+        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 1),
       ),
     );
   }
@@ -584,6 +487,9 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
 
       case FilterStatus.berlangsung:
         return 'Berlangsung';
+
+      case FilterStatus.terkendala:
+        return 'Terkendala';
 
       case FilterStatus.dikumpulkan:
         return 'Dikumpulkan';
@@ -613,46 +519,36 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
   }
 
   Future<void> _bukaFilterStatus() async {
-    final value =
-        await showModalBottomSheet<FilterStatus>(
-          context: context,
-          builder: (context) {
-            return SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children:
-                    FilterStatus.values.map(
-                      (status) {
-                        return ListTile(
-                          title: Text(
-                            _filterStatusName(
-                              status,
-                            ),
-                          ),
-                          trailing:
-                              _filterStatus ==
-                                      status
-                                  ? const Icon(
-                                    Icons.check,
-                                    color:
-                                        AppColors
-                                            .biruTua,
-                                  )
-                                  : null,
-                          onTap: () {
-                            Navigator.pop(
-                              context,
-                              status,
-                            );
-                          },
-                        );
-                      },
-                    ).toList(),
-              ),
-            );
-          },
+    final value = await showModalBottomSheet<FilterStatus>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: FilterStatus.values.map((status) {
+              return ListTile(
+                title: Text(_filterStatusName(status)),
+                trailing: _filterStatus == status
+                    ? const Icon(Icons.check, color: AppColors.biruTua)
+                    : null,
+                onTap: () {
+                  Navigator.pop(context, status);
+                },
+              );
+            }).toList(),
+          ),
         );
+      },
+    );
 
+    if (!mounted) return;
+    if (value == FilterStatus.disetujui) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const RiwayatTugasStaffPage()),
+      );
+      return;
+    }
     if (value != null) {
       setState(() {
         _filterStatus = value;
@@ -661,40 +557,27 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
   }
 
   Future<void> _bukaSort() async {
-    final value =
-        await showModalBottomSheet<SortBy>(
-          context: context,
-          builder: (context) {
-            return SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children:
-                    SortBy.values.map((sort) {
-                      return ListTile(
-                        title: Text(
-                          _sortName(sort),
-                        ),
-                        trailing:
-                            _sortBy == sort
-                                ? const Icon(
-                                  Icons.check,
-                                  color:
-                                      AppColors
-                                          .biruTua,
-                                )
-                                : null,
-                        onTap: () {
-                          Navigator.pop(
-                            context,
-                            sort,
-                          );
-                        },
-                      );
-                    }).toList(),
-              ),
-            );
-          },
+    final value = await showModalBottomSheet<SortBy>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: SortBy.values.map((sort) {
+              return ListTile(
+                title: Text(_sortName(sort)),
+                trailing: _sortBy == sort
+                    ? const Icon(Icons.check, color: AppColors.biruTua)
+                    : null,
+                onTap: () {
+                  Navigator.pop(context, sort);
+                },
+              );
+            }).toList(),
+          ),
         );
+      },
+    );
 
     if (value != null) {
       setState(() {
@@ -703,9 +586,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     }
   }
 
-  String _filterStatusName(
-    FilterStatus value,
-  ) {
+  String _filterStatusName(FilterStatus value) {
     switch (value) {
       case FilterStatus.semua:
         return 'Semua';
@@ -724,6 +605,9 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
 
       case FilterStatus.disetujui:
         return 'Disetujui';
+
+      case FilterStatus.terkendala:
+        return 'Terkendala';
     }
   }
 
@@ -742,10 +626,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
 }
 
 class _TugasCard extends StatelessWidget {
-  final QueryDocumentSnapshot<
-    Map<String, dynamic>
-  >
-  doc;
+  final QueryDocumentSnapshot<Map<String, dynamic>> doc;
 
   final FirebaseFirestore firestore;
 
@@ -778,50 +659,14 @@ class _TugasCard extends StatelessWidget {
   }
 
   String _statusFromAssignments(
-    List<QueryDocumentSnapshot<
-      Map<String, dynamic>
-    >>
-    assignments,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
   ) {
-    if (assignments.isEmpty) {
-      return 'pending';
-    }
-
-    final statuses =
-        assignments
-            .map(
-              (e) =>
-                  (e.data()['status'] ?? 'pending')
-                      .toString()
-                      .toLowerCase(),
-            )
-            .toList();
-
-    if (statuses.every(
-      (status) => status == 'disetujui',
-    )) {
-      return 'disetujui';
-    }
-
-    if (statuses.any(
-      (status) => status == 'revisi',
-    )) {
-      return 'revisi';
-    }
-
-    if (statuses.any(
-      (status) => status == 'dikumpulkan',
-    )) {
-      return 'dikumpulkan';
-    }
-
-    if (statuses.any(
-      (status) => status == 'berlangsung',
-    )) {
-      return 'berlangsung';
-    }
-
-    return 'pending';
+    return assignmentGroupStatus(
+      assignments.map(
+        (assignment) =>
+            (assignment.data()['status'] ?? 'pending').toString().toLowerCase(),
+      ),
+    );
   }
 
   Color _statusColor(String status) {
@@ -834,6 +679,9 @@ class _TugasCard extends StatelessWidget {
 
       case 'berlangsung':
         return AppColors.biruSedang;
+
+      case 'terkendala':
+        return Colors.red;
 
       case 'revisi':
         return Colors.orange;
@@ -853,6 +701,9 @@ class _TugasCard extends StatelessWidget {
 
       case 'berlangsung':
         return 'Berlangsung';
+
+      case 'terkendala':
+        return 'Terkendala';
 
       case 'revisi':
         return 'Revisi';
@@ -879,75 +730,49 @@ class _TugasCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final data = doc.data();
 
-    final judul =
-        (data['judul'] ?? 'Tanpa Judul')
-            .toString();
+    final judul = (data['judul'] ?? 'Tanpa Judul').toString();
 
-    final tempat =
-        (data['tempat_tugas'] ?? '-')
-            .toString();
+    final tempat = (data['tempat_tugas'] ?? '-').toString();
 
-    final priority =
-        (data['prioritas'] ?? 'sedang')
-            .toString();
+    final priority = (data['prioritas'] ?? 'sedang').toString();
 
-    final start =
-        _date(data['tanggal_mulai_tugas']);
+    final start = _date(data['tanggal_mulai_tugas']);
 
-    return FutureBuilder<
-      QuerySnapshot<Map<String, dynamic>>
-    >(
-      future: firestore
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: firestore
           .collection('penugasan')
-          .where(
-            'tugas_id',
-            isEqualTo: doc.id,
-          )
-          .get(),
+          .where('tugas_id', isEqualTo: doc.id)
+          .snapshots(),
       builder: (context, snapshot) {
-        final assignments =
-            snapshot.data?.docs ?? [];
+        final assignments = snapshot.data?.docs ?? [];
 
-        final status =
-            _statusFromAssignments(
-              assignments,
-            );
+        final status = _statusFromAssignments(assignments);
 
         return InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(
-            16,
-          ),
+          borderRadius: BorderRadius.circular(16),
           child: Container(
-            padding: const EdgeInsets.all(
-              14,
-            ),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: AppColors.putih,
-              borderRadius:
-                  BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.biruTua
-                      .withOpacity(0.06),
+                  color: AppColors.biruTua.withOpacity(0.06),
                   blurRadius: 12,
                   offset: const Offset(0, 4),
                 ),
               ],
             ),
             child: Row(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
                   width: 4,
                   height: 80,
                   decoration: BoxDecoration(
-                    color: _statusColor(
-                      status,
-                    ),
-                    borderRadius:
-                        BorderRadius.circular(4),
+                    color: _statusColor(status),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                 ),
 
@@ -955,57 +780,37 @@ class _TugasCard extends StatelessWidget {
 
                 Expanded(
                   child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
                           Expanded(
                             child: Text(
                               judul,
-                              style:
-                                  const TextStyle(
-                                    color:
-                                        AppColors
-                                            .biruTua,
-                                    fontSize: 14,
-                                    fontWeight:
-                                        FontWeight.w700,
-                                  ),
+                              style: const TextStyle(
+                                color: AppColors.biruTua,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
 
-                          PopupMenuButton<
-                            String
-                          >(
-                            padding:
-                                EdgeInsets.zero,
+                          PopupMenuButton<String>(
+                            padding: EdgeInsets.zero,
                             onSelected: (value) {
-                              if (value ==
-                                  'edit') {
+                              if (value == 'edit') {
                                 onEdit();
-                              } else if (value ==
-                                  'delete') {
+                              } else if (value == 'delete') {
                                 onDelete();
                               }
                             },
-                            itemBuilder:
-                                (_) => const [
-                                  PopupMenuItem(
-                                    value:
-                                        'edit',
-                                    child: Text(
-                                      'Edit',
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value:
-                                        'delete',
-                                    child: Text(
-                                      'Hapus',
-                                    ),
-                                  ),
-                                ],
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(value: 'edit', child: Text('Edit')),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Text('Hapus'),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -1015,26 +820,15 @@ class _TugasCard extends StatelessWidget {
                       Row(
                         children: [
                           _Badge(
-                            text:
-                                _statusText(
-                                  status,
-                                ),
-                            color:
-                                _statusColor(
-                                  status,
-                                ),
+                            text: _statusText(status),
+                            color: _statusColor(status),
                           ),
 
                           const SizedBox(width: 7),
 
                           _Badge(
-                            text:
-                                priority
-                                    .toUpperCase(),
-                            color:
-                                _priorityColor(
-                                  priority,
-                                ),
+                            text: priority.toUpperCase(),
+                            color: _priorityColor(priority),
                           ),
                         ],
                       ),
@@ -1042,21 +836,13 @@ class _TugasCard extends StatelessWidget {
                       const SizedBox(height: 9),
 
                       _InfoRow(
-                        icon:
-                            Icons
-                                .calendar_today_outlined,
-                        text:
-                            _formatDate(start),
+                        icon: Icons.calendar_today_outlined,
+                        text: _formatDate(start),
                       ),
 
                       const SizedBox(height: 5),
 
-                      _InfoRow(
-                        icon:
-                            Icons
-                                .location_on_outlined,
-                        text: tempat,
-                      ),
+                      _InfoRow(icon: Icons.location_on_outlined, text: tempat),
                     ],
                   ),
                 ),
@@ -1073,23 +859,15 @@ class _Badge extends StatelessWidget {
   final String text;
   final Color color;
 
-  const _Badge({
-    required this.text,
-    required this.color,
-  });
+  const _Badge({required this.text, required this.color});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding:
-          const EdgeInsets.symmetric(
-            horizontal: 9,
-            vertical: 4,
-          ),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
         color: color.withOpacity(.1),
-        borderRadius:
-            BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
         text,
@@ -1107,31 +885,20 @@ class _InfoRow extends StatelessWidget {
   final IconData icon;
   final String text;
 
-  const _InfoRow({
-    required this.icon,
-    required this.text,
-  });
+  const _InfoRow({required this.icon, required this.text});
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(
-          icon,
-          size: 14,
-          color: AppColors.abuTeks,
-        ),
+        Icon(icon, size: 14, color: AppColors.abuTeks),
         const SizedBox(width: 6),
         Expanded(
           child: Text(
             text,
             maxLines: 1,
-            overflow:
-                TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: AppColors.abuTeks,
-              fontSize: 11.5,
-            ),
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: AppColors.abuTeks, fontSize: 11.5),
           ),
         ),
       ],
@@ -1154,53 +921,35 @@ class _FilterChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius:
-          BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(18),
       child: Container(
         height: 36,
-        padding:
-            const EdgeInsets.symmetric(
-              horizontal: 13,
-            ),
+        padding: const EdgeInsets.symmetric(horizontal: 13),
         decoration: BoxDecoration(
-          color:
-              selected
-                  ? AppColors.biruTua
-                  : Colors.white,
+          color: selected ? AppColors.biruTua : Colors.white,
           border: Border.all(
-            color:
-                selected
-                    ? AppColors.biruTua
-                    : AppColors.biruSedang
-                        .withOpacity(.35),
+            color: selected
+                ? AppColors.biruTua
+                : AppColors.biruSedang.withOpacity(.35),
           ),
-          borderRadius:
-              BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(18),
         ),
         child: Row(
-          mainAxisSize:
-              MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               label,
               style: TextStyle(
-                color:
-                    selected
-                        ? Colors.white
-                        : AppColors.biruTua,
+                color: selected ? Colors.white : AppColors.biruTua,
                 fontSize: 11.5,
-                fontWeight:
-                    FontWeight.w700,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(width: 4),
             Icon(
               Icons.keyboard_arrow_down,
               size: 16,
-              color:
-                  selected
-                      ? Colors.white
-                      : AppColors.biruTua,
+              color: selected ? Colors.white : AppColors.biruTua,
             ),
           ],
         ),
@@ -1212,20 +961,16 @@ class _FilterChip extends StatelessWidget {
 class _EmptyState extends StatelessWidget {
   final String query;
 
-  const _EmptyState({
-    required this.query,
-  });
+  const _EmptyState({required this.query});
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Column(
-        mainAxisSize:
-            MainAxisSize.min,
+        mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(
-            Icons
-                .assignment_late_outlined,
+            Icons.assignment_late_outlined,
             size: 48,
             color: AppColors.abuTeks,
           ),
@@ -1234,10 +979,7 @@ class _EmptyState extends StatelessWidget {
             query.isEmpty
                 ? 'Belum ada tugas'
                 : 'Tugas "$query" tidak ditemukan',
-            style: const TextStyle(
-              color: AppColors.abuTeks,
-              fontSize: 13,
-            ),
+            style: const TextStyle(color: AppColors.abuTeks, fontSize: 13),
           ),
         ],
       ),

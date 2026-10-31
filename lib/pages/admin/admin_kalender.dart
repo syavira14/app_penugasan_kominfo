@@ -12,11 +12,19 @@ class AdminKalenderPage extends StatefulWidget {
   State<AdminKalenderPage> createState() => _AdminKalenderPageState();
 }
 
+
 class _AdminKalenderPageState extends State<AdminKalenderPage>
     with AutomaticKeepAliveClientMixin {
   // Mengunci state agar data tersimpan di memori
   static const Color kBiruTua = Color(0xFF1A1464);
   static const Color kBiruSedang = Color(0xFF1D5FA0);
+
+class _AdminKalenderPageState extends State<AdminKalenderPage> {
+  // Warna Tema Admin
+  static const Color blueDark = Color(0xFF0011CC);
+  static const Color blueMid = Color(0xFF0066FF);
+  static const Color blueLight = Color(0xFF00CCFF);
+
   static const Color accentGold = Color(0xFFFFC107);
   static const Color kBgLight = Color(0xFFF7F9FB);
 

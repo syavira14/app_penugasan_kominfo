@@ -1,0 +1,325 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // 1. FUNGSI DASAR
+    // ==========================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function myUserPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(myUserPath())
+        && get(myUserPath()).data.role == 'Admin';
+    }
+
+    function isStaff() {
+      return signedIn()
+        && exists(myUserPath())
+        && get(myUserPath()).data.role == 'Staff';
+    }
+
+    function isOwnStaffAssignment() {
+      return isStaff()
+        && resource.data.staff_id == request.auth.uid;
+    }
+
+    function validUpdateTime() {
+      return request.resource.data.updated_at == request.time;
+    }
+
+    function validTransition(fromStatus, toStatus) {
+      return
+        (fromStatus == 'pending'
+          && toStatus == 'berlangsung')
+        ||
+        (fromStatus == 'berlangsung'
+          && toStatus in ['dikumpulkan', 'terkendala'])
+        ||
+        (fromStatus == 'revisi'
+          && toStatus == 'dikumpulkan')
+        ||
+        (fromStatus == 'terkendala'
+          && toStatus == 'berlangsung');
+    }
+
+    function staffStatusOnlyUpdate() {
+      return resource.data.status in ['pending', 'terkendala']
+        && request.resource.data.status == 'berlangsung'
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly([
+            'status',
+            'updated_at'
+          ]);
+    }
+
+    function staffSubmissionUpdate() {
+      return resource.data.status in ['berlangsung', 'revisi']
+        && request.resource.data.status == 'dikumpulkan'
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly([
+            'status',
+            'updated_at',
+            'tanggal_dikumpulkan',
+            'file_hasil_url',
+            'file_hasil_path',
+            'file_hasil_provider',
+            'file_hasil_nama',
+            'catatan_staff'
+          ])
+        && request.resource.data.tanggal_dikumpulkan == request.time
+        && request.resource.data.file_hasil_path is string
+        && request.resource.data.file_hasil_nama is string
+        && request.resource.data.catatan_staff is string
+        && request.resource.data.catatan_staff.size() > 0;
+    }
+
+    function staffObstacleUpdate() {
+      return resource.data.status == 'berlangsung'
+        && request.resource.data.status == 'terkendala'
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly([
+            'status',
+            'updated_at'
+          ]);
+    }
+
+    function validStaffAssignmentUpdate() {
+      return isOwnStaffAssignment()
+        && validUpdateTime()
+        && validTransition(
+          resource.data.status,
+          request.resource.data.status
+        )
+        && (
+          staffStatusOnlyUpdate()
+          || staffSubmissionUpdate()
+          || staffObstacleUpdate()
+        );
+    }
+
+    // ==========================================
+    // 2. USERS
+    // ==========================================
+
+    match /users/{userId} {
+
+      // Sementara mendukung daftar Staff dan profil.
+      allow get, list: if signedIn();
+
+      // Akun dibuat manual melalui Firebase Console.
+      allow create, delete: if false;
+
+      // Pengguna hanya dapat mengubah profil sendiri.
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && validUpdateTime()
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly([
+            'foto_base64',
+            'no_hp',
+            'updated_at'
+          ]);
+    }
+
+    // ==========================================
+    // 3. TUGAS
+    // ==========================================
+
+    match /tugas/{tugasId} {
+
+      // Admin dapat membaca seluruh tugas.
+      // Staff hanya dapat membaca tugas miliknya.
+      allow get: if isAdmin()
+        || (
+          isStaff()
+          && resource.data.keys().hasAll(['staff_ids'])
+          && resource.data.staff_ids is list
+          && request.auth.uid in resource.data.staff_ids
+        );
+
+      // Hanya Admin dapat mengambil daftar seluruh tugas.
+      allow list: if isAdmin();
+
+      // Hanya Admin dapat membuat tugas.
+      allow create: if isAdmin()
+        && request.resource.data.dibuat_oleh
+          == request.auth.uid
+        && request.resource.data.staff_ids is list
+        && request.resource.data.staff_ids.size() > 0;
+
+      // Hanya Admin dapat mengedit tugas.
+      allow update: if isAdmin()
+        && request.resource.data.dibuat_oleh
+          == resource.data.dibuat_oleh
+        && request.resource.data.staff_ids is list
+        && request.resource.data.staff_ids.size() > 0;
+
+      // Hanya Admin dapat menghapus tugas.
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 4. PENUGASAN
+    // ==========================================
+
+    match /penugasan/{penugasanId} {
+
+      // Admin dapat membaca seluruh penugasan.
+      // Staff hanya dapat membaca penugasan sendiri.
+      allow get, list: if isAdmin()
+        || (
+          isStaff()
+          && resource.data.staff_id == request.auth.uid
+        );
+
+      // Hanya Admin dapat membuat penugasan.
+      allow create: if isAdmin()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.staff_id is string
+        && request.resource.data.tugas_id is string
+        && exists(
+          /databases/$(database)/documents/users/$(request.resource.data.staff_id)
+        );
+
+      // Admin dapat mengelola seluruh penugasan.
+      // Staff hanya dapat melakukan transisi tertentu.
+      allow update: if isAdmin()
+        || validStaffAssignmentUpdate();
+
+      // Hanya Admin dapat menghapus penugasan.
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 5. LAPORAN KENDALA
+    // ==========================================
+
+    match /laporan_kendala/{laporanId} {
+
+      function assignmentPath() {
+        return /databases/$(database)/documents/penugasan/$(request.resource.data.penugasan_id);
+      }
+
+      function validReportOwner() {
+        return isStaff()
+          && request.resource.data.pelapor_id
+            == request.auth.uid
+          && request.resource.data.penugasan_id is string
+          && exists(assignmentPath())
+          && get(assignmentPath()).data.staff_id
+            == request.auth.uid
+          && get(assignmentPath()).data.tugas_id
+            == request.resource.data.tugas_id;
+      }
+
+      // Admin dapat membaca seluruh laporan kendala.
+      // Staff hanya membaca laporan miliknya.
+      allow get, list: if isAdmin()
+        || (
+          isStaff()
+          && resource.data.pelapor_id == request.auth.uid
+        );
+
+      // Staff membuat laporan kendala.
+      allow create: if validReportOwner()
+        && request.resource.data.status == 'menunggu_review'
+        && request.resource.data.prioritas == 'sedang'
+        && request.resource.data.solusi == ''
+        && request.resource.data.ditangani_oleh == ''
+        && request.resource.data.created_at == request.time
+        && request.resource.data.updated_at == request.time
+        && request.resource.data.tanggal_laporan == request.time
+        && request.resource.data.keys().hasOnly([
+          'tugas_id',
+          'penugasan_id',
+          'pelapor_id',
+          'jenis_kendala',
+          'deskripsi',
+          'dampak',
+          'bukti_url',
+          'bukti_path',
+          'bukti_provider',
+          'prioritas',
+          'status',
+          'solusi',
+          'ditangani_oleh',
+          'tanggal_laporan',
+          'created_at',
+          'updated_at'
+        ])
+        && request.resource.data.keys().hasAll([
+          'tugas_id',
+          'penugasan_id',
+          'pelapor_id',
+          'jenis_kendala',
+          'deskripsi',
+          'dampak',
+          'status',
+          'created_at',
+          'updated_at'
+        ]);
+
+      // Staff hanya dapat mengedit laporan sendiri.
+      allow update: if isStaff()
+        && resource.data.pelapor_id == request.auth.uid
+        && request.resource.data.pelapor_id
+          == resource.data.pelapor_id
+        && request.resource.data.penugasan_id
+          == resource.data.penugasan_id
+        && validUpdateTime()
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly([
+            'jenis_kendala',
+            'deskripsi',
+            'dampak',
+            'bukti_url',
+            'bukti_path',
+            'bukti_provider',
+            'updated_at'
+          ]);
+
+      // Hanya Admin dapat menghapus laporan kendala.
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 6. NOTIFIKASI
+    // ==========================================
+
+    match /notifikasi/{notifikasiId} {
+
+      // Hanya penerima yang dapat membaca notifikasi.
+      allow get, list: if signedIn()
+        && resource.data.user_id == request.auth.uid;
+
+      // Pembuatan dan penghapusan notifikasi
+      // belum diizinkan melalui aplikasi.
+      allow create, delete: if false;
+
+      // Penerima hanya dapat menandai dibaca.
+      allow update: if signedIn()
+        && resource.data.user_id == request.auth.uid
+        && request.resource.data.dibaca == true
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly(['dibaca']);
+    }
+
+    // ==========================================
+    // 7. KOLEKSI LAIN
+    // ==========================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

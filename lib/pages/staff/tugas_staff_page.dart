@@ -179,7 +179,7 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
         return 'Berlangsung';
       case 'dikumpulkan':
       case 'revisi':
-        return 'Dikumpulkan';
+        return 'Revisi';
       case 'terkendala':
         return 'Terkendala';
       default:

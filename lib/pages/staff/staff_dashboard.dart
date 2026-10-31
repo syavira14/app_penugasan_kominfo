@@ -253,8 +253,8 @@ class _StaffDashboardPageState extends State<StaffDashboardPage> {
                 backgroundColor: accentGold.withOpacity(0.10),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

@@ -13,9 +13,9 @@ class AdminKalenderPage extends StatefulWidget {
 
 class _AdminKalenderPageState extends State<AdminKalenderPage> {
   // Warna Tema Admin
-  static const Color blueDark = Color(0xFF1B267B);
-  static const Color blueMid = Color(0xFF0066B3);
-  static const Color blueLight = Color(0xFF00A8E8);
+  static const Color blueDark = Color(0xFF0011CC);
+  static const Color blueMid = Color(0xFF0066FF);
+  static const Color blueLight = Color(0xFF00CCFF);
   static const Color accentGold = Color(0xFFFFC107);
   static const Color bgLight = Color(0xFFF4F8FC);
 

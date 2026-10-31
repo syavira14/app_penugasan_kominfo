@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../services/riwayat_penugasan_service.dart';
+import '../../tugas/tugas_model.dart' show formatTanggalIndo;
 
 import 'package:flutter/material.dart';
 
@@ -5,12 +10,10 @@ class RiwayatTugasStaffPage extends StatefulWidget {
   const RiwayatTugasStaffPage({super.key});
 
   @override
-  State<RiwayatTugasStaffPage> createState() =>
-      _RiwayatTugasStaffPageState();
+  State<RiwayatTugasStaffPage> createState() => _RiwayatTugasStaffPageState();
 }
 
-class _RiwayatTugasStaffPageState
-    extends State<RiwayatTugasStaffPage> {
+class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage> {
   static const Color biruTua = Color(0xFF0011CC);
   static const Color biru = Color(0xFF0066FF);
   static const Color cyan = Color(0xFF00CCFF);
@@ -19,37 +22,51 @@ class _RiwayatTugasStaffPageState
   String pencarian = '';
   String filterStatus = 'Semua';
 
-  // Data sementara (dummy)
-  final List<Map<String, String>> riwayatTugas = [
-    {
-      'judul': 'Pemeliharaan Server',
-      'staff': 'Ahmad Fauzi',
-      'tanggal': '10 Oktober 2026',
-      'status': 'Selesai',
-      'deskripsi': 'Melakukan pemeliharaan server utama.',
-    },
-    {
-      'judul': 'Update Website',
-      'staff': 'Siti Nurhaliza',
-      'tanggal': '9 Oktober 2026',
-      'status': 'Selesai',
-      'deskripsi': 'Memperbarui konten website instansi.',
-    },
-    {
-      'judul': 'Monitoring Jaringan',
-      'staff': 'Budi Santoso',
-      'tanggal': '8 Oktober 2026',
-      'status': 'Dikerjakan',
-      'deskripsi': 'Monitoring jaringan kantor.',
-    },
-    {
-      'judul': 'Laporan Bulanan',
-      'staff': 'Andi Pratama',
-      'tanggal': '7 Oktober 2026',
-      'status': 'Belum Selesai',
-      'deskripsi': 'Menyusun laporan kegiatan bulanan.',
-    },
-  ];
+  List<Map<String, String>> riwayatTugas = [];
+  StreamSubscription<List<Map<String, dynamic>>>? _subscription;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscription = streamRiwayatPenugasan().listen(
+      (rows) {
+        if (!mounted) return;
+        setState(() {
+          _loading = false;
+          _error = null;
+          riwayatTugas = rows.map((row) {
+            final timestamp = row['tanggal_disetujui'] ?? row['updated_at'];
+            final date = timestamp is Timestamp ? timestamp.toDate() : null;
+            return <String, String>{
+              'judul': (row['judul'] ?? '-').toString(),
+              'staff': row['nama_staff'].toString(),
+              'tanggal': date == null ? '-' : formatTanggalIndo(date),
+              'status': 'Selesai',
+              'deskripsi': (row['deskripsi'] ?? '-').toString(),
+              'catatan_staff': (row['catatan_staff'] ?? '').toString(),
+              'file_hasil_nama': (row['file_hasil_nama'] ?? '').toString(),
+              'file_hasil_url': (row['file_hasil_url'] ?? '').toString(),
+            };
+          }).toList();
+        });
+      },
+      onError: (Object error) {
+        if (mounted)
+          setState(() {
+            _loading = false;
+            _error = 'Gagal memuat riwayat: $error';
+          });
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
 
   Color warnaStatus(String status) {
     switch (status) {
@@ -67,52 +84,64 @@ class _RiwayatTugasStaffPageState
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(24),
-        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) {
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Detail Riwayat Tugas',
-                  style: TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.bold,
-                    color: biruTua,
-                  ),
-                ),
-                const SizedBox(height: 20),
-
-                detailItem('Nama Tugas', tugas['judul']!),
-                detailItem('Nama Staff', tugas['staff']!),
-                detailItem('Tanggal', tugas['tanggal']!),
-                detailItem('Status', tugas['status']!),
-                detailItem(
-                  'Deskripsi',
-                  tugas['deskripsi']!,
-                ),
-
-                const SizedBox(height: 20),
-
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: biru,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.all(14),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Detail Riwayat Tugas',
+                    style: TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.bold,
+                      color: biruTua,
                     ),
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Tutup'),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 20),
+
+                  detailItem('Nama Tugas', tugas['judul']!),
+                  detailItem('Nama Staff', tugas['staff']!),
+                  detailItem('Tanggal', tugas['tanggal']!),
+                  detailItem('Status', tugas['status']!),
+                  detailItem(
+                    'Keterangan Hasil Pekerjaan',
+                    tugas['catatan_staff'] ?? '-',
+                  ),
+                  if ((tugas['file_hasil_url'] ?? '').isNotEmpty)
+                    TextButton.icon(
+                      onPressed: () => launchUrl(
+                        Uri.parse(tugas['file_hasil_url']!),
+                        mode: LaunchMode.externalApplication,
+                      ),
+                      icon: const Icon(Icons.attach_file),
+                      label: Text(
+                        tugas['file_hasil_nama'] ?? 'File hasil pekerjaan',
+                      ),
+                    ),
+                  detailItem('Deskripsi', tugas['deskripsi']!),
+
+                  const SizedBox(height: 20),
+
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: biru,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.all(14),
+                      ),
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Tutup'),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -134,10 +163,7 @@ class _RiwayatTugasStaffPageState
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 15),
-          ),
+          Text(value, style: const TextStyle(fontSize: 15)),
         ],
       ),
     );
@@ -147,15 +173,11 @@ class _RiwayatTugasStaffPageState
   Widget build(BuildContext context) {
     final hasilFilter = riwayatTugas.where((tugas) {
       final cocokCari =
-          tugas['judul']!.toLowerCase().contains(
-                pencarian.toLowerCase(),
-              ) ||
-          tugas['staff']!.toLowerCase().contains(
-                pencarian.toLowerCase(),
-              );
+          tugas['judul']!.toLowerCase().contains(pencarian.toLowerCase()) ||
+          tugas['staff']!.toLowerCase().contains(pencarian.toLowerCase());
 
-      final cocokStatus = filterStatus == 'Semua' ||
-          tugas['status'] == filterStatus;
+      final cocokStatus =
+          filterStatus == 'Semua' || tugas['status'] == filterStatus;
 
       return cocokCari && cocokStatus;
     }).toList();
@@ -166,15 +188,10 @@ class _RiwayatTugasStaffPageState
       appBar: AppBar(
         title: const Text(
           'Riwayat Tugas Staff',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
-        iconTheme: const IconThemeData(
-          color: Colors.white,
-        ),
+        iconTheme: const IconThemeData(color: Colors.white),
         backgroundColor: biruTua,
       ),
 
@@ -186,15 +203,8 @@ class _RiwayatTugasStaffPageState
           Container(
             padding: const EdgeInsets.all(16),
             decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  biruTua,
-                  biru,
-                ],
-              ),
-              borderRadius: BorderRadius.vertical(
-                bottom: Radius.circular(22),
-              ),
+              gradient: LinearGradient(colors: [biruTua, biru]),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(22)),
             ),
             child: Column(
               children: [
@@ -210,13 +220,9 @@ class _RiwayatTugasStaffPageState
                     prefixIcon: const Icon(Icons.search),
                     filled: true,
                     fillColor: Colors.white,
-                    contentPadding:
-                        const EdgeInsets.symmetric(
-                      vertical: 12,
-                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
                     border: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none,
                     ),
                   ),
@@ -226,29 +232,23 @@ class _RiwayatTugasStaffPageState
 
                 // Filter status
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius:
-                        BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       value: filterStatus,
                       isExpanded: true,
-                      items: [
-                        'Semua',
-                        'Selesai',
-                        'Dikerjakan',
-                        'Belum Selesai',
-                      ].map((status) {
-                        return DropdownMenuItem(
-                          value: status,
-                          child: Text(status),
-                        );
-                      }).toList(),
+                      items: ['Semua', 'Selesai', 'Dikerjakan', 'Belum Selesai']
+                          .map((status) {
+                            return DropdownMenuItem(
+                              value: status,
+                              child: Text(status),
+                            );
+                          })
+                          .toList(),
                       onChanged: (value) {
                         if (value != null) {
                           setState(() {
@@ -267,15 +267,10 @@ class _RiwayatTugasStaffPageState
           // JUMLAH RIWAYAT
           // =================================
           Padding(
-            padding: const EdgeInsets.fromLTRB(
-              16, 20, 16, 10,
-            ),
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
             child: Row(
               children: [
-                const Icon(
-                  Icons.history,
-                  color: biru,
-                ),
+                const Icon(Icons.history, color: biru),
                 const SizedBox(width: 8),
                 Text(
                   'Daftar Riwayat (${hasilFilter.length})',
@@ -292,14 +287,15 @@ class _RiwayatTugasStaffPageState
           // LIST RIWAYAT TUGAS
           // =================================
           Expanded(
-            child: hasilFilter.isEmpty
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                ? Center(child: Text(_error!))
+                : hasilFilter.isEmpty
                 ? const Center(
                     child: Text(
                       'Tidak ada riwayat tugas',
-                      style: TextStyle(
-                        color: Colors.grey,
-                        fontSize: 16,
-                      ),
+                      style: TextStyle(color: Colors.grey, fontSize: 16),
                     ),
                   )
                 : ListView.builder(
@@ -312,37 +308,24 @@ class _RiwayatTugasStaffPageState
                       return Card(
                         color: Colors.white,
                         elevation: 3,
-                        margin: const EdgeInsets.only(
-                          bottom: 14,
-                        ),
+                        margin: const EdgeInsets.only(bottom: 14),
                         shape: RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(16),
                         ),
                         child: InkWell(
-                          borderRadius:
-                              BorderRadius.circular(16),
-                          onTap: () =>
-                              tampilkanDetail(tugas),
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () => tampilkanDetail(tugas),
 
                           child: Padding(
-                            padding:
-                                const EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(16),
                             child: Row(
                               children: [
                                 // Ikon tugas
                                 Container(
-                                  padding:
-                                      const EdgeInsets.all(
-                                    12,
-                                  ),
+                                  padding: const EdgeInsets.all(12),
                                   decoration: BoxDecoration(
-                                    color:
-                                        cyan.withOpacity(0.15),
-                                    borderRadius:
-                                        BorderRadius.circular(
-                                      12,
-                                    ),
+                                    color: cyan.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: const Icon(
                                     Icons.assignment_rounded,
@@ -357,75 +340,53 @@ class _RiwayatTugasStaffPageState
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment
-                                            .start,
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         tugas['judul']!,
-                                        style:
-                                            const TextStyle(
+                                        style: const TextStyle(
                                           fontSize: 15,
-                                          fontWeight:
-                                              FontWeight.bold,
+                                          fontWeight: FontWeight.bold,
                                         ),
                                       ),
-                                      const SizedBox(
-                                        height: 5,
-                                      ),
+                                      const SizedBox(height: 5),
                                       Text(
                                         tugas['staff']!,
-                                        style:
-                                            const TextStyle(
+                                        style: const TextStyle(
                                           fontSize: 13,
                                           color: Colors.grey,
                                         ),
                                       ),
-                                      const SizedBox(
-                                        height: 5,
-                                      ),
+                                      const SizedBox(height: 5),
                                       Text(
                                         tugas['tanggal']!,
-                                        style:
-                                            const TextStyle(
+                                        style: const TextStyle(
                                           fontSize: 12,
                                           color: Colors.grey,
                                         ),
                                       ),
-                                      const SizedBox(
-                                        height: 8,
-                                      ),
+                                      const SizedBox(height: 8),
 
                                       // Badge status
                                       Container(
-                                        padding:
-                                            const EdgeInsets
-                                                .symmetric(
+                                        padding: const EdgeInsets.symmetric(
                                           horizontal: 10,
                                           vertical: 5,
                                         ),
-                                        decoration:
-                                            BoxDecoration(
-                                          color:
-                                              warnaStatus(status)
-                                                  .withOpacity(
-                                            0.12,
-                                          ),
-                                          borderRadius:
-                                              BorderRadius
-                                                  .circular(
+                                        decoration: BoxDecoration(
+                                          color: warnaStatus(
+                                            status,
+                                          ).withOpacity(0.12),
+                                          borderRadius: BorderRadius.circular(
                                             8,
                                           ),
                                         ),
                                         child: Text(
                                           status,
                                           style: TextStyle(
-                                            color:
-                                                warnaStatus(
-                                              status,
-                                            ),
+                                            color: warnaStatus(status),
                                             fontSize: 11,
-                                            fontWeight:
-                                                FontWeight.bold,
+                                            fontWeight: FontWeight.bold,
                                           ),
                                         ),
                                       ),

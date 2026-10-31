@@ -823,29 +823,30 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                                     color: Colors.grey.shade600,
                                   ),
                                 ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 10 * scale,
-                          vertical: 4 * scale,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusBgColor,
-                          borderRadius: BorderRadius.circular(8 * scale),
-                        ),
-                        child: Text(
-                          item["type"]!,
-                          style: TextStyle(
-                            color: statusTextColor,
-                            fontSize: 10 * scale,
-                            fontWeight: FontWeight.bold,
+                              ),
+                            ],
                           ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 10 * scale,
+                        vertical: 4 * scale,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusBgColor,
+                        borderRadius: BorderRadius.circular(8 * scale),
+                      ),
+                      child: Text(
+                        item["type"]!,
+                        style: TextStyle(
+                          color: statusTextColor,
+                          fontSize: 10 * scale,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
+                    ),
                     ],
                   ),
                 ),
@@ -854,5 +855,6 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
           ),
       ],
     );
+
   }
 }

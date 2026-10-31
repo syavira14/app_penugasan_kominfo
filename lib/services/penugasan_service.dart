@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'penugasan_workflow.dart';
 
 class PenugasanService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -8,29 +9,22 @@ class PenugasanService {
   /// ============================================================
   /// MENGAMBIL SEMUA PENUGASAN BERDASARKAN ID TUGAS
   /// ============================================================
-  Stream<List<Map<String, dynamic>>> streamPenugasanByTugas(
-    String tugasId,
-  ) {
+  Stream<List<Map<String, dynamic>>> streamPenugasanByTugas(String tugasId) {
     return _firestore
         .collection(_collection)
         .where('tugas_id', isEqualTo: tugasId)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) {
-        return {
-          'id': doc.id,
-          ...doc.data(),
-        };
-      }).toList();
-    });
+          return snapshot.docs.map((doc) {
+            return {'id': doc.id, ...doc.data()};
+          }).toList();
+        });
   }
 
   /// ============================================================
   /// MENGAMBIL SATU PENUGASAN
   /// ============================================================
-  Future<Map<String, dynamic>?> getPenugasanById(
-    String penugasanId,
-  ) async {
+  Future<Map<String, dynamic>?> getPenugasanById(String penugasanId) async {
     try {
       final doc = await _firestore
           .collection(_collection)
@@ -41,14 +35,9 @@ class PenugasanService {
         return null;
       }
 
-      return {
-        'id': doc.id,
-        ...doc.data()!,
-      };
+      return {'id': doc.id, ...doc.data()!};
     } catch (e) {
-      throw Exception(
-        'Gagal mengambil data penugasan: $e',
-      );
+      throw Exception('Gagal mengambil data penugasan: $e');
     }
   }
 
@@ -76,18 +65,12 @@ class PenugasanService {
       }
 
       if (status == 'disetujui') {
-        data['tanggal_disetujui'] =
-            FieldValue.serverTimestamp();
+        data['tanggal_disetujui'] = FieldValue.serverTimestamp();
       }
 
-      await _firestore
-          .collection(_collection)
-          .doc(penugasanId)
-          .update(data);
+      await transitionAssignment(_firestore, penugasanId, status, data: data);
     } catch (e) {
-      throw Exception(
-        'Gagal memperbarui status penugasan: $e',
-      );
+      throw Exception('Gagal memperbarui status penugasan: $e');
     }
   }
 
@@ -99,9 +82,7 @@ class PenugasanService {
     required String catatanRevisi,
   }) async {
     if (catatanRevisi.trim().isEmpty) {
-      throw Exception(
-        'Catatan revisi tidak boleh kosong.',
-      );
+      throw Exception('Catatan revisi tidak boleh kosong.');
     }
 
     await updateStatus(
@@ -114,12 +95,7 @@ class PenugasanService {
   /// ============================================================
   /// ADMIN MENYETUJUI HASIL TUGAS
   /// ============================================================
-  Future<void> setujuiTugas({
-    required String penugasanId,
-  }) async {
-    await updateStatus(
-      penugasanId: penugasanId,
-      status: 'disetujui',
-    );
+  Future<void> setujuiTugas({required String penugasanId}) async {
+    await updateStatus(penugasanId: penugasanId, status: 'disetujui');
   }
 }

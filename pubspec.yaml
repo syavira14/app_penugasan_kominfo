@@ -38,7 +38,7 @@ dependencies:
   image_picker: ^1.1.0
   flutter_map: ^8.3.1
   latlong2: ^0.10.1
-  http: ^1.2.2
+  http: ^1.6.0
   url_launcher: ^6.3.2
   shared_preferences: ^2.5.3
   firebase_core: any
@@ -46,6 +46,10 @@ dependencies:
   cloud_firestore: any
   firebase_storage: ^12.4.10
   file_picker: ^13.1.0
+  supabase_flutter: ^2.18.3
+  syncfusion_flutter_pdfviewer: ^35.1.41
+  web: ^1.1.1
+  cloud_functions: ^5.6.2
 
 dev_dependencies:
   flutter_test:

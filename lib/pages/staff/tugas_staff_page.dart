@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import '../test_upload_supabase.dart';
 
 import 'tugas_detail_page.dart';
 
@@ -336,7 +337,7 @@ class _TugasStaffPageState
         return 'Dikumpulkan';
 
       case 'revisi':
-        return 'Dikumpulkan';
+        return 'Revisi';
 
       case 'terkendala':
         return 'Terkendala';

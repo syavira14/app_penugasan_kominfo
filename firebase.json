@@ -1,1 +1,52 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"simtas-kominfo","appId":"1:780975294852:android:f30016304bd10772eb35d1","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"simtas-kominfo","configurations":{"web":"1:780975294852:web:50ff65d437d7f84ceb35d1"}}}}}}
+
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "simtas-kominfo",
+          "appId": "1:780975294852:android:f30016304bd10772eb35d1",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "simtas-kominfo",
+          "configurations": {
+            "web": "1:780975294852:web:50ff65d437d7f84ceb35d1"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    },
+    "singleProjectMode": true
+  }
+}

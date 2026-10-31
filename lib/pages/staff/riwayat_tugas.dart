@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../services/riwayat_penugasan_service.dart';
 import 'package:flutter/material.dart';
 
 // Definisi warna sesuai tema aplikasi
@@ -18,6 +23,7 @@ class TugasModel {
   DateTime batasWaktu;
   String? keteranganHasil;
   String? fileHasil;
+  String? fileHasilUrl;
 
   TugasModel({
     required this.id,
@@ -30,6 +36,7 @@ class TugasModel {
     required this.batasWaktu,
     this.keteranganHasil,
     this.fileHasil,
+    this.fileHasilUrl,
   });
 }
 
@@ -41,35 +48,67 @@ class RiwayatTugasPage extends StatefulWidget {
 }
 
 class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
-  // Dummy Data Riwayat
-  final List<TugasModel> _daftarRiwayat = [
-    TugasModel(
-      id: "1",
-      judulTugas: "Laporan Keuangan Bulanan",
-      deskripsiTugas:
-          "Menyusun dan menyajikan laporan rekonsiliasi kas bulan ini.",
-      namaAtasan: "Budi Santoso",
-      statusTugas: "Selesai",
-      prioritasTugas: "Tinggi",
-      tanggalMulai: DateTime.now().subtract(const Duration(days: 5)),
-      batasWaktu: DateTime.now().subtract(const Duration(days: 1)),
-      keteranganHasil:
-          "Laporan sudah selesai dikerjakan dan diverifikasi tim audit.",
-      fileHasil: "laporan_keuangan_final.pdf",
-    ),
-    TugasModel(
-      id: "2",
-      judulTugas: "Update Design Banner Website",
-      deskripsiTugas: "Membuat banner promo utama untuk halaman beranda.",
-      namaAtasan: "Siti Rahma",
-      statusTugas: "Selesai",
-      prioritasTugas: "Sedang",
-      tanggalMulai: DateTime.now().subtract(const Duration(days: 3)),
-      batasWaktu: DateTime.now().add(const Duration(days: 1)),
-      keteranganHasil: "Desain versi 1 sudah diunggah.",
-      fileHasil: "banner_v1.png",
-    ),
-  ];
+  List<TugasModel> _daftarRiwayat = [];
+  StreamSubscription<List<Map<String, dynamic>>>? _subscription;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      _loading = false;
+      _error = 'Sesi login tidak ditemukan.';
+      return;
+    }
+    _subscription = streamRiwayatPenugasan(staffId: uid).listen(
+      (rows) {
+        if (!mounted) return;
+        setState(() {
+          _loading = false;
+          _error = null;
+          _daftarRiwayat = rows
+              .map(
+                (row) => TugasModel(
+                  id: row['id'].toString(),
+                  judulTugas: (row['judul'] ?? '-').toString(),
+                  deskripsiTugas: (row['deskripsi'] ?? '-').toString(),
+                  namaAtasan: row['nama_atasan'].toString(),
+                  statusTugas: 'Selesai',
+                  prioritasTugas: _title(
+                    (row['prioritas'] ?? 'sedang').toString(),
+                  ),
+                  tanggalMulai: _date(row['tanggal_mulai_tugas']),
+                  batasWaktu: _date(row['tanggal_selesai_tugas']),
+                  keteranganHasil: (row['catatan_staff'] ?? '').toString(),
+                  fileHasil: (row['file_hasil_nama'] ?? '').toString(),
+                  fileHasilUrl: (row['file_hasil_url'] ?? '').toString(),
+                ),
+              )
+              .toList();
+        });
+      },
+      onError: (Object error) {
+        if (mounted)
+          setState(() {
+            _loading = false;
+            _error = 'Gagal memuat riwayat: $error';
+          });
+      },
+    );
+  }
+
+  DateTime _date(dynamic value) =>
+      value is Timestamp ? value.toDate() : DateTime(1970);
+  String _title(String value) =>
+      value.isEmpty ? '-' : value[0].toUpperCase() + value.substring(1);
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
 
   // ==== POP-UP DETAIL RIWAYAT READ-ONLY ====
   void _tampilkanPopUpDetail(BuildContext context, TugasModel tugas) {
@@ -208,7 +247,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      if (tugas.fileHasil != null) ...[
+                      if ((tugas.fileHasil ?? '').isNotEmpty) ...[
                         const Text(
                           "Lampiran File Hasil",
                           style: TextStyle(
@@ -233,14 +272,22 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                               ),
                               const SizedBox(width: 8),
                               Expanded(
-                                child: Text(
-                                  tugas.fileHasil!,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: kBiruTua,
+                                child: InkWell(
+                                  onTap: (tugas.fileHasilUrl ?? '').isEmpty
+                                      ? null
+                                      : () => launchUrl(
+                                          Uri.parse(tugas.fileHasilUrl!),
+                                          mode: LaunchMode.externalApplication,
+                                        ),
+                                  child: Text(
+                                    tugas.fileHasil!,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: kBiruTua,
+                                    ),
                                   ),
-                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             ],
@@ -322,97 +369,103 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
 
               // DAFTAR CARD RIWAYAT TUGAS
               Expanded(
-                child: ListView.builder(
-                  padding: EdgeInsets.fromLTRB(
-                    16 * scale,
-                    10 * scale,
-                    16 * scale,
-                    20 * scale,
-                  ),
-                  itemCount: _daftarRiwayat.length,
-                  itemBuilder: (context, index) {
-                    final tugas = _daftarRiwayat[index];
-                    return Card(
-                      margin: EdgeInsets.only(bottom: 12 * scale),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16 * scale),
-                      ),
-                      elevation: 2,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16 * scale),
-                        onTap: () {
-                          _tampilkanPopUpDetail(context, tugas);
-                        },
-                        child: Padding(
-                          padding: EdgeInsets.all(14 * scale),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  _badgePrioritas(tugas.prioritasTugas),
-                                  _badgeStatusSelesai(),
-                                ],
-                              ),
-                              SizedBox(height: 10 * scale),
-                              Text(
-                                tugas.judulTugas,
-                                style: TextStyle(
-                                  fontSize: 15 * scale,
-                                  fontWeight: FontWeight.bold,
-                                  color: kBiruTua,
-                                ),
-                              ),
-                              SizedBox(height: 4 * scale),
-                              Text(
-                                tugas.deskripsiTugas,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12 * scale,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                              Divider(height: 20 * scale),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    "Batas: ${_formatTanggal(tugas.batasWaktu)}",
-                                    style: TextStyle(
-                                      fontSize: 11 * scale,
-                                      color: Colors.grey[500],
-                                    ),
-                                  ),
-                                  Row(
-                                    children: [
-                                      Text(
-                                        "Lihat Detail",
-                                        style: TextStyle(
-                                          fontSize: 12 * scale,
-                                          color: kBiruSedang,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      Icon(
-                                        Icons.chevron_right,
-                                        size: 16 * scale,
-                                        color: kBiruSedang,
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _error != null
+                    ? Center(child: Text(_error!))
+                    : _daftarRiwayat.isEmpty
+                    ? const Center(child: Text('Tidak ada riwayat tugas'))
+                    : ListView.builder(
+                        padding: EdgeInsets.fromLTRB(
+                          16 * scale,
+                          10 * scale,
+                          16 * scale,
+                          20 * scale,
                         ),
+                        itemCount: _daftarRiwayat.length,
+                        itemBuilder: (context, index) {
+                          final tugas = _daftarRiwayat[index];
+                          return Card(
+                            margin: EdgeInsets.only(bottom: 12 * scale),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16 * scale),
+                            ),
+                            elevation: 2,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16 * scale),
+                              onTap: () {
+                                _tampilkanPopUpDetail(context, tugas);
+                              },
+                              child: Padding(
+                                padding: EdgeInsets.all(14 * scale),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        _badgePrioritas(tugas.prioritasTugas),
+                                        _badgeStatusSelesai(),
+                                      ],
+                                    ),
+                                    SizedBox(height: 10 * scale),
+                                    Text(
+                                      tugas.judulTugas,
+                                      style: TextStyle(
+                                        fontSize: 15 * scale,
+                                        fontWeight: FontWeight.bold,
+                                        color: kBiruTua,
+                                      ),
+                                    ),
+                                    SizedBox(height: 4 * scale),
+                                    Text(
+                                      tugas.deskripsiTugas,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12 * scale,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                    Divider(height: 20 * scale),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          "Batas: ${_formatTanggal(tugas.batasWaktu)}",
+                                          style: TextStyle(
+                                            fontSize: 11 * scale,
+                                            color: Colors.grey[500],
+                                          ),
+                                        ),
+                                        Row(
+                                          children: [
+                                            Text(
+                                              "Lihat Detail",
+                                              style: TextStyle(
+                                                fontSize: 12 * scale,
+                                                color: kBiruSedang,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            Icon(
+                                              Icons.chevron_right,
+                                              size: 16 * scale,
+                                              color: kBiruSedang,
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
               ),
             ],
           );

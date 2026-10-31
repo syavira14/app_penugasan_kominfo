@@ -374,7 +374,7 @@ class DashboardAdminPage extends StatelessWidget {
                               context,
                               const ProfilAdminPage(),
                             ),
-                          ),
+                          )
                         ],
                       ),
                     ],

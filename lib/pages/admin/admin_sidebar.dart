@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../tugas/kelola_tugas_page.dart';
-import 'dashboard_admin_page.dart';
 import 'admin_kalender.dart';
+import 'dashboard_admin_page.dart';
 import 'kelola_staff.dart';
 import 'laporan_kendala_admin_page.dart';
 import 'profil_admin.dart';
@@ -12,7 +12,7 @@ import 'status_staff.dart';
 class _SidebarItem {
   final String label;
   final IconData icon;
-  final Widget Function() page;
+  final Widget Function()? page; // null = Dashboard
 
   const _SidebarItem(this.label, this.icon, this.page);
 }
@@ -31,11 +31,7 @@ class AdminSidebar extends StatelessWidget {
   static const Color accentGold = Color(0xFFFFC107);
 
   static final List<_SidebarItem> _items = [
-    _SidebarItem(
-      'Dashboard',
-      Icons.dashboard_rounded,
-      () => const DashboardAdminPage(),
-    ),
+    const _SidebarItem('Dashboard', Icons.dashboard_rounded, null),
     _SidebarItem(
       'Kelola Staff',
       Icons.groups_rounded,
@@ -74,22 +70,22 @@ class AdminSidebar extends StatelessWidget {
   ];
 
   void _onTap(BuildContext context, int index) {
+    final item = _items[index];
     final navigator = Navigator.of(context);
 
-    // Tutup drawer terlebih dahulu jika dibuka di mode mobile
-    if (isDrawer) navigator.pop();
+    if (isDrawer) navigator.pop(); // tutup drawer dulu
 
-    // Jika menekan menu yang sedang aktif, tidak perlu navigasi ulang
     if (index == currentIndex) return;
 
-    // Gunakan PageRouteBuilder dengan animasi instan (Duration.zero)
-    navigator.pushReplacement(
-      PageRouteBuilder(
-        pageBuilder: (context, animation1, animation2) => _items[index].page(),
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: Duration.zero,
-      ),
-    );
+    // Jika memilih Dashboard (index 0 / item.page == null), balik ke DashboardAdminPage & reset stack
+    if (item.page == null) {
+      navigator.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const DashboardAdminPage()),
+        (route) => false,
+      );
+    } else {
+      navigator.push(MaterialPageRoute(builder: (_) => item.page!()));
+    }
   }
 
   @override
@@ -107,7 +103,7 @@ class AdminSidebar extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Brand / Header Sidebar
+            // Brand
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
               child: Row(
@@ -151,7 +147,7 @@ class AdminSidebar extends StatelessWidget {
             Divider(color: Colors.white.withOpacity(0.2), height: 1),
             const SizedBox(height: 12),
 
-            // Daftar Menu Sidebar
+            // Menu
             Expanded(
               child: ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -163,9 +159,8 @@ class AdminSidebar extends StatelessWidget {
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Material(
-                      // Mengubah warna background item aktif agar menyatu rata dengan gradien (tanpa sorotan transparan tebal)
                       color: selected
-                          ? Colors.white.withOpacity(0.12)
+                          ? Colors.white.withOpacity(0.2)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(14),
                       child: InkWell(

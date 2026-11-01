@@ -2,7 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../tugas/kelola_tugas_page.dart';
-import 'admin_navbar.dart';
+import '../../widgets/admin_header.dart';
+import 'admin_sidebar.dart';
 
 class AdminKalenderPage extends StatefulWidget {
   const AdminKalenderPage({super.key});
@@ -12,12 +13,14 @@ class AdminKalenderPage extends StatefulWidget {
 }
 
 class _AdminKalenderPageState extends State<AdminKalenderPage> {
-  // Warna Tema Admin
-  static const Color blueDark = Color(0xFF0011CC);
-  static const Color blueMid = Color(0xFF0066FF);
-  static const Color blueLight = Color(0xFF00CCFF);
+  // Palet warna (sama dengan kalender staff)
+  static const Color kBiruTua = Color(0xFF1A1464);
+  static const Color kBiruSedang = Color(0xFF1D5FA0);
   static const Color accentGold = Color(0xFFFFC107);
-  static const Color bgLight = Color(0xFFF4F8FC);
+  static const Color kBgLight = Color(0xFFF7F9FB);
+
+  static const double _sidebarBreakpoint = 900;
+  static const int _sidebarIndex = 4; // posisi menu Kalender di sidebar
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
@@ -25,6 +28,10 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
   DateTime _selectedDay = DateTime.now();
 
   Stream<QuerySnapshot<Map<String, dynamic>>>? _assignmentStream;
+
+  // Cache supaya data tugas & nama staff tidak diambil berulang kali
+  final Map<String, Map<String, dynamic>> _tugasCache = {};
+  final Map<String, String> _staffNameCache = {};
 
   static const List<String> _monthNames = [
     "Januari",
@@ -44,24 +51,47 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
   @override
   void initState() {
     super.initState();
-    _initStream();
-  }
-
-  void _initStream() {
-    // Admin membaca seluruh snapshot dari koleksi penugasan
+    // Admin membaca seluruh penugasan dari semua staff
     _assignmentStream = _firestore.collection('penugasan').snapshots();
   }
 
+  // ------------------------------------------------------------------
+  // HELPER
+  // ------------------------------------------------------------------
   String _dateKey(DateTime date) {
     return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
   }
 
   DateTime? _asDate(dynamic value) {
-    if (value is Timestamp) {
-      return value.toDate();
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String && value.isNotEmpty) return DateTime.tryParse(value);
+    return null;
+  }
+
+  // Tanggal penyerahan/pengumpulan hasil oleh staff (nama field bisa beragam)
+  DateTime? _tglDiserahkan(Map<String, dynamic> a) {
+    const keys = [
+      'tanggal_dikumpulkan',
+      'tanggal_pengumpulan',
+      'tanggal_diserahkan',
+      'tanggal_kumpul',
+      'waktu_dikumpulkan',
+      'dikumpulkan_pada',
+      'submitted_at',
+    ];
+    for (final k in keys) {
+      final d = _asDate(a[k]);
+      if (d != null) return d;
     }
     return null;
   }
+
+  String _jam(DateTime d) =>
+      "${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')} WIB";
+
+  String _tanggalJam(DateTime d) =>
+      "${d.day} ${_monthNames[d.month - 1].substring(0, 3)} ${d.year}, ${_jam(d)}";
 
   String _statusUi(String rawStatus) {
     switch (rawStatus.toLowerCase()) {
@@ -78,227 +108,6 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
       default:
         return 'Pending';
     }
-  }
-
-  void _changeMonth(int offset) {
-    final DateTime newMonth = DateTime(
-      _focusedDay.year,
-      _focusedDay.month + offset,
-      1,
-    );
-    final DateTime now = DateTime.now();
-
-    setState(() {
-      _focusedDay = newMonth;
-      if (newMonth.year == now.year && newMonth.month == now.month) {
-        _selectedDay = DateTime(now.year, now.month, now.day);
-      } else {
-        _selectedDay = DateTime(newMonth.year, newMonth.month, 1);
-      }
-    });
-  }
-
-  Future<Map<String, List<Map<String, dynamic>>>> _fetchTaskEvents(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
-  ) async {
-    final Map<String, List<Map<String, dynamic>>> events = {};
-
-    for (final assignment in assignments) {
-      try {
-        final assignmentData = assignment.data();
-        final tugasId = (assignmentData['tugas_id'] ?? '').toString();
-
-        if (tugasId.isEmpty) continue;
-
-        final tugasDoc = await _firestore
-            .collection('tugas')
-            .doc(tugasId)
-            .get();
-        if (!tugasDoc.exists) continue;
-
-        final tugasData = tugasDoc.data() ?? {};
-
-        final DateTime? tglMulai =
-            _asDate(tugasData['tanggal_mulai_tugas']) ??
-            _asDate(tugasData['tanggal_tugas_diberikan']);
-        final DateTime? tglDeadline = _asDate(
-          tugasData['tanggal_selesai_tugas'],
-        );
-
-        final String judulTugas = (tugasData['judul'] ?? 'Tugas Baru')
-            .toString();
-        final String rawStatus = (assignmentData['status'] ?? 'pending')
-            .toString();
-        final String statusTampil = _statusUi(rawStatus);
-
-        // 1. Tanggal Mulai Tugas
-        if (tglMulai != null) {
-          final String keyMulai = _dateKey(tglMulai);
-          events.putIfAbsent(keyMulai, () => []).add({
-            "penugasan_id": assignment.id,
-            "title": judulTugas,
-            "time":
-                "${tglMulai.hour.toString().padLeft(2, '0')}:${tglMulai.minute.toString().padLeft(2, '0')} WIB",
-            "type": "Tugas Diberikan",
-            "is_deadline": false,
-            "status": statusTampil,
-            "raw_status": rawStatus,
-          });
-        }
-
-        // 2. Tanggal Deadline Tugas
-        if (tglDeadline != null) {
-          final String keyDeadline = _dateKey(tglDeadline);
-          events.putIfAbsent(keyDeadline, () => []).add({
-            "penugasan_id": assignment.id,
-            "title": "DEADLINE: $judulTugas",
-            "time":
-                "${tglDeadline.hour.toString().padLeft(2, '0')}:${tglDeadline.minute.toString().padLeft(2, '0')} WIB",
-            "type": "Batas Selesai ($statusTampil)",
-            "is_deadline": true,
-            "status": statusTampil,
-            "raw_status": rawStatus,
-          });
-        }
-      } catch (_) {}
-    }
-
-    return events;
-  }
-
-  void _showMonthYearPicker() {
-    int tempYear = _focusedDay.year;
-    int tempMonth = _focusedDay.month;
-
-    showDialog(
-      context: context,
-      builder: (BuildContext dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              titlePadding: const EdgeInsets.all(16),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
-              title: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.chevron_left, color: blueMid),
-                    onPressed: () {
-                      setDialogState(() {
-                        tempYear--;
-                      });
-                    },
-                  ),
-                  Text(
-                    "$tempYear",
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                      color: blueDark,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.chevron_right, color: blueMid),
-                    onPressed: () {
-                      setDialogState(() {
-                        tempYear++;
-                      });
-                    },
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 300,
-                height: 220,
-                child: GridView.builder(
-                  shrinkWrap: true,
-                  itemCount: 12,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    childAspectRatio: 2.0,
-                    crossAxisSpacing: 8,
-                    mainAxisSpacing: 8,
-                  ),
-                  itemBuilder: (context, index) {
-                    final isSelected = (index + 1) == tempMonth;
-                    return InkWell(
-                      onTap: () {
-                        setDialogState(() {
-                          tempMonth = index + 1;
-                        });
-                      },
-                      borderRadius: BorderRadius.circular(10),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: isSelected ? blueMid : Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: isSelected ? blueMid : Colors.transparent,
-                          ),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          _monthNames[index].substring(0, 3),
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                            color: isSelected ? Colors.white : blueDark,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text(
-                    "Batal",
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: blueMid,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  onPressed: () {
-                    final DateTime newMonth = DateTime(tempYear, tempMonth, 1);
-                    final DateTime now = DateTime.now();
-
-                    setState(() {
-                      _focusedDay = newMonth;
-                      if (newMonth.year == now.year &&
-                          newMonth.month == now.month) {
-                        _selectedDay = DateTime(now.year, now.month, now.day);
-                      } else {
-                        _selectedDay = DateTime(
-                          newMonth.year,
-                          newMonth.month,
-                          1,
-                        );
-                      }
-                    });
-                    Navigator.pop(dialogContext);
-                  },
-                  child: const Text("Pilih"),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
   }
 
   Color _getStatusColor(String rawStatus) {
@@ -335,150 +144,279 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
     }
   }
 
+  void _goToMonth(DateTime newMonth) {
+    final DateTime now = DateTime.now();
+    setState(() {
+      _focusedDay = newMonth;
+      if (newMonth.year == now.year && newMonth.month == now.month) {
+        _selectedDay = DateTime(now.year, now.month, now.day);
+      } else {
+        _selectedDay = DateTime(newMonth.year, newMonth.month, 1);
+      }
+    });
+  }
+
+  void _changeMonth(int offset) {
+    _goToMonth(DateTime(_focusedDay.year, _focusedDay.month + offset, 1));
+  }
+
+  // ------------------------------------------------------------------
+  // DATA
+  // ------------------------------------------------------------------
+  Future<String> _getStaffName(String staffId) async {
+    if (staffId.isEmpty) return 'Belum ditentukan';
+
+    final cached = _staffNameCache[staffId];
+    if (cached != null) return cached;
+
+    String name = 'Staff tidak dikenal';
+    try {
+      final doc = await _firestore.collection('users').doc(staffId).get();
+      if (doc.exists) {
+        final d = doc.data() ?? {};
+        final nama = (d['nama'] ?? d['name'] ?? '').toString().trim();
+        final email = (d['email'] ?? '').toString().trim();
+        if (nama.isNotEmpty) {
+          name = nama;
+        } else if (email.isNotEmpty) {
+          name = email.split('@').first;
+        }
+      }
+    } catch (_) {}
+
+    _staffNameCache[staffId] = name;
+    return name;
+  }
+
+  Future<Map<String, dynamic>?> _getTugas(String tugasId) async {
+    final cached = _tugasCache[tugasId];
+    if (cached != null) return cached;
+
+    final doc = await _firestore.collection('tugas').doc(tugasId).get();
+    if (!doc.exists) return null;
+
+    final data = doc.data() ?? {};
+    _tugasCache[tugasId] = data;
+    return data;
+  }
+
+  Future<Map<String, List<Map<String, dynamic>>>> _fetchTaskEvents(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
+  ) async {
+    final Map<String, List<Map<String, dynamic>>> events = {};
+
+    for (final assignment in assignments) {
+      try {
+        final assignmentData = assignment.data();
+        final tugasId = (assignmentData['tugas_id'] ?? '').toString();
+        if (tugasId.isEmpty) continue;
+
+        final tugasData = await _getTugas(tugasId);
+        if (tugasData == null) continue;
+
+        final String staffId =
+            (assignmentData['staff_id'] ?? assignmentData['staff_uid'] ?? '')
+                .toString();
+        final String staffNama = await _getStaffName(staffId);
+
+        final DateTime? tglMulai =
+            _asDate(tugasData['tanggal_mulai_tugas']) ??
+            _asDate(tugasData['tanggal_tugas_diberikan']);
+        final DateTime? tglDeadline = _asDate(
+          tugasData['tanggal_selesai_tugas'],
+        );
+
+        final String judulTugas = (tugasData['judul'] ?? 'Tugas Baru')
+            .toString();
+        final String rawStatus = (assignmentData['status'] ?? 'pending')
+            .toString();
+        final String statusTampil = _statusUi(rawStatus);
+        final String tenggatText = tglDeadline != null
+            ? _tanggalJam(tglDeadline)
+            : '-';
+        final String diberikanText = tglMulai != null
+            ? _tanggalJam(tglMulai)
+            : '-';
+
+        final DateTime? tglSerah = _tglDiserahkan(assignmentData);
+        final bool sudahSerah = const [
+          'dikumpulkan',
+          'revisi',
+          'disetujui',
+          'selesai',
+        ].contains(rawStatus.toLowerCase());
+        final String diserahkanText = tglSerah != null
+            ? _tanggalJam(tglSerah)
+            : (sudahSerah
+                  ? 'Sudah diserahkan (tanggal tidak tercatat)'
+                  : 'Belum diserahkan');
+
+        if (tglMulai != null) {
+          events.putIfAbsent(_dateKey(tglMulai), () => []).add({
+            "penugasan_id": assignment.id,
+            "title": judulTugas,
+            "time": _jam(tglMulai),
+            "type": "Tugas Diberikan",
+            "is_deadline": false,
+            "status": statusTampil,
+            "raw_status": rawStatus,
+            "staff_nama": staffNama,
+            "tenggat": tenggatText,
+            "diberikan": diberikanText,
+            "diserahkan": diserahkanText,
+            "sudah_serah": sudahSerah,
+          });
+        }
+
+        if (tglDeadline != null) {
+          events.putIfAbsent(_dateKey(tglDeadline), () => []).add({
+            "penugasan_id": assignment.id,
+            "title": judulTugas,
+            "time": _jam(tglDeadline),
+            "type": "Batas Selesai ($statusTampil)",
+            "is_deadline": true,
+            "status": statusTampil,
+            "raw_status": rawStatus,
+            "staff_nama": staffNama,
+            "tenggat": tenggatText,
+            "diberikan": diberikanText,
+            "diserahkan": diserahkanText,
+            "sudah_serah": sudahSerah,
+          });
+        }
+      } catch (_) {}
+    }
+
+    return events;
+  }
+
+  // ------------------------------------------------------------------
+  // BUILD
+  // ------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     final double screenWidth = MediaQuery.of(context).size.width;
     final double scale = (screenWidth / 375).clamp(0.85, 1.25);
+    final bool showSidebar = screenWidth >= _sidebarBreakpoint;
 
-    return Scaffold(
-      backgroundColor: bgLight,
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: _assignmentStream,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text("Gagal memuat data: ${snapshot.error}"));
-          }
+    final Widget content = StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _assignmentStream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Column(
+            children: [
+              AdminHeader(
+                title: 'Kalender Penugasan',
+                showSidebar: showSidebar,
+              ),
+              Expanded(
+                child: Center(
+                  child: Text("Gagal memuat data: ${snapshot.error}"),
+                ),
+              ),
+            ],
+          );
+        }
 
-          final assignments = snapshot.data?.docs ?? [];
+        final assignments = snapshot.data?.docs ?? [];
 
-          return FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
-            future: _fetchTaskEvents(assignments),
-            builder: (context, taskSnapshot) {
-              final Map<String, List<Map<String, dynamic>>> events =
-                  taskSnapshot.data ?? {};
+        return FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
+          future: _fetchTaskEvents(assignments),
+          builder: (context, taskSnapshot) {
+            final Map<String, List<Map<String, dynamic>>> events =
+                taskSnapshot.data ?? {};
 
-              final String selectedKey = _dateKey(_selectedDay);
-              final List<Map<String, dynamic>> currentEvents = List.from(
-                events[selectedKey] ?? [],
-              );
+            final List<Map<String, dynamic>> currentEvents = List.from(
+              events[_dateKey(_selectedDay)] ?? [],
+            );
+            currentEvents.sort((a, b) {
+              final bool aD = a["is_deadline"] ?? false;
+              final bool bD = b["is_deadline"] ?? false;
+              if (aD && !bD) return -1;
+              if (!aD && bD) return 1;
+              return 0;
+            });
 
-              currentEvents.sort((a, b) {
-                final bool aIsDeadline = a["is_deadline"] ?? false;
-                final bool bIsDeadline = b["is_deadline"] ?? false;
-                if (aIsDeadline && !bIsDeadline) return -1;
-                if (!aIsDeadline && bIsDeadline) return 1;
-                return 0;
-              });
+            final bool isLoading =
+                (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) ||
+                taskSnapshot.data == null;
 
-              final bool isLoading =
-                  snapshot.connectionState == ConnectionState.waiting &&
-                  !snapshot.hasData;
-
-              return Stack(
-                children: [
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: ClipPath(
-                      clipper: HeaderCurveClipper(
-                        curveHeightOffset: 150 * scale,
-                      ),
-                      child: Container(
-                        width: double.infinity,
-                        height: 170 * scale,
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [blueLight, blueMid, blueDark],
-                            stops: [0.0, 0.45, 1.0],
-                          ),
-                        ),
-                        child: Stack(
-                          children: [
-                            Positioned(
-                              top: -30 * scale,
-                              right: -30 * scale,
-                              child: _decorCircle(
-                                150 * scale,
-                                Colors.white.withOpacity(0.08),
-                              ),
-                            ),
-                            Positioned(
-                              top: 40 * scale,
-                              left: -40 * scale,
-                              child: _decorCircle(
-                                120 * scale,
-                                accentGold.withOpacity(0.12),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  SafeArea(
-                    child: Column(
-                      children: [
-                        Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 16 * scale,
-                            vertical: 10 * scale,
-                          ),
-                          child: Row(
-                            children: [
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.arrow_back_ios_new,
-                                  color: Colors.white,
-                                ),
-                                onPressed: () => Navigator.pop(context),
-                              ),
-                              Text(
-                                "Kalender Penugasan",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20 * scale,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        SizedBox(height: 10 * scale),
-                        Expanded(
-                          child: isLoading
-                              ? const Center(child: CircularProgressIndicator())
-                              : SingleChildScrollView(
-                                  physics: const BouncingScrollPhysics(),
-                                  child: Padding(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 18 * scale,
-                                    ),
-                                    child: Column(
+            return Column(
+              children: [
+                AdminHeader(
+                  title: 'Kalender Penugasan',
+                  showSidebar: showSidebar,
+                ),
+                Expanded(
+                  child: isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : LayoutBuilder(
+                          builder: (context, c) {
+                            final bool twoCol = c.maxWidth >= 700;
+                            return SingleChildScrollView(
+                              physics: const BouncingScrollPhysics(),
+                              // Margin sama dengan halaman Status Karyawan
+                              padding: EdgeInsets.all(showSidebar ? 24 : 16),
+                              child: twoCol
+                                  ? Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          flex: 6,
+                                          child: _buildCalendarCard(
+                                            events,
+                                            scale,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 20),
+                                        Expanded(
+                                          flex: 5,
+                                          child: _buildTaskList(
+                                            currentEvents,
+                                            scale,
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : Column(
                                       children: [
                                         _buildCalendarCard(events, scale),
-                                        SizedBox(height: 20 * scale),
+                                        const SizedBox(height: 16),
                                         _buildTaskList(currentEvents, scale),
                                       ],
                                     ),
-                                  ),
-                                ),
+                            );
+                          },
                         ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      ),
-      bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 2),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    return Scaffold(
+      backgroundColor: kBgLight,
+      drawer: showSidebar
+          ? null
+          : const AdminSidebar(currentIndex: _sidebarIndex, isDrawer: true),
+      body: showSidebar
+          ? Row(
+              children: [
+                const AdminSidebar(currentIndex: _sidebarIndex),
+                Expanded(child: content),
+              ],
+            )
+          : content,
     );
   }
 
+  // ------------------------------------------------------------------
+  // KALENDER
+  // ------------------------------------------------------------------
   Widget _buildCalendarCard(
     Map<String, List<Map<String, dynamic>>> events,
     double scale,
@@ -505,18 +443,8 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
     final int totalCells = ((leadingPadding + daysInMonth) / 7).ceil() * 7;
 
     return Container(
-      padding: EdgeInsets.all(16 * scale),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22 * scale),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
+      padding: EdgeInsets.all(14 * scale),
+      decoration: _cardDeco(),
       child: Column(
         children: [
           Row(
@@ -526,7 +454,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                 visualDensity: VisualDensity.compact,
                 icon: Icon(
                   Icons.chevron_left,
-                  color: blueMid,
+                  color: kBiruSedang,
                   size: 26 * scale,
                 ),
                 onPressed: () => _changeMonth(-1),
@@ -542,9 +470,9 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                   child: Text(
                     "${_monthNames[_focusedDay.month - 1]} ${_focusedDay.year}",
                     style: TextStyle(
-                      fontSize: 16 * scale,
+                      fontSize: 15 * scale,
                       fontWeight: FontWeight.bold,
-                      color: blueDark,
+                      color: kBiruTua,
                     ),
                   ),
                 ),
@@ -553,14 +481,14 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                 visualDensity: VisualDensity.compact,
                 icon: Icon(
                   Icons.chevron_right,
-                  color: blueMid,
+                  color: kBiruSedang,
                   size: 26 * scale,
                 ),
                 onPressed: () => _changeMonth(1),
               ),
             ],
           ),
-          SizedBox(height: 10 * scale),
+          SizedBox(height: 4 * scale),
 
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -584,7 +512,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
               );
             }).toList(),
           ),
-          Divider(height: 20 * scale),
+          Divider(height: 12 * scale),
 
           GridView.builder(
             shrinkWrap: true,
@@ -592,8 +520,9 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
             itemCount: totalCells,
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              mainAxisSpacing: 6,
-              crossAxisSpacing: 6,
+              childAspectRatio: 1.25,
+              mainAxisSpacing: 3,
+              crossAxisSpacing: 3,
             ),
             itemBuilder: (context, index) {
               DateTime date;
@@ -620,15 +549,17 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                 date = DateTime(_focusedDay.year, _focusedDay.month, dayNum);
               }
 
-              final String key = _dateKey(date);
-
               final bool isSelected =
                   date.year == _selectedDay.year &&
                   date.month == _selectedDay.month &&
                   date.day == _selectedDay.day;
 
               final bool isSunday = date.weekday == DateTime.sunday;
-              final List<Map<String, dynamic>> dayEvents = events[key] ?? [];
+              final List<Map<String, dynamic>> dayEvents =
+                  events[_dateKey(date)] ?? [];
+
+              // Satu titik biru = ada jadwal tugas pada tanggal ini
+              final bool hasEvent = dayEvents.isNotEmpty;
 
               return InkWell(
                 onTap: () {
@@ -642,7 +573,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                 borderRadius: BorderRadius.circular(12 * scale),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: isSelected ? blueMid : Colors.transparent,
+                    color: isSelected ? kBiruSedang : Colors.transparent,
                     borderRadius: BorderRadius.circular(12 * scale),
                   ),
                   child: Column(
@@ -651,7 +582,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                       Text(
                         "${date.day}",
                         style: TextStyle(
-                          fontSize: 13 * scale,
+                          fontSize: 12 * scale,
                           fontWeight: isSelected || (isSunday && isCurrentMonth)
                               ? FontWeight.bold
                               : FontWeight.normal,
@@ -664,19 +595,15 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                                           : Colors.black87)),
                         ),
                       ),
-                      if (dayEvents.isNotEmpty) ...[
-                        SizedBox(height: 3 * scale),
-                        Container(
-                          width: 5 * scale,
-                          height: 5 * scale,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isSelected
-                                ? accentGold
-                                : (isCurrentMonth
-                                      ? blueMid
-                                      : blueMid.withOpacity(0.4)),
-                          ),
+                      if (hasEvent) ...[
+                        SizedBox(height: 2 * scale),
+                        _dot(
+                          isSelected
+                              ? accentGold
+                              : (isCurrentMonth
+                                    ? kBiruSedang
+                                    : kBiruSedang.withOpacity(0.4)),
+                          scale,
                         ),
                       ],
                     ],
@@ -690,6 +617,75 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
     );
   }
 
+  BoxDecoration _cardDeco() => BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    boxShadow: [
+      BoxShadow(
+        color: kBiruTua.withOpacity(.05),
+        blurRadius: 14,
+        offset: const Offset(0, 4),
+      ),
+    ],
+  );
+
+  Widget _infoRow(
+    IconData icon,
+    Color color,
+    String label,
+    String value,
+    double scale,
+  ) {
+    return Padding(
+      padding: EdgeInsets.only(top: 4 * scale),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14 * scale, color: color),
+          SizedBox(width: 5 * scale),
+          Expanded(
+            child: Text(
+              '$label: $value',
+              style: TextStyle(
+                fontSize: 11.5 * scale,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dot(Color color, double scale) {
+    return Container(
+      width: 4 * scale,
+      height: 4 * scale,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+    );
+  }
+
+  Widget _legendDot(Color color, String label, double scale) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7 * scale,
+          height: 7 * scale,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        SizedBox(width: 5 * scale),
+        Text(
+          label,
+          style: TextStyle(fontSize: 11 * scale, color: Colors.grey.shade600),
+        ),
+      ],
+    );
+  }
+
+  // ------------------------------------------------------------------
+  // DAFTAR TUGAS PADA TANGGAL TERPILIH
+  // ------------------------------------------------------------------
   Widget _buildTaskList(List<Map<String, dynamic>> events, double scale) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -700,9 +696,9 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
             Text(
               "Pekerjaan Tanggal Ini",
               style: TextStyle(
-                fontSize: 16 * scale,
+                fontSize: 17 * scale,
                 fontWeight: FontWeight.bold,
-                color: Colors.black87,
+                color: kBiruTua,
               ),
             ),
             Text(
@@ -718,11 +714,8 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
         if (events.isEmpty)
           Container(
             width: double.infinity,
-            padding: EdgeInsets.all(20 * scale),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16 * scale),
-            ),
+            padding: const EdgeInsets.all(20),
+            decoration: _cardDeco(),
             child: Center(
               child: Text(
                 "Tidak ada jadwal pekerjaan pada tanggal ini",
@@ -740,39 +733,22 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
             itemCount: events.length,
             itemBuilder: (context, index) {
               final item = events[index];
-              final bool isDeadline = item["is_deadline"] ?? false;
               final String rawStatus = item["raw_status"] ?? "pending";
-
-              final Color statusTextColor = _getStatusColor(rawStatus);
-              final Color statusBgColor = _getStatusBgColor(rawStatus);
+              final String staffNama = (item["staff_nama"] ?? '-').toString();
 
               return InkWell(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const KelolaTugasPage()),
-                  );
-                },
-                borderRadius: BorderRadius.circular(16 * scale),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const KelolaTugasPage()),
+                ),
+                borderRadius: BorderRadius.circular(16),
                 child: Container(
-                  margin: EdgeInsets.only(bottom: 10 * scale),
-                  padding: EdgeInsets.all(14 * scale),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16 * scale),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: EdgeInsets.all(16 * scale),
+                  decoration: _cardDeco().copyWith(
                     border: Border(
-                      left: BorderSide(
-                        color: isDeadline ? Colors.red.shade600 : blueMid,
-                        width: 4 * scale,
-                      ),
+                      left: BorderSide(color: kBiruSedang, width: 4 * scale),
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
                   ),
                   child: Row(
                     children: [
@@ -780,50 +756,85 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            // Judul
                             Text(
                               item["title"]!,
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 14 * scale,
-                                color: isDeadline
-                                    ? Colors.red.shade900
-                                    : Colors.black87,
+                                color: kBiruTua,
                               ),
                             ),
-                            SizedBox(height: 4 * scale),
+                            SizedBox(height: 6 * scale),
+
+                            // Nama staff yang mengerjakan
                             Row(
                               children: [
                                 Icon(
-                                  Icons.access_time,
+                                  Icons.person_outline_rounded,
                                   size: 14 * scale,
-                                  color: Colors.grey,
+                                  color: kBiruSedang,
                                 ),
                                 SizedBox(width: 4 * scale),
-                                Text(
-                                  item["time"]!,
-                                  style: TextStyle(
-                                    fontSize: 11 * scale,
-                                    color: Colors.grey.shade600,
+                                Expanded(
+                                  child: Text(
+                                    staffNama,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12 * scale,
+                                      fontWeight: FontWeight.w600,
+                                      color: kBiruTua,
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
+                            SizedBox(height: 4 * scale),
+
+                            // Tanggal diberikan, tenggat & diserahkan
+                            _infoRow(
+                              Icons.play_circle_outline_rounded,
+                              kBiruSedang,
+                              'Diberikan',
+                              item["diberikan"].toString(),
+                              scale,
+                            ),
+                            _infoRow(
+                              Icons.event_rounded,
+                              kBiruSedang,
+                              'Tenggat terakhir dikumpulkan',
+                              item["tenggat"].toString(),
+                              scale,
+                            ),
+                            _infoRow(
+                              item["sudah_serah"] == true
+                                  ? Icons.check_circle_rounded
+                                  : Icons.hourglass_empty_rounded,
+                              item["sudah_serah"] == true
+                                  ? Colors.green.shade600
+                                  : Colors.grey,
+                              'Diserahkan',
+                              item["diserahkan"].toString(),
+                              scale,
+                            ),
                           ],
                         ),
                       ),
+                      SizedBox(width: 8 * scale),
                       Container(
                         padding: EdgeInsets.symmetric(
                           horizontal: 10 * scale,
                           vertical: 4 * scale,
                         ),
                         decoration: BoxDecoration(
-                          color: statusBgColor,
+                          color: _getStatusBgColor(rawStatus),
                           borderRadius: BorderRadius.circular(8 * scale),
                         ),
                         child: Text(
-                          item["type"]!,
+                          item["status"]!,
                           style: TextStyle(
-                            color: statusTextColor,
+                            color: _getStatusColor(rawStatus),
                             fontSize: 10 * scale,
                             fontWeight: FontWeight.bold,
                           ),
@@ -839,40 +850,118 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
     );
   }
 
-  Widget _decorCircle(double size, Color color) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+  // ------------------------------------------------------------------
+  // PICKER BULAN & TAHUN
+  // ------------------------------------------------------------------
+  void _showMonthYearPicker() {
+    int tempYear = _focusedDay.year;
+    int tempMonth = _focusedDay.month;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              titlePadding: const EdgeInsets.all(16),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: kBiruSedang),
+                    onPressed: () => setDialogState(() => tempYear--),
+                  ),
+                  Text(
+                    "$tempYear",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: kBiruTua,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, color: kBiruSedang),
+                    onPressed: () => setDialogState(() => tempYear++),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 300,
+                height: 220,
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  itemCount: 12,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 2.0,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemBuilder: (context, index) {
+                    final isSelected = (index + 1) == tempMonth;
+                    return InkWell(
+                      onTap: () => setDialogState(() => tempMonth = index + 1),
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? kBiruSedang
+                              : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected
+                                ? kBiruSedang
+                                : Colors.transparent,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          _monthNames[index].substring(0, 3),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: isSelected ? Colors.white : kBiruTua,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text(
+                    "Batal",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kBiruSedang,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () {
+                    _goToMonth(DateTime(tempYear, tempMonth, 1));
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text("Pilih"),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
-}
-
-class HeaderCurveClipper extends CustomClipper<Path> {
-  final double curveHeightOffset;
-
-  HeaderCurveClipper({required this.curveHeightOffset});
-
-  @override
-  Path getClip(Size size) {
-    final path = Path();
-    path.lineTo(0, curveHeightOffset - 20);
-
-    final controlPoint = Offset(size.width / 2, curveHeightOffset + 25);
-    final endPoint = Offset(size.width, curveHeightOffset - 20);
-
-    path.quadraticBezierTo(
-      controlPoint.dx,
-      controlPoint.dy,
-      endPoint.dx,
-      endPoint.dy,
-    );
-
-    path.lineTo(size.width, 0);
-    path.close();
-    return path;
-  }
-
-  @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) => true;
 }

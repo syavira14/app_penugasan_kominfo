@@ -1,20 +1,24 @@
 import 'dart:async';
-import '../services/penugasan_workflow.dart';
+import 'dart:math' as math;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../pages/admin/admin_navbar.dart';
+import '../pages/admin/admin_navbar.dart' show withAdminReadableText;
+import '../pages/admin/admin_sidebar.dart';
 import '../pages/admin/riwayat_tugas_staff.dart';
+import '../services/penugasan_workflow.dart';
+import '../widgets/admin_header.dart';
 import 'detail_tugas_admin_page.dart';
 
 class AppColors {
-  static const Color biruTua = Color(0xFF0011CC);
-  static const Color biruSedang = Color(0xFF0066FF);
-  static const Color cyan = Color(0xFF00CCFF);
+  static const Color biruTua = Color(0xFF1A1464);
+  static const Color biruSedang = Color(0xFF1D5FA0);
+  static const Color cyan = Color(0xFF4FA6DE);
   static const Color hijauSelesai = Color(0xFF2E8B57);
   static const Color putih = Colors.white;
   static const Color abuTeks = Color(0xFF5A6472);
-  static const Color latarAbu = Color(0xFFF4F6FB);
+  static const Color latarAbu = Color(0xFFF4F7FB);
   static const Color merahHapus = Color(0xFFE5484D);
   static const Color oranyeWarning = Color(0xFFFF9800);
 }
@@ -31,6 +35,113 @@ enum FilterStatus {
   disetujui,
 }
 
+const List<String> _shortMonths = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'Mei',
+  'Jun',
+  'Jul',
+  'Agu',
+  'Sep',
+  'Okt',
+  'Nov',
+  'Des',
+];
+
+String _fmtDate(DateTime? d) =>
+    d == null ? '-' : '${d.day} ${_shortMonths[d.month - 1]} ${d.year}';
+
+Widget _pill(String text, Color color, {IconData? icon}) => Container(
+  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+  decoration: BoxDecoration(
+    color: color.withOpacity(.12),
+    borderRadius: BorderRadius.circular(20),
+  ),
+  child: Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (icon != null) ...[
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 4),
+      ],
+      Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ],
+  ),
+);
+
+BoxDecoration _card([double r = 16]) => BoxDecoration(
+  color: Colors.white,
+  borderRadius: BorderRadius.circular(r),
+  boxShadow: [
+    BoxShadow(
+      color: AppColors.biruTua.withOpacity(.05),
+      blurRadius: 14,
+      offset: const Offset(0, 4),
+    ),
+  ],
+);
+
+Color _statusColor(String status) {
+  switch (status) {
+    case 'disetujui':
+      return AppColors.hijauSelesai;
+    case 'dikumpulkan':
+      return Colors.deepPurple.shade400;
+    case 'berlangsung':
+      return Colors.orange.shade800;
+    case 'terkendala':
+      return Colors.red.shade700;
+    case 'revisi':
+      return Colors.deepOrange.shade600;
+    default:
+      return Colors.blueGrey.shade500;
+  }
+}
+
+String _statusText(String status) {
+  switch (status) {
+    case 'disetujui':
+      return 'Disetujui';
+    case 'dikumpulkan':
+      return 'Dikumpulkan';
+    case 'berlangsung':
+      return 'Berlangsung';
+    case 'terkendala':
+      return 'Terkendala';
+    case 'revisi':
+      return 'Revisi';
+    default:
+      return 'Pending';
+  }
+}
+
+Color _priorityColor(String priority) {
+  switch (priority.toLowerCase()) {
+    case 'tinggi':
+      return Colors.red.shade600;
+    case 'rendah':
+      return Colors.green.shade600;
+    default:
+      return Colors.amber.shade700;
+  }
+}
+
+String _priorityText(String priority) {
+  final p = priority.toLowerCase();
+  if (p == 'tinggi') return 'Tinggi';
+  if (p == 'rendah') return 'Rendah';
+  return 'Sedang';
+}
+
 class KelolaTugasPage extends StatefulWidget {
   const KelolaTugasPage({super.key});
 
@@ -39,14 +150,29 @@ class KelolaTugasPage extends StatefulWidget {
 }
 
 class _KelolaTugasPageState extends State<KelolaTugasPage> {
+  static const double _sidebarBreakpoint = 900;
+  static const int _sidebarIndex = 2; // posisi menu Kelola Tugas di sidebar
+  static const int _perPage = 10;
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   final TextEditingController _searchController = TextEditingController();
 
   String _searchQuery = '';
+  int _page = 0;
   final Map<String, List<String>> _statusesByTugas = {};
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _assignmentSubscription;
+
+  SortBy _sortBy = SortBy.terbaru;
+  FilterStatus _filterStatus = FilterStatus.semua;
+  DateTime? _selectedDate;
+
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _tugasStream =
+      _firestore
+          .collection('tugas')
+          .orderBy('tanggal_tugas_diberikan', descending: true)
+          .snapshots();
 
   @override
   void initState() {
@@ -79,24 +205,14 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
         );
   }
 
-  SortBy _sortBy = SortBy.terbaru;
-
-  FilterStatus _filterStatus = FilterStatus.semua;
-
-  DateTime? _selectedDate;
-
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> _tugasStream =
-      _firestore
-          .collection('tugas')
-          .orderBy('tanggal_tugas_diberikan', descending: true)
-          .snapshots();
-
   @override
   void dispose() {
     _assignmentSubscription?.cancel();
     _searchController.dispose();
     super.dispose();
   }
+
+  // ───────────────────────────── Aksi ─────────────────────────────
 
   Future<void> _pilihTanggal() async {
     final picked = await showDatePicker(
@@ -112,6 +228,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     if (picked != null) {
       setState(() {
         _selectedDate = picked;
+        _page = 0;
       });
     }
   }
@@ -159,9 +276,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.pop(context, false);
-              },
+              onPressed: () => Navigator.pop(context, false),
               child: const Text(
                 'Batal',
                 style: TextStyle(color: AppColors.abuTeks),
@@ -173,9 +288,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                 foregroundColor: Colors.white,
                 elevation: 0,
               ),
-              onPressed: () {
-                Navigator.pop(context, true);
-              },
+              onPressed: () => Navigator.pop(context, true),
               child: const Text('Hapus'),
             ),
           ],
@@ -183,9 +296,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
       },
     );
 
-    if (confirm != true) {
-      return;
-    }
+    if (confirm != true) return;
 
     try {
       final assignments = await _firestore
@@ -194,42 +305,39 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
           .get();
 
       final batch = _firestore.batch();
-
       for (final doc in assignments.docs) {
         batch.delete(doc.reference);
       }
-
       batch.delete(_firestore.collection('tugas').doc(tugasId));
-
       await batch.commit();
 
       if (!mounted) return;
-
       _tampilkanSnackbar('Tugas "$judul" telah dihapus');
     } catch (e) {
       if (!mounted) return;
-
       _tampilkanSnackbar('Gagal menghapus tugas: $e', error: true);
     }
   }
 
+  // ───────────────────────────── Data ─────────────────────────────
+
+  String _groupStatus(String tugasId) =>
+      assignmentGroupStatus(_statusesByTugas[tugasId] ?? const ['pending']);
+
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _filterDocs(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) {
+    final query = _searchQuery.trim().toLowerCase();
+
     final result = docs.where((doc) {
       final data = doc.data();
-
       final judul = (data['judul'] ?? '').toString().toLowerCase();
-
       final tempat = (data['tempat_tugas'] ?? '').toString().toLowerCase();
-
-      final query = _searchQuery.trim().toLowerCase();
 
       final cocokSearch =
           query.isEmpty || judul.contains(query) || tempat.contains(query);
 
       final start = _asDate(data['tanggal_mulai_tugas']);
-
       final cocokTanggal =
           _selectedDate == null ||
           (start != null && DateUtils.isSameDay(start, _selectedDate!));
@@ -239,36 +347,31 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
       final cocokStatus =
           _filterStatus == FilterStatus.semua ||
           statuses.contains(_filterStatus.name);
+
       return cocokSearch && cocokTanggal && cocokStatus && !sudahDisetujui;
     }).toList();
 
     if (_sortBy == SortBy.namaAZ) {
-      result.sort((a, b) {
-        return (a.data()['judul'] ?? '').toString().compareTo(
+      result.sort(
+        (a, b) => (a.data()['judul'] ?? '').toString().compareTo(
           (b.data()['judul'] ?? '').toString(),
-        );
-      });
+        ),
+      );
     } else if (_sortBy == SortBy.tanggal) {
-      result.sort((a, b) {
-        return (_asDate(a.data()['tanggal_mulai_tugas']) ?? DateTime(1900))
+      result.sort(
+        (a, b) => (_asDate(a.data()['tanggal_mulai_tugas']) ?? DateTime(1900))
             .compareTo(
               _asDate(b.data()['tanggal_mulai_tugas']) ?? DateTime(1900),
-            );
-      });
+            ),
+      );
     }
 
     return result;
   }
 
   DateTime? _asDate(dynamic value) {
-    if (value is Timestamp) {
-      return value.toDate();
-    }
-
-    if (value is DateTime) {
-      return value;
-    }
-
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
     return null;
   }
 
@@ -283,223 +386,720 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     );
   }
 
+  // ───────────────────────────── Build ─────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    final bool wide = MediaQuery.of(context).size.width >= _sidebarBreakpoint;
+
     return withAdminReadableText(
       context,
       Scaffold(
         backgroundColor: AppColors.latarAbu,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          toolbarHeight: 96,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
-          ),
-          flexibleSpace: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Color(0xFF1B267B),
-                  Color(0xFF0066B3),
-                  Color(0xFF00A8E8),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+        drawer: wide
+            ? null
+            : const AdminSidebar(currentIndex: _sidebarIndex, isDrawer: true),
+        floatingActionButton: wide
+            ? null
+            : FloatingActionButton.extended(
+                onPressed: _bukaTambahTugas,
+                backgroundColor: AppColors.biruTua,
+                icon: const Icon(Icons.add_rounded, color: Colors.white),
+                label: const Text(
+                  'Tambah Tugas',
+                  style: TextStyle(color: Colors.white),
+                ),
               ),
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
-            ),
-          ),
-          title: const Text(
-            'Kelola Tugas',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-              fontSize: 20,
-            ),
-          ),
-        ),
-        body: Column(
+        body: Row(
           children: [
-            const SizedBox(height: 8),
-
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              color: AppColors.latarAbu,
+            if (wide) const AdminSidebar(currentIndex: _sidebarIndex),
+            Expanded(
               child: Column(
                 children: [
-                  TextField(
-                    controller: _searchController,
-                    onChanged: (value) {
-                      setState(() {
-                        _searchQuery = value;
-                      });
-                    },
-                    style: const TextStyle(fontSize: 13.5),
-                    decoration: InputDecoration(
-                      hintText: 'Cari judul atau tempat tugas...',
-                      hintStyle: const TextStyle(
-                        color: AppColors.abuTeks,
-                        fontSize: 13,
-                      ),
-                      prefixIcon: const Icon(
-                        Icons.search_rounded,
-                        color: AppColors.biruSedang,
-                      ),
-                      suffixIcon: _searchQuery.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: () {
-                                _searchController.clear();
-
-                                setState(() {
-                                  _searchQuery = '';
-                                });
-                              },
-                              icon: const Icon(Icons.close),
+                  AdminHeader(title: 'Kelola Tugas', showSidebar: wide),
+                  Expanded(
+                    child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream: _tugasStream,
+                      builder: (context, snapshot) {
+                        if (snapshot.hasError) {
+                          return Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Text(
+                                'Gagal memuat tugas:\n${snapshot.error}',
+                                textAlign: TextAlign.center,
+                              ),
                             ),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _FilterChip(
-                          label: _filterLabel(),
-                          selected: _filterStatus != FilterStatus.semua,
-                          onTap: _bukaFilterStatus,
-                        ),
-
-                        const SizedBox(width: 8),
-
-                        _FilterChip(
-                          label: _sortLabel(),
-                          selected: _sortBy != SortBy.terbaru,
-                          onTap: _bukaSort,
-                        ),
-
-                        const SizedBox(width: 8),
-
-                        _FilterChip(
-                          label: _selectedDate == null
-                              ? 'Tanggal'
-                              : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
-                          selected: _selectedDate != null,
-                          onTap: _pilihTanggal,
-                        ),
-
-                        if (_selectedDate != null) ...[
-                          const SizedBox(width: 4),
-
-                          IconButton(
-                            onPressed: () {
-                              setState(() {
-                                _selectedDate = null;
-                              });
-                            },
-                            icon: const Icon(Icons.close, size: 18),
-                          ),
-                        ],
-                      ],
+                          );
+                        }
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        return _content(snapshot.data?.docs ?? [], wide);
+                      },
                     ),
                   ),
                 ],
-              ),
-            ),
-
-            Expanded(
-              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: _tugasStream,
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return Center(
-                      child: Text('Gagal memuat tugas:\n${snapshot.error}'),
-                    );
-                  }
-
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  final docs = _filterDocs(snapshot.data?.docs ?? []);
-
-                  if (docs.isEmpty) {
-                    return _EmptyState(query: _searchQuery);
-                  }
-
-                  return ListView.separated(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: docs.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final doc = docs[index];
-
-                      return _TugasCard(
-                        doc: doc,
-                        firestore: _firestore,
-                        onTap: () => _bukaDetailTugas(doc.id),
-                        onEdit: () => _bukaEditTugas(doc.id),
-                        onDelete: () => _konfirmasiHapus(
-                          doc.id,
-                          (doc.data()['judul'] ?? 'Tugas').toString(),
-                        ),
-                      );
-                    },
-                  );
-                },
               ),
             ),
           ],
         ),
-
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: _bukaTambahTugas,
-          backgroundColor: AppColors.biruTua,
-          icon: const Icon(Icons.add_rounded, color: Colors.white),
-          label: const Text(
-            'Tambah Tugas',
-            style: TextStyle(color: Colors.white),
-          ),
-        ),
-
-        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-
-        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 1),
       ),
     );
   }
+
+  Widget _content(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> allDocs,
+    bool wide,
+  ) {
+    final filtered = _filterDocs(allDocs);
+    final pages = math.max(1, (filtered.length / _perPage).ceil());
+    final pg = _page.clamp(0, pages - 1);
+    final shown = filtered.skip(pg * _perPage).take(_perPage).toList();
+
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      padding: EdgeInsets.all(wide ? 24 : 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _summary(allDocs, compact: !wide),
+          SizedBox(height: wide ? 16 : 12),
+          _toolbar(wide),
+          const SizedBox(height: 14),
+          if (shown.isEmpty)
+            _EmptyState(query: _searchQuery)
+          else if (wide)
+            _tableCard(shown, pg, pages)
+          else
+            Column(
+              children: [
+                for (final doc in shown) _mobileCard(doc),
+                _pager(pg, pages),
+              ],
+            ),
+          if (!wide) const SizedBox(height: 70), // ruang untuk tombol tambah
+        ],
+      ),
+    );
+  }
+
+  // ───────────────────────────── Ringkasan ─────────────────────────────
+
+  Widget _summary(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
+    required bool compact,
+  }) {
+    final aktif = docs.where((d) => _groupStatus(d.id) != 'disetujui').toList();
+    final review = aktif
+        .where((d) => _groupStatus(d.id) == 'dikumpulkan')
+        .length;
+    final kendala = aktif
+        .where((d) => _groupStatus(d.id) == 'terkendala')
+        .length;
+
+    final items = [
+      [
+        'Tugas Aktif',
+        '${aktif.length} Tugas',
+        Icons.assignment_rounded,
+        AppColors.biruSedang,
+        const Color(0xFFEAF3FC),
+      ],
+      [
+        'Perlu Direview',
+        '$review Tugas',
+        Icons.rate_review_rounded,
+        Colors.deepPurple.shade400,
+        const Color(0xFFF1ECFA),
+      ],
+      [
+        'Terkendala',
+        '$kendala Tugas',
+        Icons.report_problem_rounded,
+        Colors.red.shade700,
+        const Color(0xFFFDEDED),
+      ],
+    ];
+
+    return Row(
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0) SizedBox(width: compact ? 8 : 12),
+          Expanded(
+            child: Container(
+              padding: EdgeInsets.all(compact ? 10 : 16),
+              decoration: BoxDecoration(
+                color: items[i][4] as Color,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: (items[i][3] as Color).withOpacity(.15),
+                ),
+              ),
+              child: compact
+                  ? Column(
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: (items[i][3] as Color).withOpacity(
+                            .15,
+                          ),
+                          child: Icon(
+                            items[i][2] as IconData,
+                            size: 16,
+                            color: items[i][3] as Color,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          items[i][0] as String,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: items[i][3] as Color,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          items[i][1] as String,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.biruTua,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 24,
+                          backgroundColor: (items[i][3] as Color).withOpacity(
+                            .15,
+                          ),
+                          child: Icon(
+                            items[i][2] as IconData,
+                            color: items[i][3] as Color,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                items[i][0] as String,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: items[i][3] as Color,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                items[i][1] as String,
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.biruTua,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ───────────────────────────── Toolbar ─────────────────────────────
+
+  Widget _toolbar(bool wide) {
+    final searchField = TextField(
+      controller: _searchController,
+      onChanged: (value) => setState(() {
+        _searchQuery = value;
+        _page = 0;
+      }),
+      style: const TextStyle(fontSize: 13.5),
+      decoration: InputDecoration(
+        hintText: 'Cari judul atau tempat tugas...',
+        hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+        prefixIcon: const Icon(Icons.search),
+        suffixIcon: _searchQuery.isEmpty
+            ? null
+            : IconButton(
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() {
+                    _searchQuery = '';
+                    _page = 0;
+                  });
+                },
+                icon: const Icon(Icons.close),
+              ),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(vertical: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(30),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+
+    final chips = SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _FilterChip(
+            label: _filterLabel(),
+            selected: _filterStatus != FilterStatus.semua,
+            onTap: _bukaFilterStatus,
+          ),
+          const SizedBox(width: 8),
+          _FilterChip(
+            label: _sortLabel(),
+            selected: _sortBy != SortBy.terbaru,
+            onTap: _bukaSort,
+          ),
+          const SizedBox(width: 8),
+          _FilterChip(
+            label: _selectedDate == null
+                ? 'Tanggal'
+                : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
+            selected: _selectedDate != null,
+            onTap: _pilihTanggal,
+          ),
+          if (_selectedDate != null) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'Hapus filter tanggal',
+              onPressed: () => setState(() {
+                _selectedDate = null;
+                _page = 0;
+              }),
+              icon: const Icon(Icons.close, size: 18),
+            ),
+          ],
+        ],
+      ),
+    );
+
+    if (wide) {
+      return Row(
+        children: [
+          Expanded(child: searchField),
+          const SizedBox(width: 12),
+          chips,
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            onPressed: _bukaTambahTugas,
+            icon: const Icon(Icons.add_rounded, size: 20),
+            label: const Text('Tambah Tugas'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.biruTua,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(30),
+              ),
+              textStyle: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [searchField, const SizedBox(height: 10), chips],
+    );
+  }
+
+  // ───────────────────────────── Tabel (layar lebar) ─────────────────────────────
+
+  Widget _tableCard(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> rows,
+    int pg,
+    int pages,
+  ) {
+    Widget head(String t, int flex) => Expanded(
+      flex: flex,
+      child: Text(
+        t,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: Colors.grey.shade600,
+        ),
+      ),
+    );
+
+    return Container(
+      decoration: _card(),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: Row(
+              children: [
+                head('Judul Tugas', 28),
+                head('Prioritas', 11),
+                head('Status', 13),
+                head('Tanggal Mulai', 13),
+                head('Tenggat', 13),
+                head('Staf', 7),
+                head('Aksi', 15),
+              ],
+            ),
+          ),
+          for (final doc in rows) _tableRow(doc),
+          _pager(pg, pages),
+        ],
+      ),
+    );
+  }
+
+  Widget _tableRow(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data();
+    final judul = (data['judul'] ?? 'Tanpa Judul').toString();
+    final tempat = (data['tempat_tugas'] ?? '').toString();
+    final priority = (data['prioritas'] ?? 'sedang').toString();
+    final status = _groupStatus(doc.id);
+    final jumlahStaf = (_statusesByTugas[doc.id] ?? const []).length;
+
+    return InkWell(
+      onTap: () => _bukaDetailTugas(doc.id),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: Colors.grey.shade200)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 28,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      judul,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13.5,
+                        color: AppColors.biruTua,
+                      ),
+                    ),
+                    if (tempat.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.location_on_outlined,
+                            size: 12,
+                            color: Colors.grey.shade500,
+                          ),
+                          const SizedBox(width: 3),
+                          Expanded(
+                            child: Text(
+                              tempat,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 11,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: _pill(
+                  _priorityText(priority),
+                  _priorityColor(priority),
+                  icon: Icons.flag_rounded,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 13,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: _pill(_statusText(status), _statusColor(status)),
+              ),
+            ),
+            Expanded(
+              flex: 13,
+              child: Text(
+                _fmtDate(_asDate(data['tanggal_mulai_tugas'])),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            Expanded(
+              flex: 13,
+              child: Text(
+                _fmtDate(_asDate(data['tanggal_selesai_tugas'])),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            Expanded(
+              flex: 7,
+              child: Text(
+                '$jumlahStaf',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.biruTua,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 15,
+              child: Row(
+                children: [
+                  _iconAction(
+                    Icons.visibility_outlined,
+                    'Lihat detail',
+                    AppColors.biruSedang,
+                    () => _bukaDetailTugas(doc.id),
+                  ),
+                  _iconAction(
+                    Icons.edit_outlined,
+                    'Edit',
+                    Colors.orange.shade800,
+                    () => _bukaEditTugas(doc.id),
+                  ),
+                  _iconAction(
+                    Icons.delete_outline_rounded,
+                    'Hapus',
+                    AppColors.merahHapus,
+                    () => _konfirmasiHapus(doc.id, judul),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _iconAction(
+    IconData icon,
+    String tooltip,
+    Color color,
+    VoidCallback onTap,
+  ) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onTap,
+      icon: Icon(icon, size: 20, color: color),
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+    );
+  }
+
+  Widget _pager(int pg, int pages) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+    decoration: BoxDecoration(
+      border: Border(top: BorderSide(color: Colors.grey.shade200)),
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          tooltip: 'Halaman sebelumnya',
+          onPressed: pg > 0 ? () => setState(() => _page = pg - 1) : null,
+          icon: const Icon(Icons.chevron_left),
+          color: Colors.grey.shade700,
+          disabledColor: Colors.grey.shade300,
+          visualDensity: VisualDensity.compact,
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            '${pg + 1} / $pages',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: AppColors.biruTua,
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Halaman berikutnya',
+          onPressed: pg < pages - 1
+              ? () => setState(() => _page = pg + 1)
+              : null,
+          icon: const Icon(Icons.chevron_right),
+          color: Colors.grey.shade700,
+          disabledColor: Colors.grey.shade300,
+          visualDensity: VisualDensity.compact,
+        ),
+      ],
+    ),
+  );
+
+  // ───────────────────────────── Kartu (HP) ─────────────────────────────
+
+  Widget _mobileCard(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data();
+    final judul = (data['judul'] ?? 'Tanpa Judul').toString();
+    final tempat = (data['tempat_tugas'] ?? '-').toString();
+    final priority = (data['prioritas'] ?? 'sedang').toString();
+    final status = _groupStatus(doc.id);
+    final start = _asDate(data['tanggal_mulai_tugas']);
+    final end = _asDate(data['tanggal_selesai_tugas']);
+    final jumlahStaf = (_statusesByTugas[doc.id] ?? const []).length;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: _card(),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _bukaDetailTugas(doc.id),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(width: 5, color: _statusColor(status)),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 12, 4, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  judul,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: AppColors.biruTua,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              PopupMenuButton<String>(
+                                padding: EdgeInsets.zero,
+                                onSelected: (value) {
+                                  if (value == 'edit') {
+                                    _bukaEditTugas(doc.id);
+                                  } else if (value == 'delete') {
+                                    _konfirmasiHapus(doc.id, judul);
+                                  }
+                                },
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(
+                                    value: 'edit',
+                                    child: Text('Edit'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('Hapus'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
+                              _pill(_statusText(status), _statusColor(status)),
+                              _pill(
+                                _priorityText(priority),
+                                _priorityColor(priority),
+                                icon: Icons.flag_rounded,
+                              ),
+                              _pill(
+                                '$jumlahStaf staf',
+                                AppColors.biruSedang,
+                                icon: Icons.people_alt_rounded,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          _InfoRow(
+                            icon: Icons.calendar_today_outlined,
+                            text: '${_fmtDate(start)}  –  ${_fmtDate(end)}',
+                          ),
+                          const SizedBox(height: 5),
+                          _InfoRow(
+                            icon: Icons.location_on_outlined,
+                            text: tempat.isEmpty ? '-' : tempat,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────────── Filter & Sort ─────────────────────────────
 
   String _filterLabel() {
     switch (_filterStatus) {
       case FilterStatus.pending:
         return 'Pending';
-
       case FilterStatus.berlangsung:
         return 'Berlangsung';
-
       case FilterStatus.terkendala:
         return 'Terkendala';
-
       case FilterStatus.dikumpulkan:
         return 'Dikumpulkan';
-
       case FilterStatus.revisi:
         return 'Revisi';
-
       case FilterStatus.disetujui:
         return 'Disetujui';
-
       case FilterStatus.semua:
         return 'Status';
     }
@@ -509,10 +1109,8 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     switch (_sortBy) {
       case SortBy.terbaru:
         return 'Terbaru';
-
       case SortBy.namaAZ:
         return 'Nama A-Z';
-
       case SortBy.tanggal:
         return 'Tanggal';
     }
@@ -531,9 +1129,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                 trailing: _filterStatus == status
                     ? const Icon(Icons.check, color: AppColors.biruTua)
                     : null,
-                onTap: () {
-                  Navigator.pop(context, status);
-                },
+                onTap: () => Navigator.pop(context, status),
               );
             }).toList(),
           ),
@@ -552,6 +1148,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     if (value != null) {
       setState(() {
         _filterStatus = value;
+        _page = 0;
       });
     }
   }
@@ -569,9 +1166,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                 trailing: _sortBy == sort
                     ? const Icon(Icons.check, color: AppColors.biruTua)
                     : null,
-                onTap: () {
-                  Navigator.pop(context, sort);
-                },
+                onTap: () => Navigator.pop(context, sort),
               );
             }).toList(),
           ),
@@ -582,6 +1177,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     if (value != null) {
       setState(() {
         _sortBy = value;
+        _page = 0;
       });
     }
   }
@@ -590,22 +1186,16 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     switch (value) {
       case FilterStatus.semua:
         return 'Semua';
-
       case FilterStatus.pending:
         return 'Pending';
-
       case FilterStatus.berlangsung:
         return 'Berlangsung';
-
       case FilterStatus.dikumpulkan:
         return 'Dikumpulkan';
-
       case FilterStatus.revisi:
         return 'Revisi';
-
       case FilterStatus.disetujui:
         return 'Disetujui';
-
       case FilterStatus.terkendala:
         return 'Terkendala';
     }
@@ -615,271 +1205,15 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     switch (value) {
       case SortBy.terbaru:
         return 'Terbaru';
-
       case SortBy.namaAZ:
         return 'Nama A-Z';
-
       case SortBy.tanggal:
         return 'Tanggal Mulai';
     }
   }
 }
 
-class _TugasCard extends StatelessWidget {
-  final QueryDocumentSnapshot<Map<String, dynamic>> doc;
-
-  final FirebaseFirestore firestore;
-
-  final VoidCallback onTap;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-
-  const _TugasCard({
-    required this.doc,
-    required this.firestore,
-    required this.onTap,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  DateTime? _date(dynamic value) {
-    if (value is Timestamp) {
-      return value.toDate();
-    }
-
-    return null;
-  }
-
-  String _formatDate(DateTime? value) {
-    if (value == null) return '-';
-
-    return '${value.day.toString().padLeft(2, '0')}/'
-        '${value.month.toString().padLeft(2, '0')}/'
-        '${value.year}';
-  }
-
-  String _statusFromAssignments(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
-  ) {
-    return assignmentGroupStatus(
-      assignments.map(
-        (assignment) =>
-            (assignment.data()['status'] ?? 'pending').toString().toLowerCase(),
-      ),
-    );
-  }
-
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'disetujui':
-        return AppColors.hijauSelesai;
-
-      case 'dikumpulkan':
-        return AppColors.cyan;
-
-      case 'berlangsung':
-        return AppColors.biruSedang;
-
-      case 'terkendala':
-        return Colors.red;
-
-      case 'revisi':
-        return Colors.orange;
-
-      default:
-        return AppColors.oranyeWarning;
-    }
-  }
-
-  String _statusText(String status) {
-    switch (status) {
-      case 'disetujui':
-        return 'Disetujui';
-
-      case 'dikumpulkan':
-        return 'Dikumpulkan';
-
-      case 'berlangsung':
-        return 'Berlangsung';
-
-      case 'terkendala':
-        return 'Terkendala';
-
-      case 'revisi':
-        return 'Revisi';
-
-      default:
-        return 'Pending';
-    }
-  }
-
-  Color _priorityColor(String priority) {
-    switch (priority.toLowerCase()) {
-      case 'tinggi':
-        return AppColors.oranyeWarning;
-
-      case 'rendah':
-        return AppColors.cyan;
-
-      default:
-        return AppColors.biruSedang;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final data = doc.data();
-
-    final judul = (data['judul'] ?? 'Tanpa Judul').toString();
-
-    final tempat = (data['tempat_tugas'] ?? '-').toString();
-
-    final priority = (data['prioritas'] ?? 'sedang').toString();
-
-    final start = _date(data['tanggal_mulai_tugas']);
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: firestore
-          .collection('penugasan')
-          .where('tugas_id', isEqualTo: doc.id)
-          .snapshots(),
-      builder: (context, snapshot) {
-        final assignments = snapshot.data?.docs ?? [];
-
-        final status = _statusFromAssignments(assignments);
-
-        return InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppColors.putih,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.biruTua.withOpacity(0.06),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 4,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: _statusColor(status),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-
-                const SizedBox(width: 12),
-
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              judul,
-                              style: const TextStyle(
-                                color: AppColors.biruTua,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-
-                          PopupMenuButton<String>(
-                            padding: EdgeInsets.zero,
-                            onSelected: (value) {
-                              if (value == 'edit') {
-                                onEdit();
-                              } else if (value == 'delete') {
-                                onDelete();
-                              }
-                            },
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'edit', child: Text('Edit')),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Hapus'),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 7),
-
-                      Row(
-                        children: [
-                          _Badge(
-                            text: _statusText(status),
-                            color: _statusColor(status),
-                          ),
-
-                          const SizedBox(width: 7),
-
-                          _Badge(
-                            text: priority.toUpperCase(),
-                            color: _priorityColor(priority),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 9),
-
-                      _InfoRow(
-                        icon: Icons.calendar_today_outlined,
-                        text: _formatDate(start),
-                      ),
-
-                      const SizedBox(height: 5),
-
-                      _InfoRow(icon: Icons.location_on_outlined, text: tempat),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _Badge extends StatelessWidget {
-  final String text;
-  final Color color;
-
-  const _Badge({required this.text, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(.1),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: color,
-          fontSize: 9.5,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-}
+// ───────────────────────────── Widget kecil ─────────────────────────────
 
 class _InfoRow extends StatelessWidget {
   final IconData icon;
@@ -921,18 +1255,13 @@ class _FilterChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(30),
       child: Container(
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 13),
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
-          color: selected ? AppColors.biruTua : Colors.white,
-          border: Border.all(
-            color: selected
-                ? AppColors.biruTua
-                : AppColors.biruSedang.withOpacity(.35),
-          ),
-          borderRadius: BorderRadius.circular(18),
+          color: selected ? AppColors.biruSedang : Colors.white,
+          borderRadius: BorderRadius.circular(30),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -941,14 +1270,14 @@ class _FilterChip extends StatelessWidget {
               label,
               style: TextStyle(
                 color: selected ? Colors.white : AppColors.biruTua,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(width: 4),
             Icon(
               Icons.keyboard_arrow_down,
-              size: 16,
+              size: 18,
               color: selected ? Colors.white : AppColors.biruTua,
             ),
           ],
@@ -965,7 +1294,10 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+      decoration: _card(),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -979,6 +1311,7 @@ class _EmptyState extends StatelessWidget {
             query.isEmpty
                 ? 'Belum ada tugas'
                 : 'Tugas "$query" tidak ditemukan',
+            textAlign: TextAlign.center,
             style: const TextStyle(color: AppColors.abuTeks, fontSize: 13),
           ),
         ],

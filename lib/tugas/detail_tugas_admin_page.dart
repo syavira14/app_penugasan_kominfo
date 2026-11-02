@@ -13,7 +13,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../pages/admin/admin_navbar.dart';
+import '../pages/admin/admin_navbar.dart' show withAdminReadableText;
+import '../pages/admin/admin_sidebar.dart';
+import '../widgets/admin_header.dart';
 import 'location_picker_page.dart';
 import 'tugas_staff_data.dart';
 
@@ -26,10 +28,11 @@ class DetailTugasAdminPage extends StatefulWidget {
 }
 
 class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
-  static const Color biruTua = Color(0xFF0011CC);
-  static const Color biruSedang = Color(0xFF0066FF);
-  static const Color cyan = Color(0xFF00CCFF);
-  static const Color latarAbu = Color(0xFFF4F6FB);
+  static const Color biruTua = Color(0xFF1A1464);
+  static const Color biruSedang = Color(0xFF1D5FA0);
+  static const Color cyan = Color(0xFF4FA6DE);
+  static const Color latarAbu = Color(0xFFF4F7FB);
+  static const int _sidebarIndex = 2; // posisi menu Kelola Tugas di sidebar
   static const Color abuBorder = Color(0xFFE1E5F0);
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -798,7 +801,9 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           'file_revisi_path': path,
           'file_revisi_provider': path.isEmpty ? '' : 'supabase',
           'file_revisi_nama': name,
-          'file_revisi_uploaded_by': path.isEmpty ? '': FirebaseAuth.instance.currentUser!.uid,
+          'file_revisi_uploaded_by': path.isEmpty
+              ? ''
+              : FirebaseAuth.instance.currentUser!.uid,
           'tanggal_revisi': FieldValue.serverTimestamp(),
         },
       );
@@ -1022,478 +1027,551 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     }
   }
 
+  // ───────────────────────────── Tampilan ─────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    final bool wide = MediaQuery.of(context).size.width >= 900;
+    final String title = widget.modeLihat
+        ? 'Detail Tugas'
+        : widget.tugasId == null
+        ? 'Tambah Tugas'
+        : 'Edit Tugas';
+
     return withAdminReadableText(
       context,
-
       Scaffold(
         backgroundColor: latarAbu,
-
-        appBar: AppBar(
-          backgroundColor: biruTua,
-
-          elevation: 0,
-
-          title: Text(
-            widget.modeLihat
-                ? 'Detail Tugas'
-                : widget.tugasId == null
-                ? 'Tambah Tugas'
-                : 'Edit Tugas',
-
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
+        drawer: wide
+            ? null
+            : const AdminSidebar(currentIndex: _sidebarIndex, isDrawer: true),
+        body: Row(
+          children: [
+            if (wide) const AdminSidebar(currentIndex: _sidebarIndex),
+            Expanded(
+              child: Column(
+                children: [
+                  AdminHeader(title: title, showSidebar: wide),
+                  Expanded(
+                    child: _loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : Form(key: _formKey, child: _formBody(wide)),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
+      ),
+    );
+  }
 
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : Form(
-                key: _formKey,
+  Widget _formBody(bool wide) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final bool twoCol = c.maxWidth >= 900;
 
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-
+        return SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: EdgeInsets.all(wide ? 24 : 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextButton.icon(
+                onPressed: () => Navigator.maybePop(context),
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                label: const Text(
+                  'Kembali ke Kelola Tugas',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                style: TextButton.styleFrom(foregroundColor: biruSedang),
+              ),
+              const SizedBox(height: 8),
+              if (twoCol)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const _LabelForm(label: 'Judul Tugas'),
-
-                    TextFormField(
-                      controller: _judulController,
-
-                      enabled: !widget.modeLihat,
-
-                      decoration: _dekorasi(
-                        hint: 'Contoh: Pemeliharaan Server Data Center',
-                      ),
-
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Judul tugas wajib diisi';
-                        }
-
-                        return null;
-                      },
-                    ),
-
-                    const SizedBox(height: 18),
-
-                    const _LabelForm(label: 'Deskripsi Tugas'),
-
-                    TextFormField(
-                      controller: _deskripsiController,
-
-                      enabled: !widget.modeLihat,
-
-                      maxLines: 4,
-
-                      decoration: _dekorasi(
-                        hint:
-                            'Jelaskan rincian pekerjaan yang perlu dilakukan...',
-                      ),
-
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Deskripsi tugas wajib diisi';
-                        }
-
-                        return null;
-                      },
-                    ),
-
-                    const SizedBox(height: 18),
-
-                    const _LabelForm(label: 'Tempat Tugas'),
-
-                    TextFormField(
-                      controller: _tempatController,
-
-                      enabled: !widget.modeLihat,
-
-                      decoration:
-                          _dekorasi(
-                            hint: 'Contoh: Kantor Dinas Kominfo Lt. 2',
-                          ).copyWith(
-                            suffixIcon: _sedangMengambilLokasi
-                                ? const Padding(
-                                    padding: EdgeInsets.all(12),
-
-                                    child: SizedBox(
-                                      width: 18,
-
-                                      height: 18,
-
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                  )
-                                : widget.modeLihat
-                                ? null
-                                : IconButton(
-                                    onPressed: _ambilLokasiSaatIni,
-
-                                    icon: const Icon(Icons.my_location),
-                                  ),
-                          ),
-                    ),
-
-                    if (!widget.modeLihat) ...[
-                      const SizedBox(height: 8),
-
-                      Row(
+                    Expanded(flex: 3, child: _kartuInfo()),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      flex: 2,
+                      child: Column(
                         children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: _pilihLokasiDariPeta,
-
-                              icon: const Icon(Icons.map_outlined),
-
-                              label: const Text('Pilih dari Peta'),
-                            ),
-                          ),
+                          _kartuJadwal(),
+                          const SizedBox(height: 16),
+                          _kartuStaf(),
                         ],
                       ),
-                    ],
-
-                    if (_latitude != null && _longitude != null) ...[
-                      const SizedBox(height: 8),
-
-                      InkWell(
-                        onTap: _bukaMaps,
-
-                        child: Text(
-                          'Lokasi: ${_latitude!.toStringAsFixed(6)}, '
-                          '${_longitude!.toStringAsFixed(6)} '
-                          '(Buka Maps)',
-
-                          style: const TextStyle(
-                            color: biruSedang,
-
-                            fontSize: 12,
-
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-
-                    const SizedBox(height: 18),
-
-                    const _LabelForm(label: 'Jadwal Mulai Tugas'),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _TimeBox(
-                            label: _formatDate(_tanggalMulai),
-
-                            icon: Icons.calendar_today,
-
-                            onTap: widget.modeLihat ? null : _pilihTanggalMulai,
-                          ),
-                        ),
-
-                        const SizedBox(width: 10),
-
-                        Expanded(
-                          child: _TimeBox(
-                            label: _formatTime(_jamMulai),
-
-                            icon: Icons.access_time,
-
-                            onTap: widget.modeLihat ? null : _pilihJamMulai,
-                          ),
-                        ),
-                      ],
                     ),
-
-                    const SizedBox(height: 18),
-
-                    const _LabelForm(label: 'Jadwal Selesai Tugas'),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _TimeBox(
-                            label: _formatDate(_tanggalSelesai),
-
-                            icon: Icons.calendar_today,
-
-                            onTap: widget.modeLihat
-                                ? null
-                                : _pilihTanggalSelesai,
-                          ),
-                        ),
-
-                        const SizedBox(width: 10),
-
-                        Expanded(
-                          child: _TimeBox(
-                            label: _formatTime(_jamSelesai),
-
-                            icon: Icons.access_time,
-
-                            onTap: widget.modeLihat ? null : _pilihJamSelesai,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 18),
-
-                    const _LabelForm(label: 'Prioritas Tugas'),
-
-                    DropdownButtonFormField<String>(
-                      value: _prioritas,
-
-                      decoration: _dekorasi(hint: 'Pilih prioritas'),
-
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'rendah',
-
-                          child: Text('Rendah'),
-                        ),
-
-                        DropdownMenuItem(
-                          value: 'sedang',
-
-                          child: Text('Sedang'),
-                        ),
-
-                        DropdownMenuItem(
-                          value: 'tinggi',
-
-                          child: Text('Tinggi'),
-                        ),
-                      ],
-
-                      onChanged: widget.modeLihat
-                          ? null
-                          : (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _prioritas = value;
-                                });
-                              }
-                            },
-                    ),
-
-                    const SizedBox(height: 18),
-
-                    const _LabelForm(label: 'Staf yang Bertugas'),
-
-                    if (_stafDipilih.isNotEmpty)
-                      Wrap(
-                        spacing: 8,
-
-                        runSpacing: 8,
-
-                        children: _stafDipilih.map((uid) {
-                          return Chip(
-                            label: Text(_staffName(uid)),
-
-                            deleteIcon: widget.modeLihat
-                                ? null
-                                : const Icon(Icons.close),
-
-                            onDeleted: widget.modeLihat
-                                ? null
-                                : () {
-                                    setState(() {
-                                      _stafDipilih.remove(uid);
-                                    });
-                                  },
-                          );
-                        }).toList(),
-                      ),
-
-                    if (!widget.modeLihat) ...[
-                      const SizedBox(height: 10),
-
-                      TextField(
-                        controller: _staffSearchController,
-
-                        onChanged: (_) => setState(() {}),
-
-                        decoration: _dekorasi(
-                          hint: 'Cari nama staf...',
-                        ).copyWith(prefixIcon: const Icon(Icons.search)),
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      ..._daftarStaff
-                          .where((staff) {
-                            return !_stafDipilih.contains(staff['id']) &&
-                                matchesStaffSearch(
-                                  staff,
-
-                                  _staffSearchController.text,
-                                );
-                          })
-                          .map((staff) {
-                            return ListTile(
-                              dense: true,
-
-                              leading: const CircleAvatar(
-                                child: Icon(Icons.person),
-                              ),
-
-                              title: Text((staff['nama'] ?? '-').toString()),
-
-                              subtitle: Text(
-                                (staff['jabatan'] ?? '').toString(),
-                              ),
-
-                              trailing: const Icon(
-                                Icons.add_circle_outline,
-
-                                color: biruSedang,
-                              ),
-
-                              onTap: () {
-                                setState(() {
-                                  _stafDipilih.add(staff['id'].toString());
-
-                                  _staffSearchController.clear();
-                                });
-                              },
-                            );
-                          }),
-                    ],
-
-                    if (widget.modeLihat) ...[
-                      const SizedBox(height: 20),
-
-                      const _LabelForm(label: 'Status Penugasan'),
-
-                      ..._penugasan.map((assignment) {
-                        final data = assignment.data();
-
-                        final staffId = (data['staff_id'] ?? '').toString();
-
-                        final status = (data['status'] ?? 'pending').toString();
-
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 10),
-
-                          padding: const EdgeInsets.all(12),
-
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-
-                            borderRadius: BorderRadius.circular(12),
-
-                            border: Border.all(color: abuBorder),
-                          ),
-
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      _staffName(staffId),
-
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-
-                                  _Badge(
-                                    text: status.toUpperCase(),
-
-                                    color: _statusColor(status),
-                                  ),
-                                ],
-                              ),
-
-                              ..._hasilPenugasan(assignment.id, data),
-                            ],
-                          ),
-                        );
-                      }),
-                    ],
-
-                    if (!widget.modeLihat) ...[
-                      const SizedBox(height: 24),
-
-                      SizedBox(
-                        width: double.infinity,
-
-                        height: 50,
-
-                        child: ElevatedButton(
-                          onPressed: _saving ? null : _simpanTugas,
-
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: biruTua,
-
-                            foregroundColor: Colors.white,
-
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-
-                          child: _saving
-                              ? const SizedBox(
-                                  width: 20,
-
-                                  height: 20,
-
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : Text(
-                                  widget.tugasId == null
-                                      ? 'SIMPAN TUGAS'
-                                      : 'SIMPAN PERUBAHAN',
-
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ],
+                  ],
+                )
+              else
+                Column(
+                  children: [
+                    _kartuInfo(),
+                    const SizedBox(height: 16),
+                    _kartuJadwal(),
+                    const SizedBox(height: 16),
+                    _kartuStaf(),
                   ],
                 ),
-              ),
+              if (widget.modeLihat) ...[
+                const SizedBox(height: 16),
+                _kartuStatusPenugasan(),
+              ],
+              if (!widget.modeLihat) ...[
+                const SizedBox(height: 20),
+                Align(
+                  alignment: wide ? Alignment.centerRight : Alignment.center,
+                  child: SizedBox(
+                    width: wide ? 280 : double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: _saving ? null : _simpanTugas,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: biruTua,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: _saving
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              widget.tugasId == null
+                                  ? 'SIMPAN TUGAS'
+                                  : 'SIMPAN PERUBAHAN',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Kartu putih berjudul, dipakai untuk mengelompokkan isian.
+  Widget _kartu({
+    required String judul,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: biruTua.withOpacity(.05),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: biruSedang, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  judul,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: biruTua,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 24),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _kartuInfo() {
+    return _kartu(
+      judul: 'Informasi Tugas',
+      icon: Icons.assignment_rounded,
+      children: [
+        const _LabelForm(label: 'Judul Tugas'),
+        TextFormField(
+          controller: _judulController,
+          enabled: !widget.modeLihat,
+          decoration: _dekorasi(
+            hint: 'Contoh: Pemeliharaan Server Data Center',
+          ),
+          validator: (value) {
+            if (value == null || value.trim().isEmpty) {
+              return 'Judul tugas wajib diisi';
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: 18),
+
+        const _LabelForm(label: 'Deskripsi Tugas'),
+        TextFormField(
+          controller: _deskripsiController,
+          enabled: !widget.modeLihat,
+          maxLines: 5,
+          decoration: _dekorasi(
+            hint: 'Jelaskan rincian pekerjaan yang perlu dilakukan...',
+          ),
+          validator: (value) {
+            if (value == null || value.trim().isEmpty) {
+              return 'Deskripsi tugas wajib diisi';
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: 18),
+
+        const _LabelForm(label: 'Tempat Tugas'),
+        TextFormField(
+          controller: _tempatController,
+          enabled: !widget.modeLihat,
+          decoration: _dekorasi(hint: 'Contoh: Kantor Dinas Kominfo Lt. 2')
+              .copyWith(
+                suffixIcon: _sedangMengambilLokasi
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : widget.modeLihat
+                    ? null
+                    : IconButton(
+                        tooltip: 'Gunakan lokasi saat ini',
+                        onPressed: _ambilLokasiSaatIni,
+                        icon: const Icon(Icons.my_location),
+                      ),
+              ),
+        ),
+        if (!widget.modeLihat) ...[
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _pilihLokasiDariPeta,
+              icon: const Icon(Icons.map_outlined),
+              label: const Text('Pilih dari Peta'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: biruSedang,
+                side: const BorderSide(color: biruSedang),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (_latitude != null && _longitude != null) ...[
+          const SizedBox(height: 10),
+          InkWell(
+            onTap: _bukaMaps,
+            child: Row(
+              children: [
+                const Icon(Icons.location_on, size: 16, color: biruSedang),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${_latitude!.toStringAsFixed(6)}, '
+                    '${_longitude!.toStringAsFixed(6)} (Buka Maps)',
+                    style: const TextStyle(
+                      color: biruSedang,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _kartuJadwal() {
+    return _kartu(
+      judul: 'Jadwal & Prioritas',
+      icon: Icons.calendar_month_rounded,
+      children: [
+        const _LabelForm(label: 'Jadwal Mulai Tugas'),
+        Row(
+          children: [
+            Expanded(
+              child: _TimeBox(
+                label: _formatDate(_tanggalMulai),
+                icon: Icons.calendar_today,
+                onTap: widget.modeLihat ? null : _pilihTanggalMulai,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _TimeBox(
+                label: _formatTime(_jamMulai),
+                icon: Icons.access_time,
+                onTap: widget.modeLihat ? null : _pilihJamMulai,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+
+        const _LabelForm(label: 'Jadwal Selesai Tugas'),
+        Row(
+          children: [
+            Expanded(
+              child: _TimeBox(
+                label: _formatDate(_tanggalSelesai),
+                icon: Icons.calendar_today,
+                onTap: widget.modeLihat ? null : _pilihTanggalSelesai,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _TimeBox(
+                label: _formatTime(_jamSelesai),
+                icon: Icons.access_time,
+                onTap: widget.modeLihat ? null : _pilihJamSelesai,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+
+        const _LabelForm(label: 'Prioritas Tugas'),
+        DropdownButtonFormField<String>(
+          value: _prioritas,
+          decoration: _dekorasi(hint: 'Pilih prioritas'),
+          items: const [
+            DropdownMenuItem(value: 'rendah', child: Text('Rendah')),
+            DropdownMenuItem(value: 'sedang', child: Text('Sedang')),
+            DropdownMenuItem(value: 'tinggi', child: Text('Tinggi')),
+          ],
+          onChanged: widget.modeLihat
+              ? null
+              : (value) {
+                  if (value != null) {
+                    setState(() {
+                      _prioritas = value;
+                    });
+                  }
+                },
+        ),
+      ],
+    );
+  }
+
+  Widget _kartuStaf() {
+    final tersedia = _daftarStaff.where((staff) {
+      return !_stafDipilih.contains(staff['id']) &&
+          matchesStaffSearch(staff, _staffSearchController.text);
+    }).toList();
+
+    return _kartu(
+      judul: 'Staf yang Bertugas',
+      icon: Icons.groups_rounded,
+      children: [
+        if (_stafDipilih.isEmpty)
+          Text(
+            'Belum ada staf dipilih.',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _stafDipilih.map((uid) {
+              return Chip(
+                backgroundColor: const Color(0xFFEAF3FC),
+                side: BorderSide.none,
+                label: Text(
+                  _staffName(uid),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: biruTua,
+                  ),
+                ),
+                deleteIcon: widget.modeLihat
+                    ? null
+                    : const Icon(Icons.close, size: 16),
+                onDeleted: widget.modeLihat
+                    ? null
+                    : () {
+                        setState(() {
+                          _stafDipilih.remove(uid);
+                        });
+                      },
+              );
+            }).toList(),
+          ),
+        if (!widget.modeLihat) ...[
+          const SizedBox(height: 14),
+          TextField(
+            controller: _staffSearchController,
+            onChanged: (_) => setState(() {}),
+            decoration: _dekorasi(
+              hint: 'Cari nama staf...',
+            ).copyWith(prefixIcon: const Icon(Icons.search)),
+          ),
+          const SizedBox(height: 8),
+          if (tersedia.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'Tidak ada staf lain yang cocok.',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+              ),
+            )
+          else
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 280),
+              child: ListView(
+                shrinkWrap: true,
+                children: tersedia.map((staff) {
+                  return ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: const CircleAvatar(
+                      backgroundColor: Color(0xFFE2EFFB),
+                      child: Icon(Icons.person, color: biruSedang),
+                    ),
+                    title: Text(
+                      (staff['nama'] ?? '-').toString(),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                    subtitle: Text((staff['jabatan'] ?? '').toString()),
+                    trailing: const Icon(
+                      Icons.add_circle_outline,
+                      color: biruSedang,
+                    ),
+                    onTap: () {
+                      setState(() {
+                        _stafDipilih.add(staff['id'].toString());
+                        _staffSearchController.clear();
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _kartuStatusPenugasan() {
+    return _kartu(
+      judul: 'Status Penugasan',
+      icon: Icons.fact_check_rounded,
+      children: [
+        if (_penugasan.isEmpty)
+          Text(
+            'Belum ada penugasan.',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5),
+          )
+        else
+          ..._penugasan.map((assignment) {
+            final data = assignment.data();
+            final staffId = (data['staff_id'] ?? '').toString();
+            final status = (data['status'] ?? 'pending').toString();
+
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F9FC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: abuBorder),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const CircleAvatar(
+                        radius: 14,
+                        backgroundColor: Color(0xFFE2EFFB),
+                        child: Icon(Icons.person, size: 16, color: biruSedang),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _staffName(staffId),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: biruTua,
+                          ),
+                        ),
+                      ),
+                      _Badge(
+                        text: status.toUpperCase(),
+                        color: _statusColor(status),
+                      ),
+                    ],
+                  ),
+                  ..._hasilPenugasan(assignment.id, data),
+                ],
+              ),
+            );
+          }),
+      ],
     );
   }
 
   InputDecoration _dekorasi({required String hint}) {
     return InputDecoration(
       hintText: hint,
-
+      hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13),
       filled: true,
-
-      fillColor: Colors.white,
-
+      fillColor: const Color(0xFFF7F9FC),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-
         borderSide: BorderSide.none,
       ),
-
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-
         borderSide: const BorderSide(color: abuBorder),
       ),
-
+      disabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: abuBorder),
+      ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-
         borderSide: const BorderSide(color: biruSedang, width: 1.5),
       ),
     );
@@ -1551,7 +1629,7 @@ class _TimeBox extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
 
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: const Color(0xFFF7F9FC),
 
           borderRadius: BorderRadius.circular(12),
 
@@ -1560,7 +1638,7 @@ class _TimeBox extends StatelessWidget {
 
         child: Row(
           children: [
-            Icon(icon, size: 18, color: const Color(0xFF0066FF)),
+            Icon(icon, size: 18, color: const Color(0xFF1D5FA0)),
 
             const SizedBox(width: 8),
 

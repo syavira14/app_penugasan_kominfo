@@ -11,9 +11,9 @@ import '../pages/admin/riwayat_tugas_staff.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../pages/admin/admin_navbar.dart' show withAdminReadableText;
 import '../pages/admin/admin_sidebar.dart';
 import '../widgets/admin_header.dart';
 import 'location_picker_page.dart';
@@ -28,10 +28,10 @@ class DetailTugasAdminPage extends StatefulWidget {
 }
 
 class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
-  static const Color biruTua = Color(0xFF1A1464);
-  static const Color biruSedang = Color(0xFF1D5FA0);
-  static const Color cyan = Color(0xFF4FA6DE);
-  static const Color latarAbu = Color(0xFFF4F7FB);
+  static const Color biruTua = AppPalette.navy;
+  static const Color biruSedang = AppPalette.blue;
+  static const Color cyan = AppPalette.sky;
+  static const Color latarAbu = AppPalette.background;
   static const int _sidebarIndex = 2; // posisi menu Kelola Tugas di sidebar
   static const Color abuBorder = Color(0xFFE1E5F0);
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -1011,16 +1011,16 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   Color _statusColor(String status) {
     switch (status) {
       case 'disetujui':
-        return Colors.green;
+        return AppTaskStatus.color('disetujui');
 
       case 'dikumpulkan':
-        return cyan;
+        return AppTaskStatus.color('dikumpulkan');
 
       case 'berlangsung':
         return biruSedang;
 
       case 'revisi':
-        return Colors.orange;
+        return AppTaskStatus.color('berlangsung');
 
       default:
         return Colors.grey;
@@ -1038,30 +1038,27 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         ? 'Tambah Tugas'
         : 'Edit Tugas';
 
-    return withAdminReadableText(
-      context,
-      Scaffold(
-        backgroundColor: latarAbu,
-        drawer: wide
-            ? null
-            : const AdminSidebar(currentIndex: _sidebarIndex, isDrawer: true),
-        body: Row(
-          children: [
-            if (wide) const AdminSidebar(currentIndex: _sidebarIndex),
-            Expanded(
-              child: Column(
-                children: [
-                  AdminHeader(title: title, showSidebar: wide),
-                  Expanded(
-                    child: _loading
-                        ? const Center(child: CircularProgressIndicator())
-                        : Form(key: _formKey, child: _formBody(wide)),
-                  ),
-                ],
-              ),
+    return Scaffold(
+      backgroundColor: latarAbu,
+      drawer: wide
+          ? null
+          : const AdminSidebar(currentIndex: _sidebarIndex, isDrawer: true),
+      body: Row(
+        children: [
+          if (wide) const AdminSidebar(currentIndex: _sidebarIndex),
+          Expanded(
+            child: Column(
+              children: [
+                AdminHeader(title: title, showSidebar: wide),
+                Expanded(
+                  child: _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : Form(key: _formKey, child: _formBody(wide)),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1129,7 +1126,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                     child: ElevatedButton(
                       onPressed: _saving ? null : _simpanTugas,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: biruTua,
+                        backgroundColor: AppPalette.blue,
                         foregroundColor: Colors.white,
                         elevation: 0,
                         shape: RoundedRectangleBorder(
@@ -1198,7 +1195,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     color: biruTua,
-                    fontSize: 15,
+                    fontSize: AppTypography.body,
                   ),
                 ),
               ),
@@ -1305,7 +1302,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                     '${_longitude!.toStringAsFixed(6)} (Buka Maps)',
                     style: const TextStyle(
                       color: biruSedang,
-                      fontSize: 12,
+                      fontSize: AppTypography.small,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -1403,7 +1400,10 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         if (_stafDipilih.isEmpty)
           Text(
             'Belum ada staf dipilih.',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5),
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: AppTypography.small,
+            ),
           )
         else
           Wrap(
@@ -1416,7 +1416,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                 label: Text(
                   _staffName(uid),
                   style: const TextStyle(
-                    fontSize: 12.5,
+                    fontSize: AppTypography.small,
                     fontWeight: FontWeight.w600,
                     color: biruTua,
                   ),
@@ -1449,7 +1449,10 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
                 'Tidak ada staf lain yang cocok.',
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontSize: AppTypography.small,
+                ),
               ),
             )
           else
@@ -1469,7 +1472,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                       (staff['nama'] ?? '-').toString(),
                       style: const TextStyle(
                         fontWeight: FontWeight.w600,
-                        fontSize: 13,
+                        fontSize: AppTypography.body,
                       ),
                     ),
                     subtitle: Text((staff['jabatan'] ?? '').toString()),
@@ -1500,7 +1503,10 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         if (_penugasan.isEmpty)
           Text(
             'Belum ada penugasan.',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5),
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: AppTypography.small,
+            ),
           )
         else
           ..._penugasan.map((assignment) {
@@ -1555,7 +1561,10 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   InputDecoration _dekorasi({required String hint}) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+      hintStyle: TextStyle(
+        color: Colors.grey.shade500,
+        fontSize: AppTypography.body,
+      ),
       filled: true,
       fillColor: const Color(0xFFF7F9FC),
       border: OutlineInputBorder(
@@ -1596,7 +1605,7 @@ class _LabelForm extends StatelessWidget {
 
           color: Color(0xFF303846),
 
-          fontSize: 13,
+          fontSize: AppTypography.body,
         ),
       ),
     );
@@ -1638,7 +1647,7 @@ class _TimeBox extends StatelessWidget {
 
         child: Row(
           children: [
-            Icon(icon, size: 18, color: const Color(0xFF1D5FA0)),
+            Icon(icon, size: 18, color: AppPalette.blue),
 
             const SizedBox(width: 8),
 
@@ -1648,7 +1657,7 @@ class _TimeBox extends StatelessWidget {
 
                 overflow: TextOverflow.ellipsis,
 
-                style: const TextStyle(fontSize: 12.5),
+                style: const TextStyle(fontSize: AppTypography.small),
               ),
             ),
           ],
@@ -1682,7 +1691,7 @@ class _Badge extends StatelessWidget {
         style: TextStyle(
           color: color,
 
-          fontSize: 10,
+          fontSize: AppTypography.caption,
 
           fontWeight: FontWeight.bold,
         ),

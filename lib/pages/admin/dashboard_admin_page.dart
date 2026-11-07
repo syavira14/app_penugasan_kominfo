@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../../theme/app_theme.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 
@@ -22,13 +23,13 @@ class DashboardAdminPage extends StatefulWidget {
 
 class _DashboardAdminPageState extends State<DashboardAdminPage> {
   // Palet warna
-  static const Color biruTua = Color(0xFF1A1464);
-  static const Color biruMid = Color(0xFF1D5FA0);
-  static const Color biruMuda = Color(0xFF4FA6DE);
+  static const Color biruTua = AppPalette.navy;
+  static const Color biruMid = AppPalette.blue;
+  static const Color biruMuda = AppPalette.sky;
   static const Color accentGold = Color(0xFFFFC107);
   static const Color hijau = Color(0xFF43D18B);
   static const Color merah = Color(0xFFFF5252);
-  static const Color bgLight = Color(0xFFF7F9FB);
+  static const Color bgLight = AppPalette.background;
 
   // Label 12 Bulan (Singkat untuk grafik)
   static const List<String> namaBulan = [
@@ -54,6 +55,30 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
 
   // State Filter Tahun (Default tahun saat ini)
   int _selectedYear = DateTime.now().year;
+
+  // State Filter Grafik: 'semua' | 'berlangsung' | 'terkendala'
+  String _filterGrafik = 'semua';
+
+  static const Map<String, String> _labelFilter = {
+    'semua': 'Semua Terkirim',
+    'berlangsung': 'Berlangsung',
+    'terkendala': 'Terkendala',
+  };
+
+  // Apakah status tugas masuk ke filter grafik yang sedang dipilih.
+  // 'berlangsung' memakai kelompok yang sama dengan kartu "Dikerjakan".
+  bool _cocokFilter(String status) {
+    switch (_filterGrafik) {
+      case 'berlangsung':
+        return status == 'berlangsung' ||
+            status == 'dikumpulkan' ||
+            status == 'revisi';
+      case 'terkendala':
+        return status == 'terkendala';
+      default:
+        return true;
+    }
+  }
 
   @override
   void initState() {
@@ -137,7 +162,9 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
               docDate = DateTime.tryParse(rawDate);
             }
 
-            if (docDate != null && docDate.year == _selectedYear) {
+            if (docDate != null &&
+                docDate.year == _selectedYear &&
+                _cocokFilter(status)) {
               if (docDate.month >= 1 && docDate.month <= 12) {
                 tugasBulanan[docDate.month - 1]++;
               }
@@ -187,7 +214,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                           Text(
                             'Menu Utama',
                             style: TextStyle(
-                              fontSize: 17 * scale,
+                              fontSize: AppTypography.section * scale,
                               fontWeight: FontWeight.bold,
                               color: biruTua,
                             ),
@@ -301,7 +328,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                   'Dashboard Admin',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 22 * scale,
+                    fontSize: AppTypography.heading * scale,
                     fontWeight: FontWeight.bold,
                   ),
                   maxLines: 1,
@@ -312,7 +339,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                   _dateText,
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.85),
-                    fontSize: 12.5 * scale,
+                    fontSize: AppTypography.small * scale,
                   ),
                 ),
                 SizedBox(height: 14 * scale),
@@ -320,7 +347,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                   'Pantau tugas & staff',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 15 * scale,
+                    fontSize: AppTypography.body * scale,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -329,7 +356,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                   'Ringkasan kinerja tim hari ini',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.85),
-                    fontSize: 12 * scale,
+                    fontSize: AppTypography.small * scale,
                     height: 1.3,
                   ),
                 ),
@@ -455,7 +482,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                 value,
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 24 * scale,
+                  fontSize: AppTypography.largeHeading * scale,
                   fontWeight: FontWeight.bold,
                   height: 1.1,
                 ),
@@ -483,7 +510,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                       label,
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.9),
-                        fontSize: 11 * scale,
+                        fontSize: AppTypography.caption * scale,
                       ),
                     ),
                   ],
@@ -544,7 +571,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                   Text(
                     'Statistik Tugas',
                     style: TextStyle(
-                      fontSize: 15 * scale,
+                      fontSize: AppTypography.body * scale,
                       fontWeight: FontWeight.bold,
                       color: biruTua,
                     ),
@@ -568,7 +595,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                     ),
                     style: TextStyle(
                       color: biruTua,
-                      fontSize: 12.5 * scale,
+                      fontSize: AppTypography.small * scale,
                       fontWeight: FontWeight.bold,
                     ),
                     items: listTahun.map((y) {
@@ -584,7 +611,18 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
               ),
             ],
           ),
-          SizedBox(height: 22 * scale),
+          SizedBox(height: 14 * scale),
+          _buildFilterChips(scale),
+          SizedBox(height: 10 * scale),
+          Text(
+            '${dataBulanan.fold<int>(0, (a, b) => a + b)} tugas '
+            '(${_labelFilter[_filterGrafik]!.toLowerCase()}) di $_selectedYear',
+            style: TextStyle(
+              fontSize: AppTypography.small * scale,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          SizedBox(height: 16 * scale),
           SizedBox(
             height: 210 * scale,
             child: _GrafikBulanan(
@@ -595,6 +633,37 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFilterChips(double scale) {
+    final Map<String, Color> warna = {
+      'semua': biruMid,
+      'berlangsung': biruMuda,
+      'terkendala': merah,
+    };
+
+    return Wrap(
+      spacing: 8 * scale,
+      runSpacing: 6 * scale,
+      children: _labelFilter.entries.map((e) {
+        final bool aktif = _filterGrafik == e.key;
+        final Color c = warna[e.key]!;
+        return ChoiceChip(
+          label: Text(e.value),
+          selected: aktif,
+          showCheckmark: false,
+          selectedColor: c,
+          backgroundColor: const Color(0xFFF0F4F8),
+          side: BorderSide(color: aktif ? c : Colors.transparent),
+          labelStyle: TextStyle(
+            fontSize: AppTypography.small * scale,
+            fontWeight: FontWeight.w600,
+            color: aktif ? Colors.white : biruTua,
+          ),
+          onSelected: (_) => setState(() => _filterGrafik = e.key),
+        );
+      }).toList(),
     );
   }
 
@@ -735,7 +804,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                         child: Text(
                           badge,
                           style: TextStyle(
-                            fontSize: 10 * scale,
+                            fontSize: AppTypography.caption * scale,
                             fontWeight: FontWeight.bold,
                             color: iconColor,
                           ),
@@ -750,7 +819,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                       title,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 15 * scale,
+                        fontSize: AppTypography.body * scale,
                         color: biruTua,
                       ),
                       maxLines: 1,
@@ -761,7 +830,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                       subtitle,
                       style: TextStyle(
                         color: Colors.grey.shade600,
-                        fontSize: 12 * scale,
+                        fontSize: AppTypography.small * scale,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -810,8 +879,8 @@ class _GrafikBulanan extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const biruTua = Color(0xFF1A1464);
-    const biruMuda = Color(0xFF4FA6DE);
+    const biruTua = AppPalette.navy;
+    const biruMuda = AppPalette.sky;
 
     // Menghitung batas maksimum sumbu Y secara otomatis
     final int maxVal = data.isEmpty ? 10 : data.reduce((a, b) => a > b ? a : b);
@@ -835,7 +904,7 @@ class _GrafikBulanan extends StatelessWidget {
                       child: Text(
                         '$val',
                         style: TextStyle(
-                          fontSize: 9.5 * scale,
+                          fontSize: AppTypography.caption * scale,
                           color: Colors.grey.shade600,
                         ),
                       ),
@@ -891,10 +960,10 @@ class _GrafikBulanan extends StatelessWidget {
                                               colors: i.isEven
                                                   ? const [
                                                       biruMuda,
-                                                      Color(0xFF1D5FA0),
+                                                      AppPalette.blue,
                                                     ]
                                                   : const [
-                                                      Color(0xFF1D5FA0),
+                                                      AppPalette.blue,
                                                       biruTua,
                                                     ],
                                             ),
@@ -914,7 +983,8 @@ class _GrafikBulanan extends StatelessWidget {
                                             '${data[i]}',
                                             textAlign: TextAlign.center,
                                             style: TextStyle(
-                                              fontSize: 9 * scale,
+                                              fontSize:
+                                                  AppTypography.caption * scale,
                                               fontWeight: FontWeight.bold,
                                               color: biruTua,
                                             ),
@@ -948,7 +1018,7 @@ class _GrafikBulanan extends StatelessWidget {
                       b,
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 9.5 * scale,
+                        fontSize: AppTypography.caption * scale,
                         color: Colors.grey.shade700,
                       ),
                     ),

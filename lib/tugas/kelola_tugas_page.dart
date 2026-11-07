@@ -4,21 +4,22 @@ import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../pages/admin/admin_navbar.dart' show withAdminReadableText;
+import '../theme/app_theme.dart';
 import '../pages/admin/admin_sidebar.dart';
 import '../pages/admin/riwayat_tugas_staff.dart';
+import '../services/backfill_staff_ids.dart';
 import '../services/penugasan_workflow.dart';
 import '../widgets/admin_header.dart';
 import 'detail_tugas_admin_page.dart';
 
 class AppColors {
-  static const Color biruTua = Color(0xFF1A1464);
-  static const Color biruSedang = Color(0xFF1D5FA0);
-  static const Color cyan = Color(0xFF4FA6DE);
+  static const Color biruTua = AppPalette.navy;
+  static const Color biruSedang = AppPalette.blue;
+  static const Color cyan = AppPalette.sky;
   static const Color hijauSelesai = Color(0xFF2E8B57);
   static const Color putih = Colors.white;
   static const Color abuTeks = Color(0xFF5A6472);
-  static const Color latarAbu = Color(0xFFF4F7FB);
+  static const Color latarAbu = AppPalette.background;
   static const Color merahHapus = Color(0xFFE5484D);
   static const Color oranyeWarning = Color(0xFFFF9800);
 }
@@ -70,7 +71,7 @@ Widget _pill(String text, Color color, {IconData? icon}) => Container(
         text,
         style: TextStyle(
           color: color,
-          fontSize: 11,
+          fontSize: AppTypography.caption,
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -93,15 +94,15 @@ BoxDecoration _card([double r = 16]) => BoxDecoration(
 Color _statusColor(String status) {
   switch (status) {
     case 'disetujui':
-      return AppColors.hijauSelesai;
+      return AppTaskStatus.color('disetujui');
     case 'dikumpulkan':
-      return Colors.deepPurple.shade400;
+      return AppTaskStatus.color('dikumpulkan');
     case 'berlangsung':
-      return Colors.orange.shade800;
+      return AppTaskStatus.color('berlangsung');
     case 'terkendala':
-      return Colors.red.shade700;
+      return AppTaskStatus.color('terkendala');
     case 'revisi':
-      return Colors.deepOrange.shade600;
+      return AppTaskStatus.color('revisi');
     default:
       return Colors.blueGrey.shade500;
   }
@@ -177,6 +178,8 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
   @override
   void initState() {
     super.initState();
+    // Melengkapi staff_ids pada tugas lama agar staff boleh membacanya.
+    backfillStaffIds();
     _assignmentSubscription = _firestore
         .collection('penugasan')
         .snapshots()
@@ -392,61 +395,55 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
   Widget build(BuildContext context) {
     final bool wide = MediaQuery.of(context).size.width >= _sidebarBreakpoint;
 
-    return withAdminReadableText(
-      context,
-      Scaffold(
-        backgroundColor: AppColors.latarAbu,
-        drawer: wide
-            ? null
-            : const AdminSidebar(currentIndex: _sidebarIndex, isDrawer: true),
-        floatingActionButton: wide
-            ? null
-            : FloatingActionButton.extended(
-                onPressed: _bukaTambahTugas,
-                backgroundColor: AppColors.biruTua,
-                icon: const Icon(Icons.add_rounded, color: Colors.white),
-                label: const Text(
-                  'Tambah Tugas',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-        body: Row(
-          children: [
-            if (wide) const AdminSidebar(currentIndex: _sidebarIndex),
-            Expanded(
-              child: Column(
-                children: [
-                  AdminHeader(title: 'Kelola Tugas', showSidebar: wide),
-                  Expanded(
-                    child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                      stream: _tugasStream,
-                      builder: (context, snapshot) {
-                        if (snapshot.hasError) {
-                          return Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(20),
-                              child: Text(
-                                'Gagal memuat tugas:\n${snapshot.error}',
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          );
-                        }
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-                        return _content(snapshot.data?.docs ?? [], wide);
-                      },
-                    ),
-                  ),
-                ],
+    return Scaffold(
+      backgroundColor: AppColors.latarAbu,
+      drawer: wide
+          ? null
+          : const AdminSidebar(currentIndex: _sidebarIndex, isDrawer: true),
+      floatingActionButton: wide
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _bukaTambahTugas,
+              backgroundColor: AppPalette.blue,
+              icon: const Icon(Icons.add_rounded, color: Colors.white),
+              label: const Text(
+                'Tambah Tugas',
+                style: TextStyle(color: Colors.white),
               ),
             ),
-          ],
-        ),
+      body: Row(
+        children: [
+          if (wide) const AdminSidebar(currentIndex: _sidebarIndex),
+          Expanded(
+            child: Column(
+              children: [
+                AdminHeader(title: 'Kelola Tugas', showSidebar: wide),
+                Expanded(
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: _tugasStream,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Text(
+                              'Gagal memuat tugas:\n${snapshot.error}',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        );
+                      }
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      return _content(snapshot.data?.docs ?? [], wide);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -462,12 +459,12 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
 
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
-      padding: EdgeInsets.all(wide ? 24 : 16),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _summary(allDocs, compact: !wide),
-          SizedBox(height: wide ? 16 : 12),
+          _summary(allDocs),
+          const SizedBox(height: 12),
           _toolbar(wide),
           const SizedBox(height: 14),
           if (shown.isEmpty)
@@ -489,10 +486,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
 
   // ───────────────────────────── Ringkasan ─────────────────────────────
 
-  Widget _summary(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
-    required bool compact,
-  }) {
+  Widget _summary(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
     final aktif = docs.where((d) => _groupStatus(d.id) != 'disetujui').toList();
     final review = aktif
         .where((d) => _groupStatus(d.id) == 'dikumpulkan')
@@ -504,157 +498,152 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     final items = [
       [
         'Tugas Aktif',
-        '${aktif.length} Tugas',
+        aktif.length,
         Icons.assignment_rounded,
         AppColors.biruSedang,
         const Color(0xFFEAF3FC),
       ],
       [
         'Perlu Direview',
-        '$review Tugas',
+        review,
         Icons.rate_review_rounded,
         Colors.deepPurple.shade400,
         const Color(0xFFF1ECFA),
       ],
       [
         'Terkendala',
-        '$kendala Tugas',
+        kendala,
         Icons.report_problem_rounded,
         Colors.red.shade700,
         const Color(0xFFFDEDED),
       ],
     ];
 
-    return Row(
-      children: [
-        for (var i = 0; i < items.length; i++) ...[
-          if (i > 0) SizedBox(width: compact ? 8 : 12),
-          Expanded(
-            child: Container(
-              padding: EdgeInsets.all(compact ? 10 : 16),
-              decoration: BoxDecoration(
-                color: items[i][4] as Color,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: (items[i][3] as Color).withOpacity(.15),
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) const SizedBox(width: 10),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-              ),
-              child: compact
-                  ? Column(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        CircleAvatar(
-                          radius: 16,
-                          backgroundColor: (items[i][3] as Color).withOpacity(
-                            .15,
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: (items[i][3] as Color).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(10),
                           ),
                           child: Icon(
                             items[i][2] as IconData,
-                            size: 16,
-                            color: items[i][3] as Color,
+                            size: 18,
+                            color: (items[i][3] as Color),
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          items[i][0] as String,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: items[i][3] as Color,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          items[i][1] as String,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.biruTua,
-                          ),
-                        ),
-                      ],
-                    )
-                  : Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 24,
-                          backgroundColor: (items[i][3] as Color).withOpacity(
-                            .15,
-                          ),
-                          child: Icon(
-                            items[i][2] as IconData,
-                            color: items[i][3] as Color,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                items[i][0] as String,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: items[i][3] as Color,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '${items[i][1]}',
+                              style: TextStyle(
+                                fontSize: AppTypography.section,
+                                fontWeight: FontWeight.bold,
+                                color: (items[i][3] as Color),
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                items[i][1] as String,
-                                style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.biruTua,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    // Label boleh turun ke baris kedua, tidak dipotong.
+                    Text(
+                      items[i][0] as String,
+                      maxLines: 2,
+                      softWrap: true,
+                      style: TextStyle(
+                        fontSize: AppTypography.caption,
+                        height: 1.2,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
   // ───────────────────────────── Toolbar ─────────────────────────────
 
   Widget _toolbar(bool wide) {
-    final searchField = TextField(
-      controller: _searchController,
-      onChanged: (value) => setState(() {
-        _searchQuery = value;
-        _page = 0;
-      }),
-      style: const TextStyle(fontSize: 13.5),
-      decoration: InputDecoration(
-        hintText: 'Cari judul atau tempat tugas...',
-        hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13),
-        prefixIcon: const Icon(Icons.search),
-        suffixIcon: _searchQuery.isEmpty
-            ? null
-            : IconButton(
-                onPressed: () {
-                  _searchController.clear();
-                  setState(() {
-                    _searchQuery = '';
-                    _page = 0;
-                  });
-                },
-                icon: const Icon(Icons.close),
-              ),
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(30),
-          borderSide: BorderSide.none,
+    final searchField = Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: _searchController,
+        onChanged: (value) => setState(() {
+          _searchQuery = value;
+          _page = 0;
+        }),
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Cari judul atau tempat tugas...',
+          hintStyle: TextStyle(
+            color: Colors.grey.shade500,
+            fontSize: AppTypography.body,
+          ),
+          prefixIcon: const Icon(
+            Icons.search_rounded,
+            color: AppColors.biruSedang,
+          ),
+          suffixIcon: _searchQuery.isEmpty
+              ? null
+              : IconButton(
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() {
+                      _searchQuery = '';
+                      _page = 0;
+                    });
+                  },
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                ),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 14),
         ),
       ),
     );
@@ -709,16 +698,16 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
             icon: const Icon(Icons.add_rounded, size: 20),
             label: const Text('Tambah Tugas'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.biruTua,
+              backgroundColor: AppPalette.blue,
               foregroundColor: Colors.white,
               elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(30),
+                borderRadius: BorderRadius.circular(16),
               ),
               textStyle: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                fontSize: AppTypography.small,
               ),
             ),
           ),
@@ -744,7 +733,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
       child: Text(
         t,
         style: TextStyle(
-          fontSize: 11,
+          fontSize: AppTypography.caption,
           fontWeight: FontWeight.w700,
           color: Colors.grey.shade600,
         ),
@@ -810,7 +799,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 13.5,
+                        fontSize: AppTypography.body,
                         color: AppColors.biruTua,
                       ),
                     ),
@@ -830,7 +819,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                fontSize: 11.5,
+                                fontSize: AppTypography.caption,
                                 color: Colors.grey.shade600,
                               ),
                             ),
@@ -864,14 +853,14 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
               flex: 13,
               child: Text(
                 _fmtDate(_asDate(data['tanggal_mulai_tugas'])),
-                style: const TextStyle(fontSize: 12),
+                style: const TextStyle(fontSize: AppTypography.small),
               ),
             ),
             Expanded(
               flex: 13,
               child: Text(
                 _fmtDate(_asDate(data['tanggal_selesai_tugas'])),
-                style: const TextStyle(fontSize: 12),
+                style: const TextStyle(fontSize: AppTypography.small),
               ),
             ),
             Expanded(
@@ -879,7 +868,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
               child: Text(
                 '$jumlahStaf',
                 style: const TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTypography.small,
                   fontWeight: FontWeight.w600,
                   color: AppColors.biruTua,
                 ),
@@ -954,7 +943,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
           child: Text(
             '${pg + 1} / $pages',
             style: const TextStyle(
-              fontSize: 14,
+              fontSize: AppTypography.body,
               fontWeight: FontWeight.w500,
               color: AppColors.biruTua,
             ),
@@ -1016,8 +1005,8 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                     color: AppColors.biruTua,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
+                                    fontSize: AppTypography.body,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
                               ),
@@ -1232,7 +1221,10 @@ class _InfoRow extends StatelessWidget {
             text,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AppColors.abuTeks, fontSize: 11.5),
+            style: const TextStyle(
+              color: AppColors.abuTeks,
+              fontSize: AppTypography.caption,
+            ),
           ),
         ),
       ],
@@ -1257,8 +1249,8 @@ class _FilterChip extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(30),
       child: Container(
-        height: 40,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
           color: selected ? AppColors.biruSedang : Colors.white,
           borderRadius: BorderRadius.circular(30),
@@ -1270,7 +1262,7 @@ class _FilterChip extends StatelessWidget {
               label,
               style: TextStyle(
                 color: selected ? Colors.white : AppColors.biruTua,
-                fontSize: 12.5,
+                fontSize: AppTypography.small,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1312,7 +1304,10 @@ class _EmptyState extends StatelessWidget {
                 ? 'Belum ada tugas'
                 : 'Tugas "$query" tidak ditemukan',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.abuTeks, fontSize: 13),
+            style: const TextStyle(
+              color: AppColors.abuTeks,
+              fontSize: AppTypography.body,
+            ),
           ),
         ],
       ),

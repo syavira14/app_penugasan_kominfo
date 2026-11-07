@@ -1,9 +1,13 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import '../../theme/app_theme.dart';
 import 'package:image_picker/image_picker.dart';
-import 'admin_navbar.dart';
+import '/widgets/admin_header.dart';
+import 'admin_sidebar.dart';
 import 'status_staff.dart';
 
 class KelolaStaffPage extends StatefulWidget {
@@ -14,11 +18,23 @@ class KelolaStaffPage extends StatefulWidget {
 }
 
 class _KelolaStaffPageState extends State<KelolaStaffPage> {
+  static const Color _biruTua = AppPalette.navy;
+  static const Color _biru = AppPalette.blue;
+  static const Color _biruMuda = AppPalette.sky;
+  static const Color _bg = AppPalette.background;
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  // Stream dibuat sekali supaya tidak berkedip saat mengetik di kolom cari.
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _usersStream =
+      _firestore.collection('users').snapshots();
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _assignmentsStream =
+      _firestore.collection('penugasan').snapshots();
+
+  // Sama dengan halaman Status Staff: tugas aktif >= 5 berarti Sibuk.
+  static const int _maksTugasAktif = 5;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  String? _selectedStaffImageBase64;
-  bool _isSaving = false;
 
   @override
   void dispose() {
@@ -26,284 +42,682 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
     super.dispose();
   }
 
-  // ==== DIALOG / BOTTOM SHEET TAMBAH & EDIT STAF FIRESTORE ====
+  // ===== HELPER =====
+  // Nomor HP bisa tersimpan di beberapa nama field
+  // (admin: 'wa', profil staf: 'no_hp', dll). Ambil yang pertama terisi.
+  String _phoneOf(Map<String, dynamic>? data) {
+    if (data == null) return '';
+    for (final key in [
+      'wa',
+      'no_hp',
+      'noHp',
+      'nomor_hp',
+      'no_telp',
+      'telepon',
+    ]) {
+      final v = (data[key] ?? '').toString().trim();
+      if (v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
+  // Tugas dianggap aktif jika belum selesai/disetujui dan bukan antrean
+  // (aturan yang sama dengan halaman Status Staff).
+  bool _isActiveStatus(dynamic value) {
+    final v = (value ?? 'pending').toString().toLowerCase();
+    return !const [
+      'disetujui',
+      'selesai',
+      'antrean',
+      'menunggu giliran',
+    ].contains(v);
+  }
+
+  // Hitung tugas aktif milik satu staf. Pencocokan lewat UID, nama, atau NIP,
+  // sama seperti halaman Status Staff.
+  int _countActive(
+    String uid,
+    Map<String, dynamic> staff,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
+  ) {
+    final name = _str(staff['nama']).toLowerCase();
+    final nip = _str(staff['nip']);
+    int n = 0;
+    for (final d in assignments) {
+      final a = d.data();
+      final aUid = _str(
+        a['staff_uid'] ?? a['staff_id'] ?? a['uid_staff'] ?? a['user_id'],
+      );
+      final aName = _str(a['staff_nama'] ?? a['nama_staff']).toLowerCase();
+      final aNip = _str(a['staff_nip'] ?? a['nip_staff']);
+      final cocok =
+          (aUid.isNotEmpty && aUid == uid) ||
+          (name.isNotEmpty && aName == name) ||
+          (nip.isNotEmpty && aNip == nip);
+      if (cocok && _isActiveStatus(a['status'])) n++;
+    }
+    return n;
+  }
+
+  // Ubah nilai apa pun dari Firestore menjadi String. Ini yang mencegah error
+  // "type 'int' is not a subtype of type 'String'" kalau ada field (mis. NIP)
+  // yang tersimpan sebagai angka.
+  String _str(dynamic v, [String fallback = '']) {
+    if (v == null) return fallback;
+    final t = v.toString().trim();
+    return t.isEmpty ? fallback : t;
+  }
+
+  ImageProvider? _decodeFoto(dynamic value) {
+    final base64 = _str(value);
+    if (base64.isEmpty) return null;
+    try {
+      return MemoryImage(base64Decode(base64));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      );
+  }
+
+  // ===== AUTH SEKUNDER =====
+  // Dipakai untuk membuat akun staf tanpa mengeluarkan (logout) admin.
+  Future<FirebaseAuth> _secondaryAuth() async {
+    FirebaseApp app;
+    try {
+      app = Firebase.app('staffCreator');
+    } catch (_) {
+      app = await Firebase.initializeApp(
+        name: 'staffCreator',
+        options: Firebase.app().options,
+      );
+    }
+    return FirebaseAuth.instanceFor(app: app);
+  }
+
+  // Ubah password akun staf lewat Cloud Function (butuh Admin SDK).
+  Future<void> _setStaffPassword(String uid, String password) async {
+    final callable = FirebaseFunctions.instance.httpsCallable(
+      'adminSetPassword',
+    );
+    await callable.call({'uid': uid, 'password': password});
+  }
+
+  // Ubah NIP (= email login NIP@simtas.internal) lewat Cloud Function.
+  // Mengembalikan email login yang baru.
+  Future<String> _setStaffNip(String uid, String nip) async {
+    final callable = FirebaseFunctions.instance.httpsCallable('adminSetNip');
+    final result = await callable.call({'uid': uid, 'nip': nip});
+    final data = result.data;
+    if (data is Map && data['email'] != null) return data['email'].toString();
+    return '$nip@simtas.internal';
+  }
+
+  String _errorMessage(Object e) {
+    if (e is FirebaseAuthException) {
+      switch (e.code) {
+        case 'email-already-in-use':
+          return 'NIP ini sudah punya akun login. Gunakan NIP lain atau hapus akunnya di Firebase Authentication.';
+        case 'weak-password':
+          return 'Password terlalu lemah, minimal 6 karakter.';
+        default:
+          return e.message ?? e.code;
+      }
+    }
+    if (e is FirebaseFunctionsException) {
+      if (e.code == 'not-found' || e.code == 'unimplemented') {
+        return 'Fungsi di server (adminSetPassword / adminSetNip) belum di-deploy. Lihat functions/index.js.';
+      }
+      return e.message ?? e.code;
+    }
+    if (e is FirebaseException) {
+      if (e.code == 'permission-denied') {
+        return 'Ditolak aturan Firestore. Pastikan akun yang login adalah admin dan firestore.rules sudah diperbarui.';
+      }
+      return e.message ?? e.code;
+    }
+    return e.toString();
+  }
+
+  // ===== POP-UP TAMBAH & EDIT STAF =====
   void _showStaffModal({Map<String, dynamic>? staffDoc}) {
     final isEdit = staffDoc != null;
     final String? docId = staffDoc?['id'];
 
-    final namaController = TextEditingController(text: staffDoc?['nama'] ?? '');
-    final nipController = TextEditingController(text: staffDoc?['nip'] ?? '');
-    final jabatanController = TextEditingController(
-      text: staffDoc?['jabatan'] ?? '',
-    );
-    final waController = TextEditingController(text: staffDoc?['wa'] ?? '');
-    _selectedStaffImageBase64 = staffDoc?['foto_base64'];
+    final String oldNip = _str(staffDoc?['nip']);
 
-    showModalBottomSheet(
+    final namaC = TextEditingController(text: _str(staffDoc?['nama']));
+    final nipC = TextEditingController(text: oldNip);
+    final jabatanC = TextEditingController(text: _str(staffDoc?['jabatan']));
+    final emailC = TextEditingController(text: _str(staffDoc?['email_kontak']));
+    final waC = TextEditingController(text: _phoneOf(staffDoc));
+    final passC = TextEditingController();
+
+    String? fotoBase64 = _str(staffDoc?['foto_base64']);
+    bool saving = false;
+    bool obscure = true;
+    String? errorText;
+
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-      ),
-      builder: (sheetContext) {
+      barrierDismissible: false,
+      builder: (dialogContext) {
         return StatefulBuilder(
           builder: (modalContext, setModalState) {
-            Future<void> pickImage({bool fromCamera = false}) async {
-              final picker = ImagePicker();
-              final XFile? image = await (fromCamera
-                  ? picker.pickImage(
-                      source: ImageSource.camera,
-                      imageQuality: 80,
-                    )
-                  : picker.pickImage(
-                      source: ImageSource.gallery,
-                      imageQuality: 80,
-                    ));
-
+            Future<void> pickImage(ImageSource source) async {
+              final image = await ImagePicker().pickImage(
+                source: source,
+                imageQuality: 70,
+                maxWidth: 512,
+                maxHeight: 512,
+              );
               if (image == null) return;
-
               final bytes = await image.readAsBytes();
-              setModalState(() {
-                _selectedStaffImageBase64 = base64Encode(bytes);
-              });
+              if (!modalContext.mounted) return;
+              setModalState(() => fotoBase64 = base64Encode(bytes));
             }
 
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(modalContext).viewInsets.bottom + 20,
-                top: 20,
-                left: 20,
-                right: 20,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            void showPhotoOptions() {
+              showDialog(
+                context: modalContext,
+                builder: (photoContext) => SimpleDialog(
+                  title: const Text('Foto staf'),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          isEdit ? 'Edit Data Staf' : 'Tambah Staf Baru',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF1B267B),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(modalContext),
-                          icon: const Icon(Icons.close),
-                        ),
-                      ],
+                    SimpleDialogOption(
+                      onPressed: () {
+                        Navigator.pop(photoContext);
+                        pickImage(ImageSource.gallery);
+                      },
+                      child: const Row(
+                        children: [
+                          Icon(Icons.photo_library_rounded, color: _biru),
+                          SizedBox(width: 12),
+                          Text('Pilih dari galeri'),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 15),
-
-                    // Avatar Foto Profil
-                    Center(
-                      child: InkWell(
-                        onTap: () => showModalBottomSheet(
-                          context: modalContext,
-                          shape: const RoundedRectangleBorder(
-                            borderRadius: BorderRadius.vertical(
-                              top: Radius.circular(20),
+                    SimpleDialogOption(
+                      onPressed: () {
+                        Navigator.pop(photoContext);
+                        pickImage(ImageSource.camera);
+                      },
+                      child: const Row(
+                        children: [
+                          Icon(Icons.camera_alt_rounded, color: _biru),
+                          SizedBox(width: 12),
+                          Text('Ambil foto'),
+                        ],
+                      ),
+                    ),
+                    if (fotoBase64 != null && fotoBase64!.isNotEmpty)
+                      SimpleDialogOption(
+                        onPressed: () {
+                          Navigator.pop(photoContext);
+                          setModalState(() => fotoBase64 = null);
+                        },
+                        child: const Row(
+                          children: [
+                            Icon(
+                              Icons.delete_outline_rounded,
+                              color: Colors.redAccent,
                             ),
-                          ),
-                          builder: (_) => SafeArea(
-                            child: Wrap(
+                            SizedBox(width: 12),
+                            Text('Hapus foto'),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }
+
+            Future<void> save() async {
+              final nama = namaC.text.trim();
+              final nip = nipC.text.trim();
+              final jabatan = jabatanC.text.trim();
+              final wa = waC.text.trim();
+              final emailKontak = emailC.text.trim();
+              final pass = passC.text;
+              final bool nipBerubah = isEdit && nip != oldNip;
+
+              if (nama.isEmpty || nip.isEmpty || jabatan.isEmpty) {
+                setModalState(
+                  () => errorText = 'Nama, NIP, dan jabatan harus diisi.',
+                );
+                return;
+              }
+              if ((!isEdit || nipBerubah) &&
+                  !RegExp(r'^[0-9]{6,30}$').hasMatch(nip)) {
+                setModalState(
+                  () => errorText = 'NIP harus angka, 6 sampai 30 digit.',
+                );
+                return;
+              }
+              if (wa.length > 30) {
+                setModalState(
+                  () => errorText = 'Nomor WhatsApp maksimal 30 karakter.',
+                );
+                return;
+              }
+              if (emailKontak.isNotEmpty &&
+                  !RegExp(
+                    r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                  ).hasMatch(emailKontak)) {
+                setModalState(() => errorText = 'Format email tidak valid.');
+                return;
+              }
+              if (!isEdit && pass.length < 6) {
+                setModalState(
+                  () => errorText = 'Password wajib diisi, minimal 6 karakter.',
+                );
+                return;
+              }
+              if (isEdit && pass.isNotEmpty && pass.length < 6) {
+                setModalState(
+                  () => errorText = 'Password baru minimal 6 karakter.',
+                );
+                return;
+              }
+
+              setModalState(() {
+                errorText = null;
+                saving = true;
+              });
+
+              try {
+                if (isEdit && docId != null) {
+                  // 1. Ubah password (jika diisi)
+                  if (pass.isNotEmpty) {
+                    await _setStaffPassword(docId, pass);
+                  }
+                  // 2. Ubah NIP (sekaligus akun login) jika berubah
+                  String? emailLoginBaru;
+                  if (nipBerubah) {
+                    emailLoginBaru = await _setStaffNip(docId, nip);
+                  }
+                  // 3. Simpan data profil
+                  await _firestore.collection('users').doc(docId).update({
+                    'nama': nama,
+                    'nip': nip,
+                    if (emailLoginBaru != null) 'email': emailLoginBaru,
+                    'email_kontak': emailKontak,
+                    'jabatan': jabatan,
+                    'no_hp': wa,
+                    'foto_base64': fotoBase64 ?? '',
+                    'updated_at': FieldValue.serverTimestamp(),
+                  });
+                } else {
+                  final email = "$nip@simtas.internal";
+                  final auth = await _secondaryAuth();
+                  UserCredential? cred;
+                  try {
+                    cred = await auth.createUserWithEmailAndPassword(
+                      email: email,
+                      password: pass,
+                    );
+                    final String newUid = cred.user!.uid;
+
+                    // Ditulis dengan sesi admin (bukan sesi staf baru)
+                    await _firestore.collection('users').doc(newUid).set({
+                      'uid': newUid,
+                      'email': email,
+                      'nama': nama,
+                      'nip': nip,
+                      'email_kontak': emailKontak,
+                      'jabatan': jabatan,
+                      'no_hp': wa,
+                      'role': 'staff',
+                      'status_pekerjaan': 'tersedia',
+                      'foto_base64': fotoBase64 ?? '',
+                      'is_first_login': true,
+                      'created_at': FieldValue.serverTimestamp(),
+                      'updated_at': FieldValue.serverTimestamp(),
+                    });
+                  } catch (e) {
+                    // Batalkan akun login jika data gagal disimpan
+                    try {
+                      await cred?.user?.delete();
+                    } catch (_) {}
+                    rethrow;
+                  } finally {
+                    await auth.signOut();
+                  }
+                }
+
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                _snack(
+                  isEdit
+                      ? (pass.isNotEmpty
+                            ? 'Data dan password staf berhasil diperbarui'
+                            : 'Data staf berhasil diperbarui')
+                      : 'Staf baru ditambahkan. Login dengan NIP dan password yang dibuat.',
+                );
+              } catch (e) {
+                if (modalContext.mounted) {
+                  setModalState(() {
+                    saving = false;
+                    errorText = _errorMessage(e);
+                  });
+                }
+              }
+            }
+
+            final foto = _decodeFoto(fotoBase64);
+
+            return Dialog(
+              backgroundColor: Colors.white,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 24,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                ListTile(
-                                  leading: const Icon(
-                                    Icons.photo_library_rounded,
+                                Text(
+                                  isEdit
+                                      ? 'Edit Data Staf'
+                                      : 'Tambah Staf Baru',
+                                  style: const TextStyle(
+                                    fontSize: AppTypography.subtitle,
+                                    fontWeight: FontWeight.bold,
+                                    color: _biruTua,
                                   ),
-                                  title: const Text('Pilih dari galeri'),
-                                  onTap: () {
-                                    Navigator.pop(modalContext);
-                                    pickImage();
-                                  },
                                 ),
-                                ListTile(
-                                  leading: const Icon(Icons.camera_alt_rounded),
-                                  title: const Text('Ambil foto'),
-                                  onTap: () {
-                                    Navigator.pop(modalContext);
-                                    pickImage(fromCamera: true);
-                                  },
+                                const SizedBox(height: 2),
+                                Text(
+                                  isEdit
+                                      ? 'Perbarui data atau reset password staf'
+                                      : 'Isi data untuk membuat akun staf',
+                                  style: TextStyle(
+                                    fontSize: AppTypography.small,
+                                    color: Colors.grey.shade600,
+                                  ),
                                 ),
                               ],
                             ),
                           ),
-                        ),
-                        child: CircleAvatar(
-                          radius: 35,
-                          backgroundColor: const Color(
-                            0xFF0066B3,
-                          ).withOpacity(0.1),
-                          backgroundImage:
-                              _selectedStaffImageBase64 != null &&
-                                  _selectedStaffImageBase64!.isNotEmpty
-                              ? MemoryImage(
-                                  base64Decode(_selectedStaffImageBase64!),
-                                )
-                              : null,
-                          child:
-                              _selectedStaffImageBase64 == null ||
-                                  _selectedStaffImageBase64!.isEmpty
-                              ? const Icon(
-                                  Icons.add_a_photo,
-                                  color: Color(0xFF0066B3),
-                                )
-                              : null,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-
-                    _buildModalTextField('Nama Lengkap', namaController),
-                    _buildModalTextField(
-                      'NIP',
-                      nipController,
-                      enabled: !isEdit,
-                    ),
-                    _buildModalTextField('Jabatan', jabatanController),
-                    _buildModalTextField(
-                      'No. WhatsApp',
-                      waController,
-                      keyboardType: TextInputType.phone,
-                    ),
-
-                    const SizedBox(height: 15),
-
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF0066B3),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                          IconButton(
+                            onPressed: saving
+                                ? null
+                                : () => Navigator.pop(dialogContext),
+                            icon: const Icon(Icons.close_rounded),
                           ),
-                        ),
-                        onPressed: _isSaving
-                            ? null
-                            : () async {
-                                final nama = namaController.text.trim();
-                                final nip = nipController.text.trim();
-                                final jabatan = jabatanController.text.trim();
-                                final wa = waController.text.trim();
+                        ],
+                      ),
+                      const SizedBox(height: 14),
 
-                                if (nama.isEmpty ||
-                                    nip.isEmpty ||
-                                    jabatan.isEmpty ||
-                                    wa.isEmpty) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        'Semua data staf harus diisi.',
-                                      ),
+                      // Avatar
+                      Center(
+                        child: GestureDetector(
+                          onTap: showPhotoOptions,
+                          child: Stack(
+                            children: [
+                              CircleAvatar(
+                                radius: 40,
+                                backgroundColor: AppPalette.blue.withOpacity(
+                                  0.1,
+                                ),
+                                backgroundImage: foto,
+                                child: foto == null
+                                    ? const Icon(
+                                        Icons.person_rounded,
+                                        size: 40,
+                                        color: _biru,
+                                      )
+                                    : null,
+                              ),
+                              Positioned(
+                                right: 0,
+                                bottom: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.all(7),
+                                  decoration: BoxDecoration(
+                                    color: _biru,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
                                     ),
-                                  );
-                                  return;
-                                }
-
-                                setModalState(() {
-                                  _isSaving = true;
-                                });
-
-                                try {
-                                  if (isEdit && docId != null) {
-                                    // UPDATE DATA STAF DI FIRESTORE
-                                    await _firestore
-                                        .collection('users')
-                                        .doc(docId)
-                                        .update({
-                                          'nama': nama,
-                                          'jabatan': jabatan,
-                                          'wa': wa,
-                                          'foto_base64':
-                                              _selectedStaffImageBase64 ?? '',
-                                          'updated_at':
-                                              FieldValue.serverTimestamp(),
-                                        });
-                                  } else {
-                                    // TAMBAH STAF BARU KE FIRESTORE & AUTH
-                                    final String virtualEmail =
-                                        "$nip@simtas.internal";
-                                    final String defaultPassword = nip;
-
-                                    UserCredential credential =
-                                        await FirebaseAuth.instance
-                                            .createUserWithEmailAndPassword(
-                                              email: virtualEmail,
-                                              password: defaultPassword,
-                                            );
-
-                                    final String newUid = credential.user!.uid;
-
-                                    await _firestore
-                                        .collection('users')
-                                        .doc(newUid)
-                                        .set({
-                                          'uid': newUid,
-                                          'nama': nama,
-                                          'nip': nip,
-                                          'jabatan': jabatan,
-                                          'wa': wa,
-                                          'role': 'staff',
-                                          'status': 'Tersedia',
-                                          'foto_base64':
-                                              _selectedStaffImageBase64 ?? '',
-                                          'is_first_login': true,
-                                          'created_at':
-                                              FieldValue.serverTimestamp(),
-                                          'updated_at':
-                                              FieldValue.serverTimestamp(),
-                                        });
-                                  }
-
-                                  if (!mounted) return;
-                                  _selectedStaffImageBase64 = null;
-                                  Navigator.pop(modalContext);
-
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        isEdit
-                                            ? 'Data staf berhasil diperbarui'
-                                            : 'Staf baru berhasil ditambahkan! Password awal adalah NIP.',
-                                      ),
-                                    ),
-                                  );
-                                } catch (e) {
-                                  ScaffoldMessenger.of(
-                                    modalContext,
-                                  ).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Gagal menyimpan data: $e'),
-                                    ),
-                                  );
-                                } finally {
-                                  setModalState(() {
-                                    _isSaving = false;
-                                  });
-                                }
-                              },
-                        child: _isSaving
-                            ? const CircularProgressIndicator(
-                                color: Colors.white,
-                              )
-                            : Text(
-                                isEdit
-                                    ? 'Simpan Perubahan'
-                                    : 'Simpan Data Staf',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
+                                  ),
+                                  child: const Icon(
+                                    Icons.camera_alt_rounded,
+                                    size: 15,
+                                    color: Colors.white,
+                                  ),
                                 ),
                               ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 18),
+
+                      _buildModalTextField(
+                        'Nama Lengkap',
+                        namaC,
+                        Icons.person_outline_rounded,
+                        hint: 'Masukkan nama lengkap',
+                        textCapitalization: TextCapitalization.words,
+                      ),
+                      _buildModalTextField(
+                        'NIP',
+                        nipC,
+                        Icons.badge_outlined,
+                        hint: 'Masukkan NIP',
+                        helperText: isEdit
+                            ? 'NIP dipakai untuk login. Mengubahnya ikut mengubah akun login staf.'
+                            : 'NIP dipakai staf untuk login.',
+                        keyboardType: TextInputType.number,
+                      ),
+                      _buildModalTextField(
+                        'Jabatan',
+                        jabatanC,
+                        Icons.work_outline_rounded,
+                        hint: 'Masukkan jabatan',
+                        textCapitalization: TextCapitalization.words,
+                      ),
+                      _buildModalTextField(
+                        'Email (opsional)',
+                        emailC,
+                        Icons.email_outlined,
+                        hint: 'Masukkan email staf',
+                        keyboardType: TextInputType.emailAddress,
+                      ),
+                      _buildModalTextField(
+                        'No. WhatsApp (opsional)',
+                        waC,
+                        Icons.phone_outlined,
+                        hint: 'Contoh: 08123456789',
+                        helperText:
+                            'Boleh kosong, staf bisa mengisi sendiri di profilnya.',
+                        keyboardType: TextInputType.phone,
+                      ),
+                      _buildModalTextField(
+                        isEdit ? 'Kata Sandi Baru (opsional)' : 'Kata Sandi',
+                        passC,
+                        Icons.lock_outline_rounded,
+                        hint: 'Masukkan kata sandi',
+                        obscureText: obscure,
+                        helperText: isEdit
+                            ? 'Kosongkan jika kata sandi tidak diubah.'
+                            : 'Minimal 6 karakter. Beritahukan ke staf.',
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            obscure
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                            size: 20,
+                          ),
+                          onPressed: () =>
+                              setModalState(() => obscure = !obscure),
+                        ),
+                      ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            final nip = nipC.text.trim();
+                            if (nip.length < 6) {
+                              setModalState(
+                                () => errorText =
+                                    'Isi NIP dulu (minimal 6 karakter).',
+                              );
+                              return;
+                            }
+                            setModalState(() {
+                              passC.text = nip;
+                              obscure = false;
+                              errorText = null;
+                            });
+                          },
+                          icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                          label: Text(
+                            isEdit
+                                ? 'Reset ke awal (sama dengan NIP)'
+                                : 'Isi password sama dengan NIP',
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: _biru,
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                          ),
+                        ),
+                      ),
+
+                      Container(
+                        margin: const EdgeInsets.only(top: 4),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: _biruMuda.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.info_outline_rounded,
+                              size: 18,
+                              color: _biru,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                isEdit
+                                    ? 'Staf lupa password? Isi kolom password lalu simpan, atau tekan "Reset ke awal".'
+                                    : 'Staf login memakai NIP dan password yang Anda buat di sini.',
+                                style: TextStyle(
+                                  fontSize: AppTypography.small,
+                                  color: Colors.grey.shade800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      if (errorText != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: Text(
+                            errorText!,
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: AppTypography.small,
+                            ),
+                          ),
+                        ),
+
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SizedBox(
+                              height: 48,
+                              child: OutlinedButton(
+                                onPressed: saving
+                                    ? null
+                                    : () => Navigator.pop(dialogContext),
+                                style: OutlinedButton.styleFrom(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                child: const Text('Batal'),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            flex: 2,
+                            child: SizedBox(
+                              height: 48,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppPalette.blue,
+                                  disabledBackgroundColor: _biru.withOpacity(
+                                    0.6,
+                                  ),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                onPressed: saving ? null : save,
+                                child: saving
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                          strokeWidth: 2.5,
+                                        ),
+                                      )
+                                    : Text(
+                                        isEdit
+                                            ? 'Simpan Perubahan'
+                                            : 'Simpan Data Staf',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: AppTypography.body,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -313,433 +727,688 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
     );
   }
 
-  // ==== HAPUS STAF DARI FIRESTORE ====
+  // Gaya input mengikuti form login: label di atas, field berlatar abu muda
+  // dengan border tipis, ikon di kiri, dan hint di dalam field.
+  Widget _buildModalTextField(
+    String label,
+    TextEditingController controller,
+    IconData icon, {
+    String? hint,
+    bool enabled = true,
+    bool obscureText = false,
+    Widget? suffixIcon,
+    String? helperText,
+    TextInputType keyboardType = TextInputType.text,
+    TextCapitalization textCapitalization = TextCapitalization.none,
+  }) {
+    const Color borderColor = Color(0xFFE2E8F0);
+    const Color fillColor = AppPalette.background;
+
+    OutlineInputBorder border(Color c, [double w = 1]) => OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: BorderSide(color: c, width: w),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: AppTypography.body,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF334155),
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: controller,
+            enabled: enabled,
+            obscureText: obscureText,
+            keyboardType: keyboardType,
+            textCapitalization: textCapitalization,
+            style: const TextStyle(
+              fontSize: AppTypography.body,
+              color: Color(0xFF0F172A),
+            ),
+            decoration: InputDecoration(
+              hintText: hint,
+              hintStyle: const TextStyle(
+                color: Color(0xFF94A3B8),
+                fontSize: AppTypography.body,
+              ),
+              prefixIcon: Icon(icon, size: 22, color: const Color(0xFF64748B)),
+              suffixIcon: suffixIcon,
+              filled: true,
+              fillColor: enabled ? fillColor : Colors.grey.shade200,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 16,
+              ),
+              enabledBorder: border(borderColor),
+              disabledBorder: border(borderColor),
+              border: border(borderColor),
+              focusedBorder: border(_biru, 1.5),
+            ),
+          ),
+          if (helperText != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, left: 4),
+              child: Text(
+                helperText,
+                style: const TextStyle(
+                  fontSize: AppTypography.small,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ===== HAPUS STAF =====
   void _deleteStaff(String docId, String namaStaff) {
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        icon: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.red.shade50,
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.delete_outline_rounded,
+            color: Colors.redAccent,
+            size: 28,
+          ),
+        ),
         title: const Text('Hapus Staf'),
-        content: Text('Yakin ingin menghapus $namaStaff dari daftar staf?'),
+        content: Text(
+          'Yakin ingin menghapus $namaStaff dari daftar staf?',
+          textAlign: TextAlign.center,
+        ),
+        actionsAlignment: MainAxisAlignment.center,
         actions: [
-          TextButton(
+          OutlinedButton(
             onPressed: () => Navigator.pop(dialogContext),
+            style: OutlinedButton.styleFrom(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
             child: const Text('Batal'),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () async {
               try {
                 await _firestore.collection('users').doc(docId).delete();
-                if (!mounted) return;
-                Navigator.pop(dialogContext);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('$namaStaff berhasil dihapus')),
-                );
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                _snack('$namaStaff berhasil dihapus');
               } catch (e) {
-                Navigator.pop(dialogContext);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Gagal menghapus staf: $e')),
-                );
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                _snack('Gagal menghapus staf: $e');
               }
             },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Hapus'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text('Hapus', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildModalTextField(
-    String label,
-    TextEditingController controller, {
-    bool enabled = true,
-    TextInputType keyboardType = TextInputType.text,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+  // ===== KOMPONEN UI =====
+  Widget _buildSearchBar() {
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
       child: TextField(
-        controller: controller,
-        enabled: enabled,
-        keyboardType: keyboardType,
+        controller: _searchController,
+        onChanged: (v) => setState(() => _searchQuery = v),
+        textInputAction: TextInputAction.search,
         decoration: InputDecoration(
-          labelText: label,
-          isDense: true,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          hintText: 'Cari nama, NIP, jabatan, atau email...',
+          hintStyle: TextStyle(
+            color: Colors.grey.shade500,
+            fontSize: AppTypography.body,
+          ),
+          prefixIcon: const Icon(Icons.search_rounded, color: _biru),
+          suffixIcon: _searchQuery.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() => _searchQuery = '');
+                  },
+                ),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 14),
         ),
       ),
     );
   }
 
+  Widget _buildStat(String label, int value, IconData icon, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, size: 18, color: color),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '$value',
+                      style: TextStyle(
+                        fontSize: AppTypography.section,
+                        fontWeight: FontWeight.bold,
+                        color: color,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Label boleh turun ke baris kedua, tidak dipotong.
+            Text(
+              label,
+              maxLines: 2,
+              softWrap: true,
+              style: TextStyle(
+                fontSize: AppTypography.caption,
+                height: 1.2,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: Colors.grey.shade500),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: AppTypography.small,
+                color: Colors.grey.shade800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessage(IconData icon, String title, String subtitle) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: _biru.withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 44, color: _biru),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: AppTypography.section,
+                fontWeight: FontWeight.bold,
+                color: _biruTua,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: AppTypography.body,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStaffCard(
+    String docId,
+    Map<String, dynamic> staff,
+    String status,
+  ) {
+    final String nama = _str(staff['nama'], _str(staff['email'], 'Staf'));
+    final String nip = _str(staff['nip'], '-');
+    final String jabatan = _str(staff['jabatan'], '-');
+    final String emailKontak = _str(staff['email_kontak']);
+    final String wa = _phoneOf(staff).isEmpty ? 'Belum diisi' : _phoneOf(staff);
+    final bool isTersedia = status.toLowerCase() == 'tersedia';
+    final Color statusColor = isTersedia
+        ? Colors.green.shade700
+        : Colors.orange.shade800;
+    final foto = _decodeFoto(staff['foto_base64']);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+            child: Column(
+              children: [
+                // Avatar + titik status
+                Stack(
+                  children: [
+                    CircleAvatar(
+                      radius: 32,
+                      backgroundColor: AppPalette.blue,
+                      backgroundImage: foto,
+                      child: foto == null
+                          ? const Icon(
+                              Icons.person_rounded,
+                              color: Colors.white,
+                              size: 34,
+                            )
+                          : null,
+                    ),
+                    Positioned(
+                      right: 2,
+                      bottom: 2,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: isTersedia ? Colors.green : Colors.orange,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  nama,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: AppTypography.body,
+                    color: _biruTua,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  jabatan,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: AppTypography.small,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                _buildInfoRow(Icons.badge_outlined, nip),
+                _buildInfoRow(
+                  Icons.email_outlined,
+                  emailKontak.isEmpty ? 'Belum diisi' : emailKontak,
+                ),
+                _buildInfoRow(Icons.phone_outlined, wa),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const StatusStaffPage()),
+                  ),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      status,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: AppTypography.small,
+                        fontWeight: FontWeight.bold,
+                        color: statusColor,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Menu Edit / Hapus
+          Positioned(
+            top: 2,
+            right: 2,
+            child: PopupMenuButton<String>(
+              icon: Icon(
+                Icons.more_vert_rounded,
+                size: 20,
+                color: Colors.grey.shade600,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              onSelected: (value) {
+                if (value == 'edit') {
+                  _showStaffModal(staffDoc: {'id': docId, ...staff});
+                } else {
+                  _deleteStaff(docId, nama);
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'edit',
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit_rounded, size: 18, color: Colors.amber),
+                      SizedBox(width: 10),
+                      Text('Edit'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'hapus',
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.delete_rounded,
+                        size: 18,
+                        color: Colors.redAccent,
+                      ),
+                      SizedBox(width: 10),
+                      Text('Hapus'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _usersStream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _buildMessage(
+            Icons.error_outline_rounded,
+            'Gagal memuat staf',
+            '${snapshot.error}',
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _assignmentsStream,
+          builder: (context, assignSnap) {
+            final assignDocs = assignSnap.data?.docs ?? [];
+
+            final allStaff = (snapshot.data?.docs ?? []).where((doc) {
+              final role = (doc.data()['role'] ?? 'staff')
+                  .toString()
+                  .toLowerCase();
+              return role != 'admin';
+            }).toList();
+
+            // Status otomatis: tugas aktif >= 5 => Sibuk, selain itu Tersedia.
+            final Map<String, String> statusById = {
+              for (final d in allStaff)
+                d.id:
+                    _countActive(d.id, d.data(), assignDocs) >= _maksTugasAktif
+                    ? 'Sibuk'
+                    : 'Tersedia',
+            };
+
+            final total = allStaff.length;
+            final tersedia = statusById.values
+                .where((st) => st == 'Tersedia')
+                .length;
+
+            final query = _searchQuery.trim().toLowerCase();
+            final filtered = allStaff.where((doc) {
+              final data = doc.data();
+              final nama = (data['nama'] ?? '').toString().toLowerCase();
+              final nip = (data['nip'] ?? '').toString().toLowerCase();
+              final jabatan = (data['jabatan'] ?? '').toString().toLowerCase();
+              final email = (data['email_kontak'] ?? '')
+                  .toString()
+                  .toLowerCase();
+              return query.isEmpty ||
+                  nama.contains(query) ||
+                  nip.contains(query) ||
+                  jabatan.contains(query) ||
+                  email.contains(query);
+            }).toList();
+
+            // Urutkan nama A-Z (tidak peka huruf besar/kecil). Staf tanpa nama
+            // ditaruh paling akhir.
+            filtered.sort((a, b) {
+              final na = _str(a.data()['nama']).toLowerCase();
+              final nb = _str(b.data()['nama']).toLowerCase();
+              if (na.isEmpty && nb.isEmpty) return 0;
+              if (na.isEmpty) return 1;
+              if (nb.isEmpty) return -1;
+              return na.compareTo(nb);
+            });
+
+            return CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                    child: Column(
+                      children: [
+                        IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildStat(
+                                'Total Staf',
+                                total,
+                                Icons.groups_rounded,
+                                _biru,
+                              ),
+                              const SizedBox(width: 10),
+                              _buildStat(
+                                'Tersedia',
+                                tersedia,
+                                Icons.check_circle_rounded,
+                                Colors.green.shade700,
+                              ),
+                              const SizedBox(width: 10),
+                              _buildStat(
+                                'Sibuk',
+                                total - tersedia,
+                                Icons.timelapse_rounded,
+                                Colors.orange.shade800,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _buildSearchBar(),
+                      ],
+                    ),
+                  ),
+                ),
+                if (filtered.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _buildMessage(
+                      query.isEmpty
+                          ? Icons.group_off_rounded
+                          : Icons.search_off_rounded,
+                      query.isEmpty ? 'Belum ada staf' : 'Staf tidak ditemukan',
+                      query.isEmpty
+                          ? 'Tekan tombol "Tambah Staff" untuk menambahkan.'
+                          : 'Coba kata kunci lain.',
+                    ),
+                  )
+                else
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
+                    sliver: SliverGrid(
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 240,
+                            mainAxisExtent: 276,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                          ),
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final doc = filtered[index];
+                        return _buildStaffCard(
+                          doc.id,
+                          doc.data(),
+                          statusById[doc.id] ?? 'Tersedia',
+                        );
+                      }, childCount: filtered.length),
+                    ),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return withAdminReadableText(
-      context,
-      Scaffold(
-        backgroundColor: const Color(0xFFF4F8FC),
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          toolbarHeight: 96,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(bottom: Radius.circular(30)),
-          ),
-          title: const Text(
-            "Kelola Staff",
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          flexibleSpace: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Color(0xFF1B267B),
-                  Color(0xFF0066B3),
-                  Color(0xFF00A8E8),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(30)),
-            ),
-          ),
-        ),
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool wide = constraints.maxWidth >= 900;
+        return Scaffold(
+          backgroundColor: _bg,
+          drawer: wide
+              ? null
+              : const AdminSidebar(currentIndex: 1, isDrawer: true),
+          body: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // --- 1. SEARCH BAR & TOMBOL CARI ---
-              Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      height: 45,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(25),
-                        border: Border.all(color: Colors.grey.shade300),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: TextField(
-                        controller: _searchController,
-                        onChanged: (value) {
-                          setState(() {
-                            _searchQuery = value;
-                          });
-                        },
-                        decoration: const InputDecoration(
-                          hintText: "Pencarian...",
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.only(top: 10),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0066B3),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        _searchQuery = _searchController.text;
-                      });
-                    },
-                    child: const Text(
-                      "Cari",
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // --- 2. GRID CARD STAF DARI FIRESTORE (REAL-TIME STREAM) ---
-              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: _firestore.collection('users').snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return Center(
-                      child: Text('Gagal memuat staf: ${snapshot.error}'),
-                    );
-                  }
-
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  final docs = snapshot.data?.docs ?? [];
-
-                  // Filter agar hanya akun Staf yang tampil dan sesuai query pencarian
-                  final filteredDocs = docs.where((doc) {
-                    final data = doc.data();
-                    final role = (data['role'] ?? 'staff')
-                        .toString()
-                        .toLowerCase();
-
-                    if (role == 'admin') return false;
-
-                    final nama = (data['nama'] ?? '').toString().toLowerCase();
-                    final nip = (data['nip'] ?? '').toString().toLowerCase();
-                    final jabatan = (data['jabatan'] ?? '')
-                        .toString()
-                        .toLowerCase();
-                    final query = _searchQuery.trim().toLowerCase();
-
-                    return query.isEmpty ||
-                        nama.contains(query) ||
-                        nip.contains(query) ||
-                        jabatan.contains(query);
-                  }).toList();
-
-                  if (filteredDocs.isEmpty) {
-                    return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Text(
-                          _searchQuery.isEmpty
-                              ? 'Belum ada data staf terdaftar.'
-                              : 'Staf tidak ditemukan.',
-                          style: TextStyle(color: Colors.grey.shade600),
-                        ),
-                      ),
-                    );
-                  }
-
-                  return GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          childAspectRatio: 0.76,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                        ),
-                    itemCount: filteredDocs.length,
-                    itemBuilder: (context, index) {
-                      final doc = filteredDocs[index];
-                      final staff = doc.data();
-                      final docId = doc.id;
-
-                      final String nama =
-                          staff['nama'] ?? staff['email'] ?? 'Staf';
-                      final String nip = staff['nip'] ?? '-';
-                      final String jabatan = staff['jabatan'] ?? '-';
-                      final String wa = staff['wa'] ?? '-';
-                      final String status = staff['status'] ?? 'Tersedia';
-                      final String? fotoBase64 = staff['foto_base64'];
-
-                      final bool isTersedia = status == "Tersedia";
-
-                      return Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            // Foto Profil Lingkaran
-                            CircleAvatar(
-                              radius: 30,
-                              backgroundColor: const Color(0xFF0066B3),
-                              backgroundImage:
-                                  fotoBase64 != null && fotoBase64.isNotEmpty
-                                  ? MemoryImage(base64Decode(fotoBase64))
-                                  : null,
-                              child: fotoBase64 == null || fotoBase64.isEmpty
-                                  ? const Icon(
-                                      Icons.person,
-                                      color: Colors.white,
-                                      size: 32,
-                                    )
-                                  : null,
-                            ),
-                            const SizedBox(height: 10),
-
-                            // Detail Staf
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "Nama : $nama",
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                Text(
-                                  "NIP : $nip",
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.black87,
-                                  ),
-                                ),
-                                Text(
-                                  "Jabatan : $jabatan",
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.black87,
-                                  ),
-                                ),
-                                Text(
-                                  "WA : $wa",
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.black87,
-                                  ),
-                                ),
-                              ],
-                            ),
-
-                            const Divider(height: 12, thickness: 1),
-
-                            // Status Aktif
-                            GestureDetector(
-                              onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const StatusStaffPage(),
-                                ),
-                              ),
-                              child: Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: isTersedia
-                                      ? Colors.green.shade50
-                                      : Colors.orange.shade50,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  "Status : $status",
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: isTersedia
-                                        ? Colors.green.shade800
-                                        : Colors.orange.shade800,
-                                  ),
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 8),
-
-                            // Tombol Edit dan Hapus
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: SizedBox(
-                                    height: 30,
-                                    child: OutlinedButton(
-                                      style: OutlinedButton.styleFrom(
-                                        padding: EdgeInsets.zero,
-                                        side: const BorderSide(
-                                          color: Colors.amber,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                      ),
-                                      onPressed: () => _showStaffModal(
-                                        staffDoc: {'id': docId, ...staff},
-                                      ),
-                                      child: const Text(
-                                        "Edit",
-                                        style: TextStyle(
-                                          color: Colors.amber,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: SizedBox(
-                                    height: 30,
-                                    child: OutlinedButton(
-                                      style: OutlinedButton.styleFrom(
-                                        padding: EdgeInsets.zero,
-                                        side: const BorderSide(
-                                          color: Colors.redAccent,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                      ),
-                                      onPressed: () =>
-                                          _deleteStaff(docId, nama),
-                                      child: const Text(
-                                        "Hapus",
-                                        style: TextStyle(
-                                          color: Colors.redAccent,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  );
-                },
+              if (wide) const AdminSidebar(currentIndex: 1),
+              Expanded(
+                child: Column(
+                  children: [
+                    AdminHeader(title: 'Kelola Staff', showSidebar: wide),
+                    Expanded(child: _buildContent()),
+                  ],
+                ),
               ),
             ],
           ),
-        ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => _showStaffModal(),
-          backgroundColor: const Color(0xFF0011CC),
-          icon: const Icon(Icons.add_rounded, color: Colors.white),
-          label: const Text(
-            'Tambah Staff',
-            style: TextStyle(color: Colors.white),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: () => _showStaffModal(),
+            backgroundColor: AppPalette.blue,
+            elevation: 3,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            icon: const Icon(
+              Icons.person_add_alt_1_rounded,
+              color: Colors.white,
+            ),
+            label: const Text(
+              'Tambah Staff',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
-        ),
-        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-        bottomNavigationBar: const AdminBottomNavigationBar(currentIndex: 3),
-      ),
+          floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+        );
+      },
     );
   }
 }

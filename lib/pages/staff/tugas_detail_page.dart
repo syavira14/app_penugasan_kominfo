@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:http/http.dart' as http;
+import '../../widgets/app_layout.dart';
 
 const Color kBiruTua = Color(0xFF1A1464);
 const Color kBiruSedang = Color(0xFF1D5FA0);
@@ -1441,26 +1442,20 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
           return Column(
             children: [
               // ---- HEADER GRADASI ----
-              ClipPath(
-                clipper: HeaderCurveClipper(),
-                child: Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.fromLTRB(
-                    20 * scale,
-                    16 * scale,
-                    20 * scale,
-                    35 * scale,
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.symmetric(vertical: 16 * scale),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [kBiruMuda, kBiruSedang, kBiruTua],
+                    stops: [0.0, 0.5, 1.0],
                   ),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [kBiruMuda, kBiruSedang, kBiruTua],
-                      stops: [0.0, 0.5, 1.0],
-                    ),
-                  ),
-                  child: SafeArea(
-                    bottom: false,
+                ),
+                child: SafeArea(
+                  bottom: false,
+                  child: ResponsiveContent(
                     child: Row(
                       children: [
                         IconButton(
@@ -1494,411 +1489,477 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
 
               // ---- KONTEN UTAMA ----
               Expanded(
-                child: ListView(
-                  padding: EdgeInsets.fromLTRB(
-                    20 * scale,
-                    15 * scale,
-                    20 * scale,
-                    30 * scale,
-                  ),
-                  children: [
-                    // ==== BANNER KENDALA ====
-                    if (tugas.statusTugas == "Terkendala" ||
-                        tugas.deskripsiKendala != null) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.all(14 * scale),
-                        margin: EdgeInsets.only(bottom: 16 * scale),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(16 * scale),
-                          border: Border.all(color: Colors.red.shade200),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                              Icons.warning_amber_rounded,
-                              color: Colors.red.shade700,
-                              size: 22 * scale,
-                            ),
-                            SizedBox(width: 10 * scale),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    "Laporan Kendala (${tugas.statusKendala ?? 'Menunggu Atasan'})",
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.red.shade900,
-                                      fontSize: 12.5 * scale,
-                                    ),
-                                  ),
-                                  SizedBox(height: 4 * scale),
-                                  Text(
-                                    tugas.deskripsiKendala ?? "-",
-                                    style: TextStyle(
-                                      fontSize: 12 * scale,
-                                      color: Colors.red.shade800,
-                                      height: 1.3,
-                                    ),
-                                  ),
-                                  if (tugas.fileKendala != null) ...[
-                                    SizedBox(height: 6 * scale),
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons.attach_file,
-                                          size: 14 * scale,
-                                          color: Colors.red.shade700,
-                                        ),
-                                        SizedBox(width: 4 * scale),
-                                        Text(
-                                          tugas.fileKendala!,
-                                          style: TextStyle(
-                                            fontSize: 11 * scale,
-                                            color: Colors.red.shade900,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ],
+                child: ResponsiveContent(
+                  child: ListView(
+                    physics: const BouncingScrollPhysics(),
+                    padding: EdgeInsets.fromLTRB(0, 16 * scale, 0, 24 * scale),
+                    children: [
+                      // ==== BANNER KENDALA ====
+                      if (tugas.statusTugas == "Terkendala" ||
+                          tugas.deskripsiKendala != null) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: EdgeInsets.all(14 * scale),
+                          margin: EdgeInsets.only(bottom: 16 * scale),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(16 * scale),
+                            border: Border.all(color: Colors.red.shade200),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.warning_amber_rounded,
+                                color: Colors.red.shade700,
+                                size: 22 * scale,
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-
-                    // ==== INFORMASI DARI ATASAN ====
-                    _sectionLabel("Informasi Tugas", scale),
-                    SizedBox(height: 10 * scale),
-                    _infoCard(
-                      scale,
-                      children: [
-                        Row(
-                          children: [
-                            _badgePrioritas(tugas.prioritasTugas, scale),
-                            SizedBox(width: 8 * scale),
-                            _badgeStatusTugas(_statusTerpilih, scale),
-                          ],
-                        ),
-                        SizedBox(height: 14 * scale),
-                        Text(
-                          tugas.judulTugas,
-                          style: TextStyle(
-                            fontSize: 17 * scale,
-                            fontWeight: FontWeight.bold,
-                            color: kBiruTua,
+                              SizedBox(width: 10 * scale),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      "Laporan Kendala (${tugas.statusKendala ?? 'Menunggu Atasan'})",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.red.shade900,
+                                        fontSize: 12.5 * scale,
+                                      ),
+                                    ),
+                                    SizedBox(height: 4 * scale),
+                                    Text(
+                                      tugas.deskripsiKendala ?? "-",
+                                      style: TextStyle(
+                                        fontSize: 12 * scale,
+                                        color: Colors.red.shade800,
+                                        height: 1.3,
+                                      ),
+                                    ),
+                                    if (tugas.fileKendala != null) ...[
+                                      SizedBox(height: 6 * scale),
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.attach_file,
+                                            size: 14 * scale,
+                                            color: Colors.red.shade700,
+                                          ),
+                                          SizedBox(width: 4 * scale),
+                                          Text(
+                                            tugas.fileKendala!,
+                                            style: TextStyle(
+                                              fontSize: 11 * scale,
+                                              color: Colors.red.shade900,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                        SizedBox(height: 8 * scale),
-                        Text(
-                          tugas.deskripsiTugas,
-                          style: TextStyle(
-                            fontSize: 13 * scale,
-                            color: Colors.grey[700],
-                            height: 1.4,
-                          ),
-                        ),
-                        SizedBox(height: 16 * scale),
-                        _baris(
-                          Icons.location_on_outlined,
-                          "Lokasi: ${tugas.lokasi}",
-                          scale,
-                        ),
-                        SizedBox(height: 8 * scale),
-                        _baris(
-                          Icons.person_outline,
-                          "Diberikan oleh: ${tugas.namaAtasan}",
-                          scale,
-                        ),
-                        SizedBox(height: 8 * scale),
-                        _baris(
-                          Icons.event_available,
-                          "Diberikan: ${_formatTanggal(tugas.tanggalDiberikan)}",
-                          scale,
-                        ),
-                        SizedBox(height: 8 * scale),
-                        _baris(
-                          Icons.play_circle_outline,
-                          "Mulai: ${_formatTanggal(tugas.tanggalMulai)}",
-                          scale,
-                        ),
-                        SizedBox(height: 8 * scale),
-                        _baris(
-                          Icons.timer_outlined,
-                          "Deadline: ${_formatTanggal(tugas.batasWaktu, jam: true)}",
-                          scale,
-                          isHighlight: true,
                         ),
                       ],
-                    ),
 
-                    // ==== HIGHLIGHT CATATAN REVISI DARI ATASAN ====
-                    if (isRevisi) ...[
-                      SizedBox(height: 16 * scale),
-                      Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.all(16 * scale),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFF8E1),
-                          borderRadius: BorderRadius.circular(16 * scale),
-                          border: Border.all(
-                            color: Colors.amber.shade400,
-                            width: 1.5,
+                      // ==== INFORMASI DARI ATASAN ====
+                      _sectionLabel("Informasi Tugas", scale),
+                      SizedBox(height: 10 * scale),
+                      _infoCard(
+                        scale,
+                        children: [
+                          Row(
+                            children: [
+                              _badgePrioritas(tugas.prioritasTugas, scale),
+                              SizedBox(width: 8 * scale),
+                              _badgeStatusTugas(_statusTerpilih, scale),
+                            ],
                           ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.rate_review_outlined,
-                                  color: Colors.amber.shade900,
-                                  size: 20 * scale,
-                                ),
-                                SizedBox(width: 8 * scale),
-                                Text(
-                                  "Catatan Revisi dari ${tugas.namaAtasan}",
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13.5 * scale,
-                                    color: Colors.amber.shade900,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: 8 * scale),
-                            Divider(height: 1, color: Colors.amber.shade300),
-                            SizedBox(height: 10 * scale),
-                            Text(
-                              tugas.catatanRevisi ??
-                                  'Tidak ada catatan revisi.',
-                              style: TextStyle(
-                                fontSize: 13 * scale,
-                                color: Colors.black87,
-                                fontStyle: FontStyle.italic,
-                                height: 1.4,
-                              ),
-                            ),
-                            if ((_assignmentData?['file_revisi_url'] ?? '')
-                                    .toString()
-                                    .isNotEmpty ||
-                                (_assignmentData?['file_revisi_path'] ?? '')
-                                    .toString()
-                                    .isNotEmpty)
-                              TextButton.icon(
-                                onPressed: _bukaFileRevisi,
-                                icon: const Icon(Icons.attach_file),
-                                label: Text(
-                                  (_assignmentData?['file_revisi_nama'] ??
-                                          'File pendukung revisi')
-                                      .toString(),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-
-                    SizedBox(height: 22 * scale),
-
-                    // ==== FORM PENGERJAAN & Aksi TERGANTUNG STATUS ====
-                    _sectionLabel("Pengerjaan Tugas", scale),
-                    SizedBox(height: 10 * scale),
-                    _infoCard(
-                      scale,
-                      children: [
-                        // --- KONDISI 1: PENDING ---
-                        if (_statusTerpilih == "Pending") ...[
+                          SizedBox(height: 14 * scale),
                           Text(
-                            "Tugas belum dimulai. Klik tombol di bawah untuk mulai mengerjakannya.",
+                            tugas.judulTugas,
+                            style: TextStyle(
+                              fontSize: 17 * scale,
+                              fontWeight: FontWeight.bold,
+                              color: kBiruTua,
+                            ),
+                          ),
+                          SizedBox(height: 8 * scale),
+                          Text(
+                            tugas.deskripsiTugas,
                             style: TextStyle(
                               fontSize: 13 * scale,
-                              color: Colors.grey[600],
+                              color: Colors.grey[700],
+                              height: 1.4,
                             ),
                           ),
                           SizedBox(height: 16 * scale),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 48 * scale,
-                            child: ElevatedButton.icon(
-                              onPressed: _mulaiKerjakan,
-                              icon: const Icon(Icons.play_arrow_rounded),
-                              label: const Text(
-                                "MULAI KERJAKAN",
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: kBiruTua,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(
-                                    14 * scale,
-                                  ),
-                                ),
-                              ),
-                            ),
+                          Divider(height: 24 * scale),
+                          _detailBaris(
+                            Icons.person_outline,
+                            'Diberikan oleh',
+                            tugas.namaAtasan,
+                            scale,
+                          ),
+                          _detailBaris(
+                            Icons.location_on_outlined,
+                            'Lokasi tugas',
+                            tugas.lokasi,
+                            scale,
+                          ),
+                          _detailBaris(
+                            Icons.event_available,
+                            'Tanggal diberikan',
+                            _formatTanggal(tugas.tanggalDiberikan, jam: true),
+                            scale,
+                          ),
+                          _detailBaris(
+                            Icons.play_circle_outline,
+                            'Tanggal mulai',
+                            _formatTanggal(tugas.tanggalMulai, jam: true),
+                            scale,
+                          ),
+                          _detailBaris(
+                            Icons.timer_outlined,
+                            'Batas waktu (deadline)',
+                            _formatTanggal(tugas.batasWaktu, jam: true),
+                            scale,
+                            highlight: true,
                           ),
                         ],
+                      ),
 
-                        // --- KONDISI 2: BERLANGSUNG ATAU REVISI ---
-                        if (_statusTerpilih == "Berlangsung" || isRevisi) ...[
-                          Text(
-                            isRevisi
-                                ? "Keterangan Perbaikan"
-                                : "Keterangan Hasil Pekerjaan",
-                            style: TextStyle(
-                              fontSize: 12.5 * scale,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[700],
+                      // ==== HIGHLIGHT CATATAN REVISI DARI ATASAN ====
+                      if (isRevisi) ...[
+                        SizedBox(height: 16 * scale),
+                        Container(
+                          width: double.infinity,
+                          padding: EdgeInsets.all(16 * scale),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF8E1),
+                            borderRadius: BorderRadius.circular(16 * scale),
+                            border: Border.all(
+                              color: Colors.amber.shade400,
+                              width: 1.5,
                             ),
                           ),
-                          SizedBox(height: 8 * scale),
-                          TextField(
-                            controller: _keteranganController,
-                            enabled: !_uploading,
-                            maxLines: 4,
-                            style: TextStyle(fontSize: 13 * scale),
-                            decoration: InputDecoration(
-                              hintText: isRevisi
-                                  ? "Tuliskan catatan perbaikan yang telah dilakukan..."
-                                  : "Tulis catatan hasil pengerjaan tugas ini...",
-                              hintStyle: TextStyle(fontSize: 12.5 * scale),
-                              contentPadding: EdgeInsets.all(12 * scale),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14 * scale),
-                                borderSide: BorderSide(
-                                  color: Colors.grey.shade300,
-                                ),
-                              ),
-                            ),
-                          ),
-                          SizedBox(height: 16 * scale),
-                          Text(
-                            isRevisi
-                                ? "File Hasil Perbaikan"
-                                : "File Hasil Pekerjaan",
-                            style: TextStyle(
-                              fontSize: 12.5 * scale,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[700],
-                            ),
-                          ),
-                          SizedBox(height: 8 * scale),
-                          InkWell(
-                            onTap: () async {
-                              if (_uploading) return;
-                              final file = await FilePicker.pickFile(
-                                type: FileType.custom,
-                                allowedExtensions: const [
-                                  'pdf',
-                                  'jpg',
-                                  'jpeg',
-                                  'png',
-                                  'docx',
-                                ],
-                              );
-
-                              if (file == null) {
-                                return;
-                              }
-
-                              setState(() {
-                                _selectedFile = file;
-
-                                _namaFileDipilih = file.name;
-                              });
-                            },
-                            borderRadius: BorderRadius.circular(14 * scale),
-                            child: Container(
-                              padding: EdgeInsets.all(14 * scale),
-                              decoration: BoxDecoration(
-                                color: kBiruMuda.withOpacity(0.08),
-                                borderRadius: BorderRadius.circular(14 * scale),
-                                border: Border.all(
-                                  color: kBiruMuda.withOpacity(0.4),
-                                ),
-                              ),
-                              child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
                                 children: [
                                   Icon(
-                                    Icons.upload_file,
-                                    color: kBiruSedang,
-                                    size: 18 * scale,
+                                    Icons.rate_review_outlined,
+                                    color: Colors.amber.shade900,
+                                    size: 20 * scale,
                                   ),
-                                  SizedBox(width: 10 * scale),
-                                  Expanded(
-                                    child: Text(
-                                      _namaFileDipilih ??
-                                          (isRevisi
-                                              ? "Pilih file perbaikan baru"
-                                              : "Pilih file untuk diunggah"),
-                                      style: const TextStyle(
-                                        fontSize: 12.5,
-                                        color: kBiruTua,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
+                                  SizedBox(width: 8 * scale),
+                                  Text(
+                                    "Catatan Revisi dari ${tugas.namaAtasan}",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13.5 * scale,
+                                      color: Colors.amber.shade900,
                                     ),
                                   ),
                                 ],
                               ),
-                            ),
-                          ),
-                          SizedBox(height: 20 * scale),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50 * scale,
-                            child: ElevatedButton.icon(
-                              onPressed: _uploading
-                                  ? null
-                                  : _kirimHasilPekerjaan,
-                              icon: Icon(
-                                isRevisi
-                                    ? Icons.send_rounded
-                                    : Icons.check_circle_outline,
-                                color: Colors.white,
-                              ),
-                              label: Text(
-                                _uploading
-                                    ? '${_submissionStage.toUpperCase()}...'
-                                    : isRevisi
-                                    ? "KIRIM HASIL REVISI"
-                                    : "KIRIM HASIL PEKERJAAN",
+                              SizedBox(height: 8 * scale),
+                              Divider(height: 1, color: Colors.amber.shade300),
+                              SizedBox(height: 10 * scale),
+                              Text(
+                                tugas.catatanRevisi ??
+                                    'Tidak ada catatan revisi.',
                                 style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13.5 * scale,
+                                  fontSize: 13 * scale,
+                                  color: Colors.black87,
+                                  fontStyle: FontStyle.italic,
+                                  height: 1.4,
                                 ),
                               ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: isRevisi
-                                    ? Colors.amber.shade800
-                                    : kBiruSedang,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(
-                                    14 * scale,
+                              if ((_assignmentData?['file_revisi_url'] ?? '')
+                                      .toString()
+                                      .isNotEmpty ||
+                                  (_assignmentData?['file_revisi_path'] ?? '')
+                                      .toString()
+                                      .isNotEmpty)
+                                TextButton.icon(
+                                  onPressed: _bukaFileRevisi,
+                                  icon: const Icon(Icons.attach_file),
+                                  label: Text(
+                                    (_assignmentData?['file_revisi_nama'] ??
+                                            'File pendukung revisi')
+                                        .toString(),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      SizedBox(height: 22 * scale),
+
+                      // ==== FORM PENGERJAAN & Aksi TERGANTUNG STATUS ====
+                      _sectionLabel("Pengerjaan Tugas", scale),
+                      SizedBox(height: 10 * scale),
+                      _infoCard(
+                        scale,
+                        children: [
+                          // --- KONDISI 1: PENDING ---
+                          if (_statusTerpilih == "Pending") ...[
+                            Text(
+                              "Tugas belum dimulai. Klik tombol di bawah untuk mulai mengerjakannya.",
+                              style: TextStyle(
+                                fontSize: 13 * scale,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            SizedBox(height: 16 * scale),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48 * scale,
+                              child: ElevatedButton.icon(
+                                onPressed: _mulaiKerjakan,
+                                icon: const Icon(Icons.play_arrow_rounded),
+                                label: const Text(
+                                  "MULAI KERJAKAN",
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: kBiruTua,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      14 * scale,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                          if (!isRevisi) ...[
+                          ],
+
+                          // --- KONDISI 2: BERLANGSUNG ATAU REVISI ---
+                          if (_statusTerpilih == "Berlangsung" || isRevisi) ...[
+                            Text(
+                              isRevisi
+                                  ? "Keterangan Perbaikan"
+                                  : "Keterangan Hasil Pekerjaan",
+                              style: TextStyle(
+                                fontSize: 12.5 * scale,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            SizedBox(height: 8 * scale),
+                            TextField(
+                              controller: _keteranganController,
+                              enabled: !_uploading,
+                              maxLines: 4,
+                              style: TextStyle(fontSize: 13 * scale),
+                              decoration: InputDecoration(
+                                hintText: isRevisi
+                                    ? "Tuliskan catatan perbaikan yang telah dilakukan..."
+                                    : "Tulis catatan hasil pengerjaan tugas ini...",
+                                hintStyle: TextStyle(fontSize: 12.5 * scale),
+                                contentPadding: EdgeInsets.all(12 * scale),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    14 * scale,
+                                  ),
+                                  borderSide: BorderSide(
+                                    color: Colors.grey.shade300,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            SizedBox(height: 16 * scale),
+                            Text(
+                              isRevisi
+                                  ? "File Hasil Perbaikan"
+                                  : "File Hasil Pekerjaan",
+                              style: TextStyle(
+                                fontSize: 12.5 * scale,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            SizedBox(height: 8 * scale),
+                            InkWell(
+                              onTap: () async {
+                                if (_uploading) return;
+                                final file = await FilePicker.pickFile(
+                                  type: FileType.custom,
+                                  allowedExtensions: const [
+                                    'pdf',
+                                    'jpg',
+                                    'jpeg',
+                                    'png',
+                                    'docx',
+                                  ],
+                                );
+
+                                if (file == null) {
+                                  return;
+                                }
+
+                                setState(() {
+                                  _selectedFile = file;
+
+                                  _namaFileDipilih = file.name;
+                                });
+                              },
+                              borderRadius: BorderRadius.circular(14 * scale),
+                              child: Container(
+                                padding: EdgeInsets.all(14 * scale),
+                                decoration: BoxDecoration(
+                                  color: kBiruMuda.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(
+                                    14 * scale,
+                                  ),
+                                  border: Border.all(
+                                    color: kBiruMuda.withOpacity(0.4),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.upload_file,
+                                      color: kBiruSedang,
+                                      size: 18 * scale,
+                                    ),
+                                    SizedBox(width: 10 * scale),
+                                    Expanded(
+                                      child: Text(
+                                        _namaFileDipilih ??
+                                            (isRevisi
+                                                ? "Pilih file perbaikan baru"
+                                                : "Pilih file untuk diunggah"),
+                                        style: const TextStyle(
+                                          fontSize: 12.5,
+                                          color: kBiruTua,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            SizedBox(height: 20 * scale),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50 * scale,
+                              child: ElevatedButton.icon(
+                                onPressed: _uploading
+                                    ? null
+                                    : _kirimHasilPekerjaan,
+                                icon: Icon(
+                                  isRevisi
+                                      ? Icons.send_rounded
+                                      : Icons.check_circle_outline,
+                                  color: Colors.white,
+                                ),
+                                label: Text(
+                                  _uploading
+                                      ? '${_submissionStage.toUpperCase()}...'
+                                      : isRevisi
+                                      ? "KIRIM HASIL REVISI"
+                                      : "KIRIM HASIL PEKERJAAN",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13.5 * scale,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: isRevisi
+                                      ? Colors.amber.shade800
+                                      : kBiruSedang,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      14 * scale,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (!isRevisi) ...[
+                              SizedBox(height: 12 * scale),
+                              OutlinedButton.icon(
+                                onPressed: _bukaFormKendala,
+                                icon: Icon(
+                                  Icons.warning_amber_rounded,
+                                  color: Colors.red.shade700,
+                                  size: 18 * scale,
+                                ),
+                                label: Text(
+                                  "LAPORKAN KENDALA",
+                                  style: TextStyle(
+                                    color: Colors.red.shade700,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12.5 * scale,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: Size(
+                                    double.infinity,
+                                    48 * scale,
+                                  ),
+                                  side: BorderSide(color: Colors.red.shade700),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      14 * scale,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+
+                          // --- KONDISI 3: TERKENDALA ---
+                          if (_statusTerpilih == "Terkendala") ...[
+                            Text(
+                              "Status tugas saat ini terkendala. Anda dapat mengedit laporan kendala atau menekan tombol di bawah jika masalah sudah selesai.",
+                              style: TextStyle(
+                                fontSize: 12.5 * scale,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            SizedBox(height: 16 * scale),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48 * scale,
+                              child: ElevatedButton.icon(
+                                onPressed: _lanjutkanPekerjaan,
+                                icon: const Icon(Icons.play_circle_fill),
+                                label: const Text(
+                                  "MASALAH SELESAI, LANJUTKAN",
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green.shade700,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      14 * scale,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                             SizedBox(height: 12 * scale),
                             OutlinedButton.icon(
                               onPressed: _bukaFormKendala,
                               icon: Icon(
-                                Icons.warning_amber_rounded,
+                                Icons.edit,
                                 color: Colors.red.shade700,
                                 size: 18 * scale,
                               ),
                               label: Text(
-                                "LAPORKAN KENDALA",
+                                "EDIT LAPORAN KENDALA",
                                 style: TextStyle(
                                   color: Colors.red.shade700,
                                   fontWeight: FontWeight.bold,
@@ -1916,156 +1977,99 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                               ),
                             ),
                           ],
-                        ],
 
-                        // --- KONDISI 3: TERKENDALA ---
-                        if (_statusTerpilih == "Terkendala") ...[
-                          Text(
-                            "Status tugas saat ini terkendala. Anda dapat mengedit laporan kendala atau menekan tombol di bawah jika masalah sudah selesai.",
-                            style: TextStyle(
-                              fontSize: 12.5 * scale,
-                              color: Colors.grey[700],
-                            ),
-                          ),
-                          SizedBox(height: 16 * scale),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 48 * scale,
-                            child: ElevatedButton.icon(
-                              onPressed: _lanjutkanPekerjaan,
-                              icon: const Icon(Icons.play_circle_fill),
-                              label: const Text(
-                                "MASALAH SELESAI, LANJUTKAN",
-                                style: TextStyle(fontWeight: FontWeight.bold),
+                          // --- KONDISI 4: MENUNGGU DISETUJUI / SELESAI ---
+                          if (_statusTerpilih == "Dikumpulkan" ||
+                              _statusTerpilih == "Selesai") ...[
+                            Container(
+                              padding: EdgeInsets.all(12 * scale),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(12 * scale),
                               ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green.shade700,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(
-                                    14 * scale,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          SizedBox(height: 12 * scale),
-                          OutlinedButton.icon(
-                            onPressed: _bukaFormKendala,
-                            icon: Icon(
-                              Icons.edit,
-                              color: Colors.red.shade700,
-                              size: 18 * scale,
-                            ),
-                            label: Text(
-                              "EDIT LAPORAN KENDALA",
-                              style: TextStyle(
-                                color: Colors.red.shade700,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12.5 * scale,
-                              ),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: Size(double.infinity, 48 * scale),
-                              side: BorderSide(color: Colors.red.shade700),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14 * scale),
-                              ),
-                            ),
-                          ),
-                        ],
-
-                        // --- KONDISI 4: MENUNGGU DISETUJUI / SELESAI ---
-                        if (_statusTerpilih == "Dikumpulkan" ||
-                            _statusTerpilih == "Selesai") ...[
-                          Container(
-                            padding: EdgeInsets.all(12 * scale),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.shade50,
-                              borderRadius: BorderRadius.circular(12 * scale),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _statusTerpilih == "Selesai"
-                                      ? Icons.check_circle
-                                      : Icons.hourglass_top_rounded,
-                                  color: _statusTerpilih == "Selesai"
-                                      ? Colors.green.shade700
-                                      : Colors.blue.shade700,
-                                ),
-                                SizedBox(width: 10 * scale),
-                                Expanded(
-                                  child: Text(
-                                    _statusTerpilih == "Selesai"
-                                        ? "Tugas telah disetujui dan diselesaikan oleh atasan."
-                                        : "Pekerjaan sudah dikirim dan sedang dalam proses peninjauan oleh atasan.",
-                                    style: TextStyle(
-                                      fontSize: 12 * scale,
-                                      color: _statusTerpilih == "Selesai"
-                                          ? Colors.green.shade900
-                                          : Colors.blue.shade900,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          SizedBox(height: 14 * scale),
-                          Text(
-                            "Keterangan Terkirim:",
-                            style: TextStyle(
-                              fontSize: 12 * scale,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[700],
-                            ),
-                          ),
-                          SizedBox(height: 4 * scale),
-                          Text(
-                            _keteranganController.text.isEmpty
-                                ? "-"
-                                : _keteranganController.text,
-                            style: TextStyle(
-                              fontSize: 12.5 * scale,
-                              color: Colors.grey[800],
-                            ),
-                          ),
-                          if (_namaFileDipilih != null) ...[
-                            SizedBox(height: 10 * scale),
-                            InkWell(
-                              onTap:
-                                  (_fileHasilUrl == null &&
-                                      _fileHasilPath == null)
-                                  ? null
-                                  : _bukaFileHasil,
                               child: Row(
                                 children: [
-                                  const Icon(
-                                    Icons.attach_file,
-                                    size: 16,
-                                    color: kBiruTua,
+                                  Icon(
+                                    _statusTerpilih == "Selesai"
+                                        ? Icons.check_circle
+                                        : Icons.hourglass_top_rounded,
+                                    color: _statusTerpilih == "Selesai"
+                                        ? Colors.green.shade700
+                                        : Colors.blue.shade700,
                                   ),
-                                  SizedBox(width: 4 * scale),
+                                  SizedBox(width: 10 * scale),
                                   Expanded(
                                     child: Text(
-                                      _namaFileDipilih!,
-                                      overflow: TextOverflow.ellipsis,
+                                      _statusTerpilih == "Selesai"
+                                          ? "Tugas telah disetujui dan diselesaikan oleh atasan."
+                                          : "Pekerjaan sudah dikirim dan sedang dalam proses peninjauan oleh atasan.",
                                       style: TextStyle(
                                         fontSize: 12 * scale,
-                                        color: kBiruTua,
-                                        fontWeight: FontWeight.bold,
+                                        color: _statusTerpilih == "Selesai"
+                                            ? Colors.green.shade900
+                                            : Colors.blue.shade900,
+                                        fontWeight: FontWeight.w500,
                                       ),
                                     ),
                                   ),
                                 ],
                               ),
                             ),
+                            SizedBox(height: 14 * scale),
+                            Text(
+                              "Keterangan Terkirim:",
+                              style: TextStyle(
+                                fontSize: 12 * scale,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            SizedBox(height: 4 * scale),
+                            Text(
+                              _keteranganController.text.isEmpty
+                                  ? "-"
+                                  : _keteranganController.text,
+                              style: TextStyle(
+                                fontSize: 12.5 * scale,
+                                color: Colors.grey[800],
+                              ),
+                            ),
+                            if (_namaFileDipilih != null) ...[
+                              SizedBox(height: 10 * scale),
+                              InkWell(
+                                onTap:
+                                    (_fileHasilUrl == null &&
+                                        _fileHasilPath == null)
+                                    ? null
+                                    : _bukaFileHasil,
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.attach_file,
+                                      size: 16,
+                                      color: kBiruTua,
+                                    ),
+                                    SizedBox(width: 4 * scale),
+                                    Expanded(
+                                      child: Text(
+                                        _namaFileDipilih!,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12 * scale,
+                                          color: kBiruTua,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
                         ],
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -2104,6 +2108,56 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,
+      ),
+    );
+  }
+
+  Widget _detailBaris(
+    IconData icon,
+    String label,
+    String value,
+    double scale, {
+    bool highlight = false,
+  }) {
+    final Color color = highlight ? Colors.redAccent : kBiruSedang;
+    return Padding(
+      padding: EdgeInsets.only(bottom: 10 * scale),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: EdgeInsets.all(7 * scale),
+            decoration: BoxDecoration(
+              color: color.withOpacity(.1),
+              borderRadius: BorderRadius.circular(10 * scale),
+            ),
+            child: Icon(icon, size: 15 * scale, color: color),
+          ),
+          SizedBox(width: 10 * scale),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11 * scale,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                SizedBox(height: 1 * scale),
+                Text(
+                  value.isEmpty ? '-' : value,
+                  style: TextStyle(
+                    fontSize: 12.5 * scale,
+                    fontWeight: FontWeight.w600,
+                    color: highlight ? Colors.redAccent : Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

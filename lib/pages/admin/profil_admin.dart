@@ -1159,7 +1159,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: const Color(0xFFE3EEFA),
+            color: const Color(0xFFEAF3FC),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(icon, color: blueMid, size: 22),

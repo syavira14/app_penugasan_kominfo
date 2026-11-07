@@ -428,7 +428,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     }
     return CircleAvatar(
       radius: radius,
-      backgroundColor: const Color(0xFFE2EFFB),
+      backgroundColor: const Color(0xFFEAF3FC),
       backgroundImage: image,
       child: image == null
           ? Icon(Icons.person, color: blue, size: radius + 3)
@@ -1885,7 +1885,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFFF1F6FC),
+              color: const Color(0xFFEAF3FC),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
@@ -1925,7 +1925,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F6FC),
+        color: const Color(0xFFEAF3FC),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(

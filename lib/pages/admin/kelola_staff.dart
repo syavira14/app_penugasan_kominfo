@@ -745,7 +745,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
     const Color fillColor = AppPalette.background;
 
     OutlineInputBorder border(Color c, [double w = 1]) => OutlineInputBorder(
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       borderSide: BorderSide(color: c, width: w),
     );
 
@@ -759,7 +759,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
             style: const TextStyle(
               fontSize: AppTypography.body,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF334155),
+              color: Color(0xFF475569),
             ),
           ),
           const SizedBox(height: 8),
@@ -776,7 +776,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
             decoration: InputDecoration(
               hintText: hint,
               hintStyle: const TextStyle(
-                color: Color(0xFF94A3B8),
+                color: Color(0xFF64748B),
                 fontSize: AppTypography.body,
               ),
               prefixIcon: Icon(icon, size: 22, color: const Color(0xFF64748B)),

@@ -179,7 +179,7 @@ Widget _avatar(Map<String, dynamic> s, double radius) {
   }
   return CircleAvatar(
     radius: radius,
-    backgroundColor: const Color(0xFFE2EFFB),
+    backgroundColor: const Color(0xFFEAF3FC),
     backgroundImage: image,
     child: image == null
         ? Icon(Icons.person, color: _blue, size: radius + 4)
@@ -1094,7 +1094,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                     'Setiap karyawan mendapatkan 15 tugas per bulan (5 tinggi, 5 sedang, 5 rendah).\nMaksimal 5 tugas dapat dikerjakan secara bersamaan.',
                     style: TextStyle(
                       fontSize: AppTypography.caption,
-                      color: Color(0xFF425466),
+                      color: Color(0xFF475569),
                       height: 1.4,
                     ),
                   ),
@@ -1204,10 +1204,12 @@ class _StatusStaffPageState extends State<StatusStaffPage>
   );
 
   void _detail(Map<String, dynamic> row) {
+    // Pakai adminRoute (tanpa animasi) supaya langsung tampil, sama seperti
+    // perpindahan lewat sidebar, tanpa efek geser/berkedip.
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => StatusStaffDetailPage(
+      adminRoute(
+        StatusStaffDetailPage(
           staff: Map<String, dynamic>.from(row['staff'] as Map),
           tasks: List<Map<String, dynamic>>.from(row['tasks'] as List),
         ),
@@ -1299,6 +1301,16 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          TextButton.icon(
+            onPressed: () => Navigator.maybePop(context),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text(
+              'Kembali ke Status Staff',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            style: TextButton.styleFrom(foregroundColor: _blue),
+          ),
+          const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(18),
             decoration: _card(),
@@ -1572,29 +1584,6 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
             _taskList(others, ''),
           ],
 
-          const SizedBox(height: 24),
-
-          Center(
-            child: SizedBox(
-              width: 200,
-              height: 44,
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _navy,
-                  side: const BorderSide(color: _blue, width: 1.5),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back_rounded, size: 18),
-                label: const Text(
-                  'Kembali',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ),
           const SizedBox(height: 20),
         ],
       ),

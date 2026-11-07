@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../theme/app_theme.dart';
 import '../../tugas/kelola_tugas_page.dart';
 import '../../widgets/admin_header.dart';
 import 'admin_sidebar.dart';
@@ -14,10 +15,10 @@ class AdminKalenderPage extends StatefulWidget {
 
 class _AdminKalenderPageState extends State<AdminKalenderPage> {
   // Palet warna (sama dengan kalender staff)
-  static const Color kBiruTua = Color(0xFF1A1464);
-  static const Color kBiruSedang = Color(0xFF1D5FA0);
+  static const Color kBiruTua = AppPalette.navy;
+  static const Color kBiruSedang = AppPalette.blue;
   static const Color accentGold = Color(0xFFFFC107);
-  static const Color kBgLight = Color(0xFFF7F9FB);
+  static const Color kBgLight = AppPalette.background;
 
   static const double _sidebarBreakpoint = 900;
   static const int _sidebarIndex = 4; // posisi menu Kalender di sidebar
@@ -113,15 +114,15 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
   Color _getStatusColor(String rawStatus) {
     switch (rawStatus.toLowerCase()) {
       case 'disetujui':
-        return Colors.green.shade700;
+        return AppTaskStatus.color('disetujui');
       case 'dikumpulkan':
-        return Colors.blue.shade700;
+        return AppTaskStatus.color('dikumpulkan');
       case 'revisi':
         return Colors.amber.shade900;
       case 'terkendala':
-        return Colors.red.shade700;
+        return AppTaskStatus.color('terkendala');
       case 'berlangsung':
-        return Colors.orange.shade800;
+        return AppTaskStatus.color('berlangsung');
       default:
         return Colors.grey.shade700;
     }
@@ -470,7 +471,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                   child: Text(
                     "${_monthNames[_focusedDay.month - 1]} ${_focusedDay.year}",
                     style: TextStyle(
-                      fontSize: 15 * scale,
+                      fontSize: AppTypography.body * scale,
                       fontWeight: FontWeight.bold,
                       color: kBiruTua,
                     ),
@@ -503,7 +504,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    fontSize: 12 * scale,
+                    fontSize: AppTypography.small * scale,
                     color: isMingguHeader
                         ? Colors.red.shade600
                         : Colors.grey.shade600,
@@ -582,7 +583,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                       Text(
                         "${date.day}",
                         style: TextStyle(
-                          fontSize: 12 * scale,
+                          fontSize: AppTypography.small * scale,
                           fontWeight: isSelected || (isSunday && isCurrentMonth)
                               ? FontWeight.bold
                               : FontWeight.normal,
@@ -647,8 +648,11 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
             child: Text(
               '$label: $value',
               style: TextStyle(
-                fontSize: 11.5 * scale,
-                color: Colors.grey.shade700,
+                fontSize: AppTypography.small * scale,
+                color: color == kBiruSedang ? Colors.grey.shade700 : color,
+                fontWeight: color == kBiruSedang
+                    ? FontWeight.normal
+                    : FontWeight.w600,
               ),
             ),
           ),
@@ -677,7 +681,10 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
         SizedBox(width: 5 * scale),
         Text(
           label,
-          style: TextStyle(fontSize: 11 * scale, color: Colors.grey.shade600),
+          style: TextStyle(
+            fontSize: AppTypography.caption * scale,
+            color: Colors.grey.shade600,
+          ),
         ),
       ],
     );
@@ -696,7 +703,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
             Text(
               "Pekerjaan Tanggal Ini",
               style: TextStyle(
-                fontSize: 17 * scale,
+                fontSize: AppTypography.section * scale,
                 fontWeight: FontWeight.bold,
                 color: kBiruTua,
               ),
@@ -704,7 +711,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
             Text(
               "${_selectedDay.day}/${_selectedDay.month}/${_selectedDay.year}",
               style: TextStyle(
-                fontSize: 12 * scale,
+                fontSize: AppTypography.small * scale,
                 color: Colors.grey.shade600,
               ),
             ),
@@ -721,7 +728,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                 "Tidak ada jadwal pekerjaan pada tanggal ini",
                 style: TextStyle(
                   color: Colors.grey.shade500,
-                  fontSize: 13 * scale,
+                  fontSize: AppTypography.body * scale,
                 ),
               ),
             ),
@@ -747,7 +754,12 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                   padding: EdgeInsets.all(16 * scale),
                   decoration: _cardDeco().copyWith(
                     border: Border(
-                      left: BorderSide(color: kBiruSedang, width: 4 * scale),
+                      left: BorderSide(
+                        color: item["sudah_serah"] == true
+                            ? Colors.green.shade600
+                            : Colors.red.shade600,
+                        width: 4 * scale,
+                      ),
                     ),
                   ),
                   child: Row(
@@ -761,7 +773,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                               item["title"]!,
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                fontSize: 14 * scale,
+                                fontSize: AppTypography.body * scale,
                                 color: kBiruTua,
                               ),
                             ),
@@ -782,7 +794,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                      fontSize: 12 * scale,
+                                      fontSize: AppTypography.small * scale,
                                       fontWeight: FontWeight.w600,
                                       color: kBiruTua,
                                     ),
@@ -802,7 +814,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                             ),
                             _infoRow(
                               Icons.event_rounded,
-                              kBiruSedang,
+                              Colors.red.shade700,
                               'Tenggat terakhir dikumpulkan',
                               item["tenggat"].toString(),
                               scale,
@@ -810,10 +822,10 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                             _infoRow(
                               item["sudah_serah"] == true
                                   ? Icons.check_circle_rounded
-                                  : Icons.hourglass_empty_rounded,
+                                  : Icons.warning_amber_rounded,
                               item["sudah_serah"] == true
-                                  ? Colors.green.shade600
-                                  : Colors.grey,
+                                  ? Colors.green.shade700
+                                  : Colors.red.shade700,
                               'Diserahkan',
                               item["diserahkan"].toString(),
                               scale,
@@ -835,7 +847,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                           item["status"]!,
                           style: TextStyle(
                             color: _getStatusColor(rawStatus),
-                            fontSize: 10 * scale,
+                            fontSize: AppTypography.caption * scale,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -882,7 +894,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                     "$tempYear",
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
-                      fontSize: 18,
+                      fontSize: AppTypography.subtitle,
                       color: kBiruTua,
                     ),
                   ),
@@ -926,7 +938,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                           _monthNames[index].substring(0, 3),
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            fontSize: 13,
+                            fontSize: AppTypography.body,
                             color: isSelected ? Colors.white : kBiruTua,
                           ),
                         ),
@@ -945,7 +957,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: kBiruSedang,
+                    backgroundColor: AppPalette.blue,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),

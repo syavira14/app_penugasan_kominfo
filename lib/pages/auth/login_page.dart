@@ -362,7 +362,7 @@ class _LoginPageState extends State<LoginPage> {
             const SizedBox(height: 8),
             TextFormField(
               controller: _identifierController,
-              keyboardType: TextInputType.emailAddress,
+              keyboardType: TextInputType.text,
               textInputAction: TextInputAction.next,
               style: const TextStyle(fontSize: 14, color: AppColors.biruTua),
               decoration: _inputDecoration(

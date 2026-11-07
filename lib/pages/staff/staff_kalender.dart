@@ -5,6 +5,13 @@ import 'package:flutter/material.dart';
 import '../../widgets/app_layout.dart';
 import 'tugas_detail_page.dart';
 
+// Alias tipe data agar aman saat di-copy paste dan mudah dibaca
+typedef JsonMap = Map<String, dynamic>;
+typedef EventList = List<JsonMap>;
+typedef EventMap = Map<String, EventList>;
+typedef QuerySnap = QuerySnapshot<JsonMap>;
+typedef QueryDoc = QueryDocumentSnapshot<JsonMap>;
+
 class StaffKalenderPage extends StatefulWidget {
   const StaffKalenderPage({super.key});
 
@@ -25,7 +32,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
 
-  Stream<QuerySnapshot<Map<String, dynamic>>>? _assignmentStream;
+  Stream<QuerySnap>? _assignmentStream;
 
   static const List<String> _monthNames = [
     "Januari",
@@ -63,11 +70,34 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
   }
 
   DateTime? _asDate(dynamic value) {
-    if (value is Timestamp) {
-      return value.toDate();
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String && value.isNotEmpty) return DateTime.tryParse(value);
+    return null;
+  }
+
+  DateTime? _tglDiserahkan(JsonMap a) {
+    const keys = [
+      'tanggal_dikumpulkan',
+      'tanggal_pengumpulan',
+      'tanggal_diserahkan',
+      'tanggal_kumpul',
+      'waktu_dikumpulkan',
+      'dikumpulkan_pada',
+      'submitted_at',
+    ];
+    for (final k in keys) {
+      final d = _asDate(a[k]);
+      if (d != null) return d;
     }
     return null;
   }
+
+  String _jam(DateTime d) =>
+      "${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')} WIB";
+
+  String _tanggalJam(DateTime d) =>
+      "${d.day} ${_monthNames[d.month - 1].substring(0, 3)} ${d.year}, ${_jam(d)}";
 
   String _statusUi(String rawStatus) {
     switch (rawStatus.toLowerCase()) {
@@ -104,10 +134,8 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
     });
   }
 
-  Future<Map<String, List<Map<String, dynamic>>>> _fetchTaskEvents(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
-  ) async {
-    final Map<String, List<Map<String, dynamic>>> events = {};
+  Future<EventMap> _fetchTaskEvents(List<QueryDoc> assignments) async {
+    final EventMap events = {};
 
     for (final assignment in assignments) {
       try {
@@ -137,18 +165,40 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
         final String rawStatus = (assignmentData['status'] ?? 'pending')
             .toString();
         final String statusTampil = _statusUi(rawStatus);
+        final String tenggatText = tglDeadline != null
+            ? _tanggalJam(tglDeadline)
+            : '-';
+        final String diberikanText = tglMulai != null
+            ? _tanggalJam(tglMulai)
+            : '-';
+
+        final DateTime? tglSerah = _tglDiserahkan(assignmentData);
+        final bool sudahSerah = const [
+          'dikumpulkan',
+          'revisi',
+          'disetujui',
+          'selesai',
+        ].contains(rawStatus.toLowerCase());
+        final String diserahkanText = tglSerah != null
+            ? _tanggalJam(tglSerah)
+            : (sudahSerah
+                  ? 'Sudah diserahkan (tanggal tidak tercatat)'
+                  : 'Belum diserahkan');
 
         if (tglMulai != null) {
           final String keyMulai = _dateKey(tglMulai);
           events.putIfAbsent(keyMulai, () => []).add({
             "penugasan_id": assignment.id,
             "title": judulTugas,
-            "time":
-                "${tglMulai.hour.toString().padLeft(2, '0')}:${tglMulai.minute.toString().padLeft(2, '0')} WIB",
+            "time": _jam(tglMulai),
             "type": "Tugas Diberikan",
             "is_deadline": false,
             "status": statusTampil,
             "raw_status": rawStatus,
+            "tenggat": tenggatText,
+            "diberikan": diberikanText,
+            "diserahkan": diserahkanText,
+            "sudah_serah": sudahSerah,
           });
         }
 
@@ -156,13 +206,16 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
           final String keyDeadline = _dateKey(tglDeadline);
           events.putIfAbsent(keyDeadline, () => []).add({
             "penugasan_id": assignment.id,
-            "title": "DEADLINE: $judulTugas",
-            "time":
-                "${tglDeadline.hour.toString().padLeft(2, '0')}:${tglDeadline.minute.toString().padLeft(2, '0')} WIB",
+            "title": judulTugas,
+            "time": _jam(tglDeadline),
             "type": "Batas Selesai ($statusTampil)",
             "is_deadline": true,
             "status": statusTampil,
             "raw_status": rawStatus,
+            "tenggat": tenggatText,
+            "diberikan": diberikanText,
+            "diserahkan": diserahkanText,
+            "sudah_serah": sudahSerah,
           });
         }
       } catch (_) {}
@@ -344,6 +397,37 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
     }
   }
 
+  Widget _infoRow(
+    IconData icon,
+    Color color,
+    String label,
+    String value,
+    double scale,
+  ) {
+    return Padding(
+      padding: EdgeInsets.only(top: 4 * scale),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14 * scale, color: color),
+          SizedBox(width: 5 * scale),
+          Expanded(
+            child: Text(
+              '$label: $value',
+              style: TextStyle(
+                fontSize: 11.5 * scale,
+                color: color == kBiruSedang ? Colors.grey.shade700 : color,
+                fontWeight: color == kBiruSedang
+                    ? FontWeight.normal
+                    : FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final double screenWidth = MediaQuery.of(context).size.width;
@@ -352,23 +436,22 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
 
     return Scaffold(
       backgroundColor: kBgLight,
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      body: StreamBuilder<QuerySnap>(
         stream: _assignmentStream,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Center(child: Text("Gagal memuat data: ${snapshot.error}"));
           }
 
-          final assignments = snapshot.data?.docs ?? [];
+          final List<QueryDoc> assignments = snapshot.data?.docs ?? [];
 
-          return FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
+          return FutureBuilder<EventMap>(
             future: _fetchTaskEvents(assignments),
             builder: (context, taskSnapshot) {
-              final Map<String, List<Map<String, dynamic>>> events =
-                  taskSnapshot.data ?? {};
+              final EventMap events = taskSnapshot.data ?? {};
 
               final String selectedKey = _dateKey(_selectedDay);
-              final List<Map<String, dynamic>> currentEvents = List.from(
+              final EventList currentEvents = List.from(
                 events[selectedKey] ?? [],
               );
 
@@ -490,10 +573,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
     );
   }
 
-  Widget _buildCalendarCard(
-    Map<String, List<Map<String, dynamic>>> events,
-    double scale,
-  ) {
+  Widget _buildCalendarCard(EventMap events, double scale) {
     final int daysInMonth = DateTime(
       _focusedDay.year,
       _focusedDay.month + 1,
@@ -640,7 +720,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                   date.day == _selectedDay.day;
 
               final bool isSunday = date.weekday == DateTime.sunday;
-              final List<Map<String, dynamic>> dayEvents = events[key] ?? [];
+              final EventList dayEvents = events[key] ?? [];
 
               return InkWell(
                 onTap: () {
@@ -702,7 +782,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
     );
   }
 
-  Widget _buildTaskList(List<Map<String, dynamic>> events, double scale) {
+  Widget _buildTaskList(EventList events, double scale) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -752,7 +832,6 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
             itemCount: events.length,
             itemBuilder: (context, index) {
               final item = events[index];
-              final bool isDeadline = item["is_deadline"] ?? false;
               final String rawStatus = item["raw_status"] ?? "pending";
 
               final Color statusTextColor = _getStatusColor(rawStatus);
@@ -779,7 +858,9 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                     borderRadius: BorderRadius.circular(20 * scale),
                     border: Border(
                       left: BorderSide(
-                        color: isDeadline ? Colors.red.shade600 : kBiruSedang,
+                        color: item["sudah_serah"] == true
+                            ? Colors.green.shade600
+                            : Colors.red.shade600,
                         width: 4 * scale,
                       ),
                     ),
@@ -802,32 +883,39 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 14 * scale,
-                                color: isDeadline
-                                    ? Colors.red.shade900
-                                    : Colors.black87,
+                                color: kBiruTua,
                               ),
                             ),
                             SizedBox(height: 4 * scale),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.access_time,
-                                  size: 14 * scale,
-                                  color: Colors.grey,
-                                ),
-                                SizedBox(width: 4 * scale),
-                                Text(
-                                  item["time"]!,
-                                  style: TextStyle(
-                                    fontSize: 11 * scale,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                              ],
+                            _infoRow(
+                              Icons.play_circle_outline_rounded,
+                              kBiruSedang,
+                              'Diberikan',
+                              item["diberikan"].toString(),
+                              scale,
+                            ),
+                            _infoRow(
+                              Icons.event_rounded,
+                              Colors.red.shade700,
+                              'Tenggat terakhir dikumpulkan',
+                              item["tenggat"].toString(),
+                              scale,
+                            ),
+                            _infoRow(
+                              item["sudah_serah"] == true
+                                  ? Icons.check_circle_rounded
+                                  : Icons.warning_amber_rounded,
+                              item["sudah_serah"] == true
+                                  ? Colors.green.shade700
+                                  : Colors.red.shade700,
+                              'Diserahkan',
+                              item["diserahkan"].toString(),
+                              scale,
                             ),
                           ],
                         ),
                       ),
+                      SizedBox(width: 8 * scale),
                       Container(
                         padding: EdgeInsets.symmetric(
                           horizontal: 10 * scale,
@@ -838,7 +926,7 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
                           borderRadius: BorderRadius.circular(8 * scale),
                         ),
                         child: Text(
-                          item["type"]!,
+                          item["status"]!,
                           style: TextStyle(
                             color: statusTextColor,
                             fontSize: 10 * scale,

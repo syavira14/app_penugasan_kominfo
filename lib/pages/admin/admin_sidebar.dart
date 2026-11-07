@@ -1,6 +1,9 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../../theme/app_theme.dart';
 import '../../tugas/kelola_tugas_page.dart';
+import '../auth/login_page.dart';
 import 'admin_kalender.dart';
 import 'dashboard_admin_page.dart';
 import 'kelola_staff.dart';
@@ -25,9 +28,9 @@ class AdminSidebar extends StatelessWidget {
 
   const AdminSidebar({super.key, this.currentIndex = 0, this.isDrawer = false});
 
-  static const Color biruTua = Color(0xFF1A1464);
-  static const Color biruMid = Color(0xFF1D5FA0);
-  static const Color biruMuda = Color(0xFF4FA6DE);
+  static const Color biruTua = AppPalette.navy;
+  static const Color biruMid = AppPalette.blue;
+  static const Color biruMuda = AppPalette.sky;
   static const Color accentGold = Color(0xFFFFC107);
 
   static final List<_SidebarItem> _items = [
@@ -77,15 +80,80 @@ class AdminSidebar extends StatelessWidget {
 
     if (index == currentIndex) return;
 
-    // Jika memilih Dashboard (index 0 / item.page == null), balik ke DashboardAdminPage & reset stack
+    // Dashboard: balik ke DashboardAdminPage & reset stack
     if (item.page == null) {
       navigator.pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const DashboardAdminPage()),
+        adminRoute(const DashboardAdminPage()),
         (route) => false,
       );
+    } else if (currentIndex == 0) {
+      // Dari Dashboard: tumpuk halaman baru supaya tombol kembali ke Dashboard
+      navigator.push(adminRoute(item.page!()));
     } else {
-      navigator.push(MaterialPageRoute(builder: (_) => item.page!()));
+      // Dari halaman lain: ganti halaman (stack tidak menumpuk)
+      navigator.pushReplacement(adminRoute(item.page!()));
     }
+  }
+
+  Future<void> _logout(BuildContext context) async {
+    final navigator = Navigator.of(context);
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        icon: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.red.shade50,
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.logout_rounded,
+            color: Colors.redAccent,
+            size: 28,
+          ),
+        ),
+        title: const Text('Keluar'),
+        content: const Text(
+          'Yakin ingin keluar dari akun ini?',
+          textAlign: TextAlign.center,
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            style: OutlinedButton.styleFrom(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text('Keluar', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    await FirebaseAuth.instance.signOut();
+
+    // Kembali ke halaman login dan kosongkan seluruh riwayat halaman
+    navigator.pushAndRemoveUntil(
+      adminRoute(const LoginPage()),
+      (route) => false,
+    );
   }
 
   @override
@@ -109,15 +177,25 @@ class AdminSidebar extends StatelessWidget {
               child: Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.18),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(
-                      Icons.admin_panel_settings_rounded,
+                    width: 58,
+                    height: 58,
+                    padding: const EdgeInsets.all(3),
+                    decoration: const BoxDecoration(
                       color: Colors.white,
-                      size: 24,
+                      shape: BoxShape.circle,
+                    ),
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/logokominfo.png',
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Icon(
+                            Icons.image_not_supported_rounded,
+                            color: biruMid,
+                            size: 24,
+                          );
+                        },
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -126,17 +204,20 @@ class AdminSidebar extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Admin Panel',
+                          'SIMTAS',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 17,
+                            fontSize: AppTypography.section,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         SizedBox(height: 2),
                         Text(
-                          'Manajemen tugas',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                          'Panel Atasan',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: AppTypography.small,
+                          ),
                         ),
                       ],
                     ),
@@ -186,7 +267,7 @@ class AdminSidebar extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     color: Colors.white,
-                                    fontSize: 14.5,
+                                    fontSize: AppTypography.body,
                                     fontWeight: selected
                                         ? FontWeight.bold
                                         : FontWeight.w500,
@@ -211,6 +292,43 @@ class AdminSidebar extends StatelessWidget {
                 },
               ),
             ),
+
+            // Tombol keluar
+            Divider(color: Colors.white.withOpacity(0.2), height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+              child: Material(
+                color: Colors.white.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => _logout(context),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.logout_rounded,
+                          size: 22,
+                          color: Colors.white,
+                        ),
+                        SizedBox(width: 14),
+                        Expanded(
+                          child: Text(
+                            'Keluar',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: AppTypography.body,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -227,4 +345,14 @@ class AdminSidebar extends StatelessWidget {
     }
     return panel;
   }
+}
+
+/// Route tanpa animasi: pindah halaman langsung tampil,
+/// tanpa efek geser, memudar, atau berkedip.
+Route<T> adminRoute<T>(Widget page) {
+  return PageRouteBuilder<T>(
+    pageBuilder: (_, __, ___) => page,
+    transitionDuration: Duration.zero,
+    reverseTransitionDuration: Duration.zero,
+  );
 }

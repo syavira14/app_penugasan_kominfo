@@ -46,8 +46,10 @@ class TugasModel {
     this.prioritas = 'Sedang',
     bool? selesai,
     TugasStatus? status,
-  })  : selesai = selesai ?? (status == TugasStatus.selesai),
-        status = status ?? (selesai == true ? TugasStatus.selesai : TugasStatus.belumSelesai);
+  }) : selesai = selesai ?? (status == TugasStatus.selesai),
+       status =
+           status ??
+           (selesai == true ? TugasStatus.selesai : TugasStatus.belumSelesai);
 
   TugasModel copyWith({
     String? judul,
@@ -85,8 +87,18 @@ class TugasModel {
 /// Format tanggal sederhana ke Bahasa Indonesia tanpa dependency `intl`.
 String formatTanggalIndo(DateTime date) {
   const List<String> bulan = [
-    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+    'Januari',
+    'Februari',
+    'Maret',
+    'April',
+    'Mei',
+    'Juni',
+    'Juli',
+    'Agustus',
+    'September',
+    'Oktober',
+    'November',
+    'Desember',
   ];
   return '${date.day} ${bulan[date.month - 1]} ${date.year}';
 }

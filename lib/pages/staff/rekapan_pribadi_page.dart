@@ -521,8 +521,7 @@ class _RekapanPribadiPageState extends State<RekapanPribadiPage> {
           } catch (_) {}
         }
         final jabatan = (p['jabatan'] ?? '-').toString();
-        final phone = (p['no_hp'] ?? p['telepon'] ?? p['no_telp'] ?? '-')
-            .toString();
+        final phone = (p['no_hp'] ?? '-').toString();
 
         return Container(
           padding: EdgeInsets.all(16 * scale),

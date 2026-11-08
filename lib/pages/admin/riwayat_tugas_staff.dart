@@ -4,10 +4,12 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
+import '../../theme/app_theme.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/supabase_storage_service.dart';
 
+import '../../services/riwayat_file_service.dart';
 import '../../widgets/admin_header.dart';
 import 'admin_sidebar.dart';
 
@@ -160,7 +162,10 @@ String _fmtSize(int bytes) {
 }
 
 /// Kumpulkan semua lampiran hasil pekerjaan dari dokumen penugasan.
-List<Map<String, dynamic>> _extractFiles(Map<String, dynamic> a) {
+List<Map<String, dynamic>> _extractFiles(
+  Map<String, dynamic> a, [
+  String assignmentId = '',
+]) {
   final out = <Map<String, dynamic>>[];
   final seen = <String>{};
   final nameField = _s(
@@ -228,6 +233,21 @@ List<Map<String, dynamic>> _extractFiles(Map<String, dynamic> a) {
   for (final k in const ['file_hasil_base64', 'file_base64']) {
     add(a[k], base64Field: true);
   }
+  // File hasil yang disimpan di Supabase hanya punya path (tanpa URL):
+  // URL sementara diminta saat file dilihat / diunduh.
+  final path = _s(a['file_hasil_path']);
+  if (path.isNotEmpty && out.isEmpty) {
+    out.add({
+      'url': '',
+      'b64': '',
+      'nama': nameField.isNotEmpty ? nameField : path.split('/').last,
+      'mime': mimeField,
+    });
+  }
+  for (final f in out) {
+    f['path'] = path;
+    f['aid'] = assignmentId;
+  }
   return out;
 }
 
@@ -266,7 +286,7 @@ bool _byAtasan(String label) =>
 Color _evColor(String label) {
   switch (label) {
     case 'Diberikan':
-      return const Color(0xFF1D5FA0);
+      return AppPalette.blue;
     case 'Dikerjakan':
       return Colors.orange.shade800;
     case 'Terkendala':
@@ -312,10 +332,10 @@ class RiwayatTugasStaffPage extends StatefulWidget {
 
 class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     with AutomaticKeepAliveClientMixin {
-  static const Color navy = Color(0xFF1A1464);
-  static const Color blue = Color(0xFF1D5FA0);
-  static const Color sky = Color(0xFF4FA6DE);
-  static const Color background = Color(0xFFF4F7FB);
+  static const Color navy = AppPalette.navy;
+  static const Color blue = AppPalette.blue;
+  static const Color sky = AppPalette.sky;
+  static const Color background = AppPalette.background;
 
   static const double _sidebarBreakpoint = 900;
   static const int _sidebarIndex = 5;
@@ -388,7 +408,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
           text,
           style: TextStyle(
             color: color,
-            fontSize: 11,
+            fontSize: AppTypography.caption,
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -410,7 +430,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     }
     return CircleAvatar(
       radius: radius,
-      backgroundColor: const Color(0xFFE2EFFB),
+      backgroundColor: const Color(0xFFEAF3FC),
       backgroundImage: image,
       child: image == null
           ? Icon(Icons.person, color: blue, size: radius + 3)
@@ -529,7 +549,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
             : _s(tData['deskripsi']),
         'atasan': atasan,
         'penyetuju': penyetuju,
-        'files': _extractFiles(aData),
+        'files': _extractFiles(aData, item.id),
         'mulai': _parseDate(
           tData['tanggal_mulai_tugas'] ?? tData['created_at'],
         ),
@@ -864,6 +884,21 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     return n;
   }
 
+  /// Untuk file yang hanya punya path (Supabase): minta URL sementara dulu.
+  Future<Map<String, dynamic>> _resolveFile(Map<String, dynamic> f) async {
+    if (_s(f['url']).isNotEmpty || _s(f['b64']).isNotEmpty) return f;
+    final aid = _s(f['aid']);
+    final path = _s(f['path']);
+    if (aid.isEmpty || path.isEmpty) return f;
+    try {
+      final url = await ambilUrlFileHasil(aid, path: path);
+      return {...f, 'url': url};
+    } catch (e) {
+      debugPrint('[riwayat] gagal ambil url file: $e');
+      return f;
+    }
+  }
+
   Future<Uint8List?> _fileBytes(Map<String, dynamic> f) async {
     final b64 = _s(f['b64']);
     if (b64.isNotEmpty) {
@@ -890,6 +925,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     final messenger = ScaffoldMessenger.of(ctx);
     messenger.showSnackBar(SnackBar(content: Text('Mengunduh $name...')));
 
+    f = await _resolveFile(f);
     final bytes = await _fileBytes(f);
     if (bytes != null) {
       final ext = _extOf(name);
@@ -933,6 +969,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     String name,
   ) async {
     final messenger = ScaffoldMessenger.of(ctx);
+    f = await _resolveFile(f);
     final ext = _extOf(name);
     final url = _s(f['url']);
 
@@ -1157,88 +1194,62 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
         )
         .length;
 
-    Widget total() => Container(
-      padding: const EdgeInsets.all(16),
-      decoration: _card(),
-      child: Row(
-        children: [
-          const CircleAvatar(
-            radius: 24,
-            backgroundColor: Color(0xFFE2EFFB),
-            child: Icon(Icons.description_rounded, color: blue),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    Widget _statCard(String label, int value, IconData icon, Color color) {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                const Text(
-                  'Total Tugas Selesai',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: navy,
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
                   ),
+                  child: Icon(icon, size: 18, color: color),
                 ),
-                Text(
-                  '${base.length}',
-                  style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: navy,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '$value',
+                      style: TextStyle(
+                        fontSize: AppTypography.section,
+                        fontWeight: FontWeight.bold,
+                        color: color,
+                      ),
+                    ),
                   ),
-                ),
-                Text(
-                  _periodLabel,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                 ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-
-    Widget prio(String p, IconData icon, {required bool compact}) {
-      final color = _prioColor(p);
-      return Container(
-        padding: EdgeInsets.all(compact ? 12 : 16),
-        decoration: BoxDecoration(
-          color: color.withOpacity(.07),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withOpacity(.2)),
-        ),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: color.withOpacity(.15),
-              child: Icon(icon, color: color, size: 20),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    compact ? p : 'Prioritas $p',
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: color,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Text(
-                    '${n(p)}',
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: navy,
-                    ),
-                  ),
-                ],
+            const SizedBox(height: 8),
+            // Label boleh turun ke baris kedua, tidak dipotong.
+            Text(
+              label,
+              maxLines: 2,
+              softWrap: true,
+              style: TextStyle(
+                fontSize: AppTypography.caption,
+                height: 1.2,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade700,
               ),
             ),
           ],
@@ -1246,43 +1257,65 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
       );
     }
 
+    final cards = <Widget>[
+      _statCard('Total Selesai', base.length, Icons.description_rounded, blue),
+      _statCard(
+        'Prioritas Tinggi',
+        n('Tinggi'),
+        Icons.local_fire_department_rounded,
+        _prioColor('Tinggi'),
+      ),
+      _statCard(
+        'Prioritas Sedang',
+        n('Sedang'),
+        Icons.event_note_rounded,
+        _prioColor('Sedang'),
+      ),
+      _statCard(
+        'Prioritas Rendah',
+        n('Rendah'),
+        Icons.check_circle_rounded,
+        _prioColor('Rendah'),
+      ),
+    ];
+
     if (wide) {
-      return Row(
-        children: [
-          Expanded(flex: 4, child: total()),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 3,
-            child: prio('Tinggi', Icons.local_fire_department, compact: false),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 3,
-            child: prio('Sedang', Icons.event_note, compact: false),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 3,
-            child: prio('Rendah', Icons.check_circle, compact: false),
-          ),
-        ],
+      return IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < cards.length; i++) ...[
+              if (i > 0) const SizedBox(width: 10),
+              Expanded(child: cards[i]),
+            ],
+          ],
+        ),
       );
     }
 
+    // Mobile: 2 x 2 supaya angka dan label tetap terbaca.
     return Column(
       children: [
-        total(),
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: cards[0]),
+              const SizedBox(width: 10),
+              Expanded(child: cards[1]),
+            ],
+          ),
+        ),
         const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: prio('Tinggi', Icons.local_fire_department, compact: true),
-            ),
-            const SizedBox(width: 8),
-            Expanded(child: prio('Sedang', Icons.event_note, compact: true)),
-            const SizedBox(width: 8),
-            Expanded(child: prio('Rendah', Icons.check_circle, compact: true)),
-          ],
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: cards[2]),
+              const SizedBox(width: 10),
+              Expanded(child: cards[3]),
+            ],
+          ),
         ),
       ],
     );
@@ -1291,21 +1324,34 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
   // ───────────────────────── Pencarian + Filter Periode ─────────────────────────
 
   Widget _searchBar() {
-    return TextField(
-      onChanged: (v) => setState(() {
-        pencarian = v;
-        page = 0;
-      }),
-      decoration: InputDecoration(
-        hintText: 'Cari nama staff atau judul tugas...',
-        hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13),
-        prefixIcon: const Icon(Icons.search, color: blue),
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(30),
-          borderSide: BorderSide.none,
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: TextField(
+        onChanged: (v) => setState(() {
+          pencarian = v;
+          page = 0;
+        }),
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Cari nama staff atau judul tugas...',
+          hintStyle: TextStyle(
+            color: Colors.grey.shade500,
+            fontSize: AppTypography.body,
+          ),
+          prefixIcon: const Icon(Icons.search_rounded, color: blue),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 14),
         ),
       ),
     );
@@ -1320,7 +1366,14 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(30),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<int>(
@@ -1328,7 +1381,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
           isExpanded: true,
           icon: const Icon(Icons.arrow_drop_down, color: blue),
           style: const TextStyle(
-            fontSize: 13,
+            fontSize: AppTypography.body,
             fontWeight: FontWeight.w600,
             color: navy,
           ),
@@ -1423,7 +1476,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
       child: Text(
         t,
         style: TextStyle(
-          fontSize: 11.5,
+          fontSize: AppTypography.small,
           fontWeight: FontWeight.w700,
           color: Colors.grey.shade700,
         ),
@@ -1443,7 +1496,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                   child: Text(
                     'Riwayat Tugas',
                     style: TextStyle(
-                      fontSize: 17,
+                      fontSize: AppTypography.section,
                       fontWeight: FontWeight.bold,
                       color: navy,
                     ),
@@ -1505,7 +1558,10 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
           children: [
             Expanded(
               flex: 5,
-              child: Text('$no', style: const TextStyle(fontSize: 12.5)),
+              child: Text(
+                '$no',
+                style: const TextStyle(fontSize: AppTypography.small),
+              ),
             ),
             Expanded(
               flex: 22,
@@ -1522,7 +1578,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontWeight: FontWeight.w700,
-                            fontSize: 12.5,
+                            fontSize: AppTypography.small,
                             color: navy,
                           ),
                         ),
@@ -1530,7 +1586,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                           t['jabatan'] as String,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: AppTypography.caption,
                             color: Colors.grey.shade500,
                           ),
                         ),
@@ -1548,7 +1604,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                   t['judul'] as String,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12.5),
+                  style: const TextStyle(fontSize: AppTypography.small),
                 ),
               ),
             ),
@@ -1563,14 +1619,14 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
               flex: 13,
               child: Text(
                 _fmt(t['mulai'] as DateTime?),
-                style: const TextStyle(fontSize: 12),
+                style: const TextStyle(fontSize: AppTypography.small),
               ),
             ),
             Expanded(
               flex: 13,
               child: Text(
                 _fmt(t['selesai'] as DateTime?),
-                style: const TextStyle(fontSize: 12),
+                style: const TextStyle(fontSize: AppTypography.small),
               ),
             ),
             Expanded(
@@ -1633,7 +1689,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                             Text(
                               t['judul'] as String,
                               style: const TextStyle(
-                                fontSize: 14,
+                                fontSize: AppTypography.body,
                                 fontWeight: FontWeight.bold,
                                 color: navy,
                               ),
@@ -1642,14 +1698,14 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                             Text(
                               '${t['staff']} • ${t['jabatan']}',
                               style: TextStyle(
-                                fontSize: 12,
+                                fontSize: AppTypography.small,
                                 color: Colors.grey.shade600,
                               ),
                             ),
                             Text(
                               _fmt(t['selesai'] as DateTime?),
                               style: TextStyle(
-                                fontSize: 11.5,
+                                fontSize: AppTypography.small,
                                 color: Colors.grey.shade500,
                               ),
                             ),
@@ -1703,7 +1759,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                           child: Text(
                             'Detail Tugas',
                             style: TextStyle(
-                              fontSize: 17,
+                              fontSize: AppTypography.section,
                               fontWeight: FontWeight.bold,
                               color: navy,
                             ),
@@ -1740,7 +1796,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     child: Text(
       s,
       style: const TextStyle(
-        fontSize: 13,
+        fontSize: AppTypography.body,
         fontWeight: FontWeight.bold,
         color: navy,
       ),
@@ -1767,7 +1823,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
         Text(
           t['judul'] as String,
           style: const TextStyle(
-            fontSize: 18,
+            fontSize: AppTypography.subtitle,
             fontWeight: FontWeight.bold,
             color: navy,
           ),
@@ -1784,7 +1840,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                   Text(
                     t['jabatan'] as String,
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: AppTypography.small,
                       color: Colors.grey.shade600,
                     ),
                   ),
@@ -1792,7 +1848,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                     t['staff'] as String,
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
-                      fontSize: 13,
+                      fontSize: AppTypography.body,
                       color: navy,
                     ),
                   ),
@@ -1809,7 +1865,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
             Expanded(
               child: Text(
                 'Diberikan oleh: ${t['atasan']}',
-                style: const TextStyle(fontSize: 12.5),
+                style: const TextStyle(fontSize: AppTypography.small),
               ),
             ),
           ],
@@ -1822,7 +1878,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
             Expanded(
               child: Text(
                 '${_fmt(tglMulai)} – ${_fmt(tglSelesai)}',
-                style: const TextStyle(fontSize: 12.5),
+                style: const TextStyle(fontSize: AppTypography.small),
               ),
             ),
           ],
@@ -1853,7 +1909,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
         Text(
           t['deskripsi'] as String,
           style: TextStyle(
-            fontSize: 12.5,
+            fontSize: AppTypography.small,
             height: 1.4,
             color: Colors.grey.shade700,
           ),
@@ -1865,12 +1921,15 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFFF1F6FC),
+              color: const Color(0xFFEAF3FC),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               'Tidak ada lampiran hasil pekerjaan.',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              style: TextStyle(
+                fontSize: AppTypography.small,
+                color: Colors.grey.shade600,
+              ),
             ),
           )
         else
@@ -2031,7 +2090,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F6FC),
+        color: const Color(0xFFEAF3FC),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -2058,14 +2117,17 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                   name,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 12.5,
+                    fontSize: AppTypography.small,
                     fontWeight: FontWeight.w600,
                     color: navy,
                   ),
                 ),
                 Text(
                   info,
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                  style: TextStyle(
+                    fontSize: AppTypography.caption,
+                    color: Colors.grey.shade500,
+                  ),
                 ),
               ],
             ),
@@ -2108,7 +2170,10 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
             Expanded(
               child: Text(
                 'Tidak ada revisi maupun kendala selama pengerjaan.',
-                style: TextStyle(fontSize: 12, color: Colors.green.shade800),
+                style: TextStyle(
+                  fontSize: AppTypography.small,
+                  color: Colors.green.shade800,
+                ),
               ),
             ),
           ],
@@ -2157,7 +2222,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                       child: Text(
                         _fmtDT(e.time),
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: AppTypography.caption,
                           color: Colors.grey.shade600,
                         ),
                       ),
@@ -2168,7 +2233,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                 Text(
                   e.note.isEmpty ? 'Tanpa catatan.' : e.note,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: AppTypography.small,
                     height: 1.4,
                     color: Colors.grey.shade800,
                   ),
@@ -2178,7 +2243,10 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                   e.label == 'Revisi'
                       ? 'Diminta oleh: ${e.actor}'
                       : 'Dilaporkan oleh: ${e.actor}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  style: TextStyle(
+                    fontSize: AppTypography.caption,
+                    color: Colors.grey.shade600,
+                  ),
                 ),
               ],
             ),
@@ -2216,19 +2284,22 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                   Text(
                     e.label == 'Disetujui' ? 'Disetujui (Di-ACC)' : e.label,
                     style: TextStyle(
-                      fontSize: 12.5,
+                      fontSize: AppTypography.small,
                       fontWeight: FontWeight.w700,
                       color: color,
                     ),
                   ),
                   Text(
                     _fmtDT(e.time),
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                    style: TextStyle(
+                      fontSize: AppTypography.caption,
+                      color: Colors.grey.shade700,
+                    ),
                   ),
                   Text(
                     'Oleh: ${e.actor}',
                     style: TextStyle(
-                      fontSize: 10.5,
+                      fontSize: AppTypography.caption,
                       color: Colors.grey.shade500,
                     ),
                   ),
@@ -2244,7 +2315,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                       child: Text(
                         e.note,
                         style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: AppTypography.small,
                           height: 1.35,
                           color: Colors.grey.shade800,
                         ),

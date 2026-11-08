@@ -49,12 +49,30 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     }
 
     try {
-      final doc = await FirebaseFirestore.instance
+      var doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .get();
 
       if (doc.exists) {
+        // Sinkronkan email di Firestore jika email Auth sudah berubah
+        // (setelah verifikasi email baru).
+        try {
+          await user.reload();
+        } catch (_) {}
+        final authEmail = FirebaseAuth.instance.currentUser?.email ?? '';
+        final docEmail = (doc.data()?['email'] ?? '').toString();
+        if (authEmail.isNotEmpty && authEmail != docEmail) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .set({'email': authEmail}, SetOptions(merge: true));
+          doc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get();
+        }
+
         if (mounted) {
           setState(() {
             currentUser = UserModel.fromFirestore(doc);
@@ -179,9 +197,11 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    final emailController = TextEditingController(
-      text: user.email ?? currentUser?.email ?? '',
-    );
+    final String emailLama = user.email ?? currentUser?.email ?? '';
+
+    final namaController = TextEditingController(text: currentUser?.nama ?? '');
+    final nipController = TextEditingController(text: currentUser?.nip ?? '');
+    final emailController = TextEditingController(text: emailLama);
     final noHpController = TextEditingController(text: currentUser?.noHp ?? '');
     final currentPasswordController = TextEditingController();
     final newPasswordController = TextEditingController();
@@ -190,6 +210,16 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     bool obscureCurrentPassword = true;
     bool obscureNewPassword = true;
     bool obscureConfirmPassword = true;
+    bool isSaving = false;
+
+    InputDecoration dekorasi(String label, IconData icon, {Widget? suffix}) {
+      return InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        suffixIcon: suffix,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+      );
+    }
 
     await showDialog(
       context: context,
@@ -209,29 +239,32 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     TextField(
-                      controller: emailController,
-                      enabled: false,
-                      decoration: InputDecoration(
-                        labelText: 'Email (Tidak dapat diubah)',
-                        prefixIcon: const Icon(Icons.email_outlined),
-                        disabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        filled: true,
-                        fillColor: Colors.grey.shade100,
+                      controller: namaController,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: dekorasi(
+                        'Nama Lengkap',
+                        Icons.person_outline,
                       ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: nipController,
+                      keyboardType: TextInputType.number,
+                      decoration: dekorasi('NIP', Icons.badge_outlined),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: dekorasi('Email', Icons.email_outlined),
                     ),
                     const SizedBox(height: 14),
                     TextField(
                       controller: noHpController,
                       keyboardType: TextInputType.phone,
-                      decoration: InputDecoration(
-                        labelText: 'No. HP / WhatsApp',
-                        prefixIcon: const Icon(Icons.phone_outlined),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
+                      decoration: dekorasi(
+                        'No. HP / WhatsApp',
+                        Icons.phone_outlined,
                       ),
                     ),
                     const SizedBox(height: 22),
@@ -250,10 +283,10 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                     TextField(
                       controller: currentPasswordController,
                       obscureText: obscureCurrentPassword,
-                      decoration: InputDecoration(
-                        labelText: 'Kata Sandi Saat Ini',
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        suffixIcon: IconButton(
+                      decoration: dekorasi(
+                        'Kata Sandi Saat Ini',
+                        Icons.lock_outline,
+                        suffix: IconButton(
                           icon: Icon(
                             obscureCurrentPassword
                                 ? Icons.visibility_off
@@ -265,19 +298,16 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                             });
                           },
                         ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
                       ),
                     ),
                     const SizedBox(height: 14),
                     TextField(
                       controller: newPasswordController,
                       obscureText: obscureNewPassword,
-                      decoration: InputDecoration(
-                        labelText: 'Kata Sandi Baru',
-                        prefixIcon: const Icon(Icons.lock_reset_outlined),
-                        suffixIcon: IconButton(
+                      decoration: dekorasi(
+                        'Kata Sandi Baru',
+                        Icons.lock_reset_outlined,
+                        suffix: IconButton(
                           icon: Icon(
                             obscureNewPassword
                                 ? Icons.visibility_off
@@ -289,19 +319,16 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                             });
                           },
                         ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
                       ),
                     ),
                     const SizedBox(height: 14),
                     TextField(
                       controller: confirmPasswordController,
                       obscureText: obscureConfirmPassword,
-                      decoration: InputDecoration(
-                        labelText: 'Konfirmasi Kata Sandi Baru',
-                        prefixIcon: const Icon(Icons.lock_reset_outlined),
-                        suffixIcon: IconButton(
+                      decoration: dekorasi(
+                        'Konfirmasi Kata Sandi Baru',
+                        Icons.lock_reset_outlined,
+                        suffix: IconButton(
                           icon: Icon(
                             obscureConfirmPassword
                                 ? Icons.visibility_off
@@ -313,16 +340,14 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                             });
                           },
                         ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Kosongkan bagian kata sandi jika tidak ingin mengubahnya.',
+                        'Kosongkan bagian kata sandi jika tidak ingin mengubahnya. '
+                        'Kata sandi saat ini wajib diisi jika mengubah email atau kata sandi.',
                         style: TextStyle(
                           fontSize: 11,
                           color: Colors.grey.shade600,
@@ -334,9 +359,14 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    Navigator.of(dialogContext, rootNavigator: true).pop();
-                  },
+                  onPressed: isSaving
+                      ? null
+                      : () {
+                          Navigator.of(
+                            dialogContext,
+                            rootNavigator: true,
+                          ).pop();
+                        },
                   child: const Text('Batal'),
                 ),
                 ElevatedButton(
@@ -347,104 +377,180 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  onPressed: () async {
-                    final newNoHp = noHpController.text.trim();
-                    final currentPassword = currentPasswordController.text
-                        .trim();
-                    final newPassword = newPasswordController.text.trim();
-                    final confirmPassword = confirmPasswordController.text
-                        .trim();
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final messenger = ScaffoldMessenger.of(context);
 
-                    final bool isChangingPassword =
-                        newPassword.isNotEmpty || confirmPassword.isNotEmpty;
+                          final newNama = namaController.text.trim();
+                          final newNip = nipController.text.trim();
+                          final newEmail = emailController.text.trim();
+                          final newNoHp = noHpController.text.trim();
+                          final currentPassword = currentPasswordController.text
+                              .trim();
+                          final newPassword = newPasswordController.text.trim();
+                          final confirmPassword = confirmPasswordController.text
+                              .trim();
 
-                    if (isChangingPassword) {
-                      if (currentPassword.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Masukkan kata sandi saat ini.'),
+                          final bool isChangingPassword =
+                              newPassword.isNotEmpty ||
+                              confirmPassword.isNotEmpty;
+                          final bool isChangingEmail =
+                              newEmail.toLowerCase() != emailLama.toLowerCase();
+
+                          if (newNama.isEmpty) {
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text('Nama tidak boleh kosong.'),
+                              ),
+                            );
+                            return;
+                          }
+
+                          if (newEmail.isEmpty ||
+                              !RegExp(
+                                r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                              ).hasMatch(newEmail)) {
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text('Format email tidak valid.'),
+                              ),
+                            );
+                            return;
+                          }
+
+                          if ((isChangingPassword || isChangingEmail) &&
+                              currentPassword.isEmpty) {
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Masukkan kata sandi saat ini untuk mengubah email atau kata sandi.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          if (isChangingPassword) {
+                            if (newPassword.length < 6) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Kata sandi baru minimal 6 karakter.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+
+                            if (newPassword != confirmPassword) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Konfirmasi kata sandi tidak cocok.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                          }
+
+                          setDialogState(() => isSaving = true);
+
+                          try {
+                            if (isChangingPassword || isChangingEmail) {
+                              final credential = EmailAuthProvider.credential(
+                                email: emailLama,
+                                password: currentPassword,
+                              );
+                              await user.reauthenticateWithCredential(
+                                credential,
+                              );
+                            }
+
+                            if (isChangingPassword) {
+                              await user.updatePassword(newPassword);
+                            }
+
+                            // Email baru baru aktif setelah diverifikasi lewat
+                            // link yang dikirim ke email baru.
+                            if (isChangingEmail) {
+                              await user.verifyBeforeUpdateEmail(newEmail);
+                            }
+
+                            // Email di Firestore TIDAK diubah di sini; akan
+                            // disinkronkan otomatis di _fetchUserData setelah
+                            // email baru diverifikasi.
+                            await FirebaseFirestore.instance
+                                .collection('users')
+                                .doc(user.uid)
+                                .set({
+                                  'nama': newNama,
+                                  'nip': newNip,
+                                  'no_hp': newNoHp,
+                                  'updated_at': FieldValue.serverTimestamp(),
+                                }, SetOptions(merge: true));
+
+                            await _fetchUserData();
+
+                            if (dialogContext.mounted) {
+                              Navigator.of(
+                                dialogContext,
+                                rootNavigator: true,
+                              ).pop();
+                            }
+
+                            if (mounted) {
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    isChangingEmail
+                                        ? 'Informasi diperbarui. Cek email baru Anda untuk verifikasi perubahan email.'
+                                        : 'Informasi berhasil diperbarui!',
+                                  ),
+                                ),
+                              );
+                            }
+                          } on FirebaseAuthException catch (e) {
+                            String message = 'Gagal memperbarui informasi.';
+                            if (e.code == 'wrong-password' ||
+                                e.code == 'invalid-credential') {
+                              message = 'Kata sandi saat ini salah.';
+                            } else if (e.code == 'weak-password') {
+                              message = 'Kata sandi terlalu lemah.';
+                            } else if (e.code == 'requires-recent-login') {
+                              message = 'Silakan login ulang terlebih dahulu.';
+                            } else if (e.code == 'email-already-in-use') {
+                              message = 'Email sudah dipakai akun lain.';
+                            } else if (e.code == 'invalid-email') {
+                              message = 'Format email tidak valid.';
+                            } else if (e.code == 'too-many-requests') {
+                              message =
+                                  'Terlalu banyak percobaan. Coba lagi nanti.';
+                            }
+                            messenger.showSnackBar(
+                              SnackBar(content: Text(message)),
+                            );
+                          } catch (e) {
+                            messenger.showSnackBar(
+                              SnackBar(content: Text('Terjadi kesalahan: $e')),
+                            );
+                          } finally {
+                            if (dialogContext.mounted) {
+                              setDialogState(() => isSaving = false);
+                            }
+                          }
+                        },
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
                           ),
-                        );
-                        return;
-                      }
-
-                      if (newPassword.length < 6) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Kata sandi baru minimal 6 karakter.',
-                            ),
-                          ),
-                        );
-                        return;
-                      }
-
-                      if (newPassword != confirmPassword) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Konfirmasi kata sandi tidak cocok.'),
-                          ),
-                        );
-                        return;
-                      }
-                    }
-
-                    try {
-                      if (isChangingPassword) {
-                        final credential = EmailAuthProvider.credential(
-                          email: user.email!,
-                          password: currentPassword,
-                        );
-
-                        await user.reauthenticateWithCredential(credential);
-                        await user.updatePassword(newPassword);
-                      }
-
-                      await FirebaseFirestore.instance
-                          .collection('users')
-                          .doc(user.uid)
-                          .set({
-                            'no_hp': newNoHp,
-                            'updated_at': FieldValue.serverTimestamp(),
-                          }, SetOptions(merge: true));
-
-                      await _fetchUserData();
-
-                      if (dialogContext.mounted) {
-                        Navigator.of(dialogContext, rootNavigator: true).pop();
-                      }
-
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Informasi berhasil diperbarui!'),
-                          ),
-                        );
-                      }
-                    } on FirebaseAuthException catch (e) {
-                      if (mounted) {
-                        String message = 'Gagal memperbarui kata sandi.';
-                        if (e.code == 'wrong-password' ||
-                            e.code == 'invalid-credential') {
-                          message = 'Kata sandi saat ini salah.';
-                        } else if (e.code == 'weak-password') {
-                          message = 'Kata sandi terlalu lemah.';
-                        } else if (e.code == 'requires-recent-login') {
-                          message = 'Silakan login ulang terlebih dahulu.';
-                        }
-                        ScaffoldMessenger.of(
-                          context,
-                        ).showSnackBar(SnackBar(content: Text(message)));
-                      }
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Terjadi kesalahan: $e')),
-                        );
-                      }
-                    }
-                  },
-                  child: const Text('Simpan'),
+                        )
+                      : const Text('Simpan'),
                 ),
               ],
             );
@@ -491,26 +597,6 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                     child: _isUploading
                         ? const CircularProgressIndicator(color: Colors.white)
                         : _buildProfileImage(scale),
-                  ),
-                ),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: GestureDetector(
-                    onTap: _isUploading ? null : _gantiFoto,
-                    child: Container(
-                      padding: EdgeInsets.all(9 * scale),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: kBiruSedang, width: 2),
-                      ),
-                      child: Icon(
-                        Icons.camera_alt_outlined,
-                        color: kBiruSedang,
-                        size: 19 * scale,
-                      ),
-                    ),
                   ),
                 ),
               ],

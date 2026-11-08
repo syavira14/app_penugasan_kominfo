@@ -3,15 +3,16 @@ import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../theme/app_theme.dart';
 import '../../widgets/admin_header.dart';
 import 'admin_sidebar.dart';
 
 // ─────────────────────────── Konstanta & Helper ───────────────────────────
 
-const _navy = Color(0xFF1A1464);
-const _blue = Color(0xFF1D5FA0);
-const _sky = Color(0xFF4FA6DE);
-const _bg = Color(0xFFF4F7FB);
+const _navy = AppPalette.navy;
+const _blue = AppPalette.blue;
+const _sky = AppPalette.sky;
+const _bg = AppPalette.background;
 const _maxActive = 5;
 const _maxMonthlyTotal = 15;
 const _sideWidth = 360.0;
@@ -123,15 +124,15 @@ Color _prioColor(String p) {
 Color _statusColor(String s) {
   switch (s) {
     case 'Berlangsung':
-      return Colors.orange.shade800;
+      return AppTaskStatus.color('berlangsung');
     case 'Dikumpulkan':
-      return Colors.deepPurple.shade400;
+      return AppTaskStatus.color('dikumpulkan');
     case 'Revisi':
-      return Colors.deepOrange.shade600;
+      return AppTaskStatus.color('revisi');
     case 'Terkendala':
-      return Colors.red.shade700;
+      return AppTaskStatus.color('terkendala');
     case 'Selesai':
-      return Colors.green.shade700;
+      return AppTaskStatus.color('disetujui');
     case 'Antrean':
       return Colors.blueGrey.shade600;
     default:
@@ -156,7 +157,7 @@ Widget _pill(String text, Color color, {IconData? icon}) => Container(
         text,
         style: TextStyle(
           color: color,
-          fontSize: 11,
+          fontSize: AppTypography.caption,
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -178,7 +179,7 @@ Widget _avatar(Map<String, dynamic> s, double radius) {
   }
   return CircleAvatar(
     radius: radius,
-    backgroundColor: const Color(0xFFE2EFFB),
+    backgroundColor: const Color(0xFFEAF3FC),
     backgroundImage: image,
     child: image == null
         ? Icon(Icons.person, color: _blue, size: radius + 4)
@@ -446,22 +447,47 @@ class _StatusStaffPageState extends State<StatusStaffPage>
   }
 
   Widget _toolbar(bool wide) {
-    final searchField = TextField(
-      controller: search,
-      onChanged: (v) => setState(() {
-        query = v;
-        page = 0;
-      }),
-      decoration: InputDecoration(
-        hintText: 'Cari nama, jabatan, atau NIP...',
-        hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13),
-        prefixIcon: const Icon(Icons.search),
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(30),
-          borderSide: BorderSide.none,
+    final searchField = Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: search,
+        onChanged: (v) => setState(() {
+          query = v;
+          page = 0;
+        }),
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Cari nama, jabatan, atau NIP...',
+          hintStyle: TextStyle(
+            color: Colors.grey.shade500,
+            fontSize: AppTypography.body,
+          ),
+          prefixIcon: const Icon(Icons.search_rounded, color: _blue),
+          suffixIcon: query.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                  onPressed: () {
+                    search.clear();
+                    setState(() {
+                      query = '';
+                      page = 0;
+                    });
+                  },
+                ),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 14),
         ),
       ),
     );
@@ -469,14 +495,21 @@ class _StatusStaffPageState extends State<StatusStaffPage>
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(30),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: ['Semua', 'Tersedia', 'Sibuk'].map((f) {
           final sel = filter == f;
           return InkWell(
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(12),
             onTap: () => setState(() {
               filter = f;
               page = 0;
@@ -485,14 +518,14 @@ class _StatusStaffPageState extends State<StatusStaffPage>
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
               decoration: BoxDecoration(
                 color: sel ? _blue : Colors.transparent,
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
                 f,
                 style: TextStyle(
                   color: sel ? Colors.white : _navy,
                   fontWeight: FontWeight.w600,
-                  fontSize: 12.5,
+                  fontSize: AppTypography.small,
                 ),
               ),
             ),
@@ -520,126 +553,96 @@ class _StatusStaffPageState extends State<StatusStaffPage>
     final busy = rows.where((r) => r['status'] == 'Sibuk').length;
     final available = total - busy;
 
-    final items = [
-      [
-        'Total Staff',
-        '$total Karyawan',
-        Icons.groups_rounded,
-        _blue,
-        const Color(0xFFEAF3FC),
-      ],
-      [
-        'Tersedia',
-        '$available Karyawan',
-        Icons.check_circle_rounded,
-        Colors.green.shade700,
-        const Color(0xFFE9F7EF),
-      ],
-      [
-        'Sibuk',
-        '$busy Karyawan',
-        Icons.work_rounded,
-        Colors.orange.shade700,
-        const Color(0xFFFFF3DF),
-      ],
-    ];
-
-    return Row(
-      children: [
-        for (var i = 0; i < items.length; i++) ...[
-          if (i > 0) SizedBox(width: compact ? 8 : 12),
-          Expanded(
-            child: Container(
-              padding: EdgeInsets.all(compact ? 10 : 16),
-              decoration: BoxDecoration(
-                color: items[i][4] as Color,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: (items[i][3] as Color).withOpacity(.15),
+    Widget statCard(String label, int value, IconData icon, Color color) {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, size: 18, color: color),
                 ),
-              ),
-              child: compact
-                  // Mobile: susunan vertikal supaya muat di layar sempit.
-                  ? Column(
-                      children: [
-                        CircleAvatar(
-                          radius: 16,
-                          backgroundColor: (items[i][3] as Color).withOpacity(
-                            .15,
-                          ),
-                          child: Icon(
-                            items[i][2] as IconData,
-                            size: 16,
-                            color: items[i][3] as Color,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          items[i][0] as String,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: items[i][3] as Color,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          items[i][1] as String,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: _navy,
-                          ),
-                        ),
-                      ],
-                    )
-                  : Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 24,
-                          backgroundColor: (items[i][3] as Color).withOpacity(
-                            .15,
-                          ),
-                          child: Icon(
-                            items[i][2] as IconData,
-                            color: items[i][3] as Color,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                items[i][0] as String,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: items[i][3] as Color,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                items[i][1] as String,
-                                style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: _navy,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '$value',
+                      style: TextStyle(
+                        fontSize: AppTypography.section,
+                        fontWeight: FontWeight.bold,
+                        color: color,
+                      ),
                     ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Label boleh turun ke baris kedua, tidak dipotong.
+            Text(
+              label,
+              maxLines: 2,
+              softWrap: true,
+              style: TextStyle(
+                fontSize: AppTypography.caption,
+                height: 1.2,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: statCard('Total Staff', total, Icons.groups_rounded, _blue),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: statCard(
+              'Tersedia',
+              available,
+              Icons.check_circle_rounded,
+              Colors.green.shade700,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: statCard(
+              'Sibuk',
+              busy,
+              Icons.work_rounded,
+              Colors.orange.shade800,
             ),
           ),
         ],
-      ],
+      ),
     );
   }
 
@@ -649,7 +652,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
       child: Text(
         t,
         style: TextStyle(
-          fontSize: 11,
+          fontSize: AppTypography.caption,
           fontWeight: FontWeight.w700,
           color: Colors.grey.shade600,
         ),
@@ -723,7 +726,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
-                            fontSize: 15.5,
+                            fontSize: AppTypography.body,
                             color: _navy,
                           ),
                         ),
@@ -732,7 +735,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                           (s['jabatan'] ?? '-').toString(),
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: AppTypography.small,
                             color: Colors.grey.shade600,
                             fontWeight: FontWeight.w500,
                           ),
@@ -748,7 +751,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
               child: Text(
                 '$currentMonthTasks/$_maxMonthlyTotal',
                 style: const TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTypography.small,
                   fontWeight: FontWeight.bold,
                   color: _navy,
                 ),
@@ -759,7 +762,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
               child: Text(
                 '${(r['active'] as List).length}/5',
                 style: const TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTypography.small,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -769,7 +772,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
               child: Text(
                 '${count('Tinggi')}/5',
                 style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTypography.small,
                   fontWeight: FontWeight.w600,
                   color: Colors.red.shade700,
                 ),
@@ -780,7 +783,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
               child: Text(
                 '${count('Sedang')}/5',
                 style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTypography.small,
                   fontWeight: FontWeight.w600,
                   color: Colors.orange.shade800,
                 ),
@@ -791,7 +794,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
               child: Text(
                 '${count('Rendah')}/5',
                 style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTypography.small,
                   fontWeight: FontWeight.w600,
                   color: Colors.green.shade700,
                 ),
@@ -820,7 +823,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                     style: TextStyle(
                       color: _blue,
                       fontWeight: FontWeight.bold,
-                      fontSize: 12,
+                      fontSize: AppTypography.small,
                     ),
                   ),
                 ),
@@ -854,7 +857,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
           child: Text(
             '${pg + 1} / $pages',
             style: const TextStyle(
-              fontSize: 14,
+              fontSize: AppTypography.body,
               fontWeight: FontWeight.w500,
               color: _navy,
             ),
@@ -903,7 +906,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                         (s['nama'] ?? 'Staff').toString(),
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
-                          fontSize: 16,
+                          fontSize: AppTypography.section,
                           color: _navy,
                         ),
                       ),
@@ -911,7 +914,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                       Text(
                         (s['jabatan'] ?? '-').toString(),
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: AppTypography.small,
                           color: Colors.grey.shade600,
                           fontWeight: FontWeight.w500,
                         ),
@@ -973,12 +976,15 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             style: TextStyle(
               color: color,
               fontWeight: FontWeight.bold,
-              fontSize: 12,
+              fontSize: AppTypography.small,
             ),
           ),
           Text(
             label,
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 10),
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: AppTypography.caption,
+            ),
           ),
         ],
       ),
@@ -1011,7 +1017,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                   child: Text(
                     'Prioritas\n$label',
                     style: const TextStyle(
-                      fontSize: 11,
+                      fontSize: AppTypography.caption,
                       fontWeight: FontWeight.w600,
                       height: 1.3,
                     ),
@@ -1024,7 +1030,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
               '5 tugas',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
-                fontSize: 13,
+                fontSize: AppTypography.body,
                 color: _navy,
               ),
             ),
@@ -1054,7 +1060,10 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             padding: const EdgeInsets.only(left: 28, top: 2),
             child: Text(
               '${_months[now.month - 1]} ${now.year}',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              style: TextStyle(
+                fontSize: AppTypography.small,
+                color: Colors.grey.shade600,
+              ),
             ),
           ),
           const SizedBox(height: 14),
@@ -1084,8 +1093,8 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                   child: Text(
                     'Setiap karyawan mendapatkan 15 tugas per bulan (5 tinggi, 5 sedang, 5 rendah).\nMaksimal 5 tugas dapat dikerjakan secara bersamaan.',
                     style: TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF425466),
+                      fontSize: AppTypography.caption,
+                      color: Color(0xFF475569),
                       height: 1.4,
                     ),
                   ),
@@ -1125,14 +1134,17 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                   style: TextStyle(
                     color: color,
                     fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                    fontSize: AppTypography.body,
                   ),
                 ),
                 const SizedBox(height: 3),
-                Text(l1, style: const TextStyle(fontSize: 11.5)),
+                Text(l1, style: const TextStyle(fontSize: AppTypography.small)),
                 Text(
                   l2,
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  style: TextStyle(
+                    fontSize: AppTypography.caption,
+                    color: Colors.grey.shade600,
+                  ),
                 ),
               ],
             ),
@@ -1192,10 +1204,12 @@ class _StatusStaffPageState extends State<StatusStaffPage>
   );
 
   void _detail(Map<String, dynamic> row) {
+    // Pakai adminRoute (tanpa animasi) supaya langsung tampil, sama seperti
+    // perpindahan lewat sidebar, tanpa efek geser/berkedip.
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => StatusStaffDetailPage(
+      adminRoute(
+        StatusStaffDetailPage(
           staff: Map<String, dynamic>.from(row['staff'] as Map),
           tasks: List<Map<String, dynamic>>.from(row['tasks'] as List),
         ),
@@ -1277,7 +1291,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
     final phone =
         (widget.staff['no_hp'] ??
                 widget.staff['telepon'] ??
-                widget.staff['no_telp'] ??
+                widget.staff['no_hp'] ??
                 widget.staff['phone'] ??
                 '-')
             .toString();
@@ -1287,6 +1301,16 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          TextButton.icon(
+            onPressed: () => Navigator.maybePop(context),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text(
+              'Kembali ke Status Staff',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            style: TextButton.styleFrom(foregroundColor: _blue),
+          ),
+          const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(18),
             decoration: _card(),
@@ -1301,7 +1325,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                       Text(
                         (widget.staff['nama'] ?? 'Staff').toString(),
                         style: const TextStyle(
-                          fontSize: 19,
+                          fontSize: AppTypography.subtitle,
                           fontWeight: FontWeight.bold,
                           color: _navy,
                         ),
@@ -1310,7 +1334,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                       Text(
                         (widget.staff['jabatan'] ?? '-').toString(),
                         style: TextStyle(
-                          fontSize: 13,
+                          fontSize: AppTypography.body,
                           color: Colors.grey.shade700,
                           fontWeight: FontWeight.w500,
                         ),
@@ -1324,7 +1348,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                             child: Text(
                               phone,
                               style: TextStyle(
-                                fontSize: 12,
+                                fontSize: AppTypography.small,
                                 color: Colors.grey.shade700,
                               ),
                             ),
@@ -1352,7 +1376,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     color: _navy,
-                    fontSize: 13,
+                    fontSize: AppTypography.body,
                   ),
                 ),
                 const Spacer(),
@@ -1367,7 +1391,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                       child: Text(
                         _months[index],
                         style: const TextStyle(
-                          fontSize: 13,
+                          fontSize: AppTypography.body,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -1389,7 +1413,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                       child: Text(
                         '$y',
                         style: const TextStyle(
-                          fontSize: 13,
+                          fontSize: AppTypography.body,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -1447,7 +1471,10 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                 const SizedBox(height: 6),
                 Text(
                   'Maksimal $_maxActive tugas aktif per karyawan',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  style: TextStyle(
+                    fontSize: AppTypography.caption,
+                    color: Colors.grey.shade600,
+                  ),
                 ),
               ],
             ),
@@ -1457,7 +1484,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
           Text(
             'Kinerja Periode ${_months[_selectedMonth - 1]} $_selectedYear',
             style: const TextStyle(
-              fontSize: 16,
+              fontSize: AppTypography.section,
               fontWeight: FontWeight.bold,
               color: _navy,
             ),
@@ -1465,7 +1492,10 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
           const SizedBox(height: 4),
           Text(
             'Dihitung dari tugas yang diberikan pada bulan ini.',
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            style: TextStyle(
+              fontSize: AppTypography.caption,
+              color: Colors.grey.shade600,
+            ),
           ),
           const SizedBox(height: 10),
           Row(
@@ -1493,7 +1523,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                             Text(
                               p,
                               style: const TextStyle(
-                                fontSize: 11,
+                                fontSize: AppTypography.caption,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -1503,7 +1533,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                         Text(
                           '${count(p)}',
                           style: TextStyle(
-                            fontSize: 24,
+                            fontSize: AppTypography.largeHeading,
                             fontWeight: FontWeight.bold,
                             color: _prioColor(p),
                           ),
@@ -1520,7 +1550,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
           const Text(
             'Rincian Tugas Aktif',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: AppTypography.section,
               fontWeight: FontWeight.bold,
               color: _navy,
             ),
@@ -1534,7 +1564,10 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               'Termasuk tugas yang diberikan bulan sebelumnya dan masih berjalan.',
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              style: TextStyle(
+                fontSize: AppTypography.caption,
+                color: Colors.grey.shade600,
+              ),
             ),
           ),
           if (others.isNotEmpty) ...[
@@ -1542,7 +1575,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
             const Text(
               'Antrean & Riwayat',
               style: TextStyle(
-                fontSize: 16,
+                fontSize: AppTypography.section,
                 fontWeight: FontWeight.bold,
                 color: _navy,
               ),
@@ -1551,29 +1584,6 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
             _taskList(others, ''),
           ],
 
-          const SizedBox(height: 24),
-
-          Center(
-            child: SizedBox(
-              width: 200,
-              height: 44,
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _navy,
-                  side: const BorderSide(color: _blue, width: 1.5),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back_rounded, size: 18),
-                label: const Text(
-                  'Kembali',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ),
           const SizedBox(height: 20),
         ],
       ),
@@ -1606,7 +1616,10 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
         decoration: _card(14),
         child: Text(
           emptyText,
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+          style: TextStyle(
+            color: Colors.grey.shade600,
+            fontSize: AppTypography.body,
+          ),
         ),
       );
     }
@@ -1635,7 +1648,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 12.5,
+                        fontSize: AppTypography.small,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -1648,7 +1661,10 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                   const SizedBox(width: 10),
                   Text(
                     _fmtDate(list[i]['deadline'] as DateTime?),
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                    style: TextStyle(
+                      fontSize: AppTypography.caption,
+                      color: Colors.grey.shade600,
+                    ),
                   ),
                 ],
               ),

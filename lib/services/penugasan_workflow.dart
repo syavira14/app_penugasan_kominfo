@@ -7,6 +7,7 @@ bool canTransitionAssignment(String from, String to) {
     'revisi' => to == 'dikumpulkan',
     'dikumpulkan' => to == 'revisi' || to == 'disetujui',
     'terkendala' => to == 'berlangsung',
+    'dihentikan' => false,
     _ => false,
   };
 }
@@ -34,6 +35,12 @@ Future<void> transitionAssignment(
     final snapshot = await transaction.get(ref);
     if (!snapshot.exists) throw StateError('Penugasan tidak ditemukan.');
     final current = (snapshot.data()?['status'] ?? 'pending').toString();
+    if (current == 'terkendala') {
+      throw StateError('Kendala harus diselesaikan melalui Laporan Kendala terlebih dahulu.');
+    }
+    if ((snapshot.data()?['kendala_aktif_id'] ?? '').toString().isNotEmpty) {
+      throw StateError('Masih ada laporan kendala aktif.');
+    }
     if (!canTransitionAssignment(current, status)) {
       throw StateError('Status tugas sudah berubah. Silakan periksa kembali.');
     }

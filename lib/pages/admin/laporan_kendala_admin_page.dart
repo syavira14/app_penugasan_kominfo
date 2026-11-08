@@ -1,9 +1,20 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/material.dart';
 
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+
+import '../../services/laporan_kendala_service.dart';
+import '../../services/supabase_storage_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/admin_header.dart';
 import 'admin_sidebar.dart';
+
+// ============================================================
+// HALAMAN DAFTAR LAPORAN KENDALA ADMIN
+// ============================================================
 
 class LaporanKendalaAdminPage extends StatefulWidget {
   const LaporanKendalaAdminPage({super.key});
@@ -13,992 +24,997 @@ class LaporanKendalaAdminPage extends StatefulWidget {
       _LaporanKendalaAdminPageState();
 }
 
-class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
-  // Palet warna (sama dengan halaman Kelola Staff)
-  static const Color _biruTua = AppPalette.navy;
-  static const Color _biru = AppPalette.blue;
-  static const Color _biruMuda = AppPalette.sky;
-  static const Color _bg = AppPalette.background;
-
-  // Posisi menu "Laporan Kendala" di AdminSidebar.
-  // Sesuaikan jika urutan menu di sidebar Anda berbeda.
+class _LaporanKendalaAdminPageState
+    extends State<LaporanKendalaAdminPage> {
+  static const Color _navy = AppPalette.navy;
+  static const Color _blue = AppPalette.blue;
+  static const Color _background = AppPalette.background;
   static const int _sidebarIndex = 6;
+  static const Duration _masaTampil = Duration(days: 3);
 
-  static const List<String> _statusList = [
-    'Menunggu Respon',
-    'Sedang Diproses',
-    'Selesai',
-  ];
+  final _db = FirebaseFirestore.instance;
+  final _service = LaporanKendalaService();
+  final _searchController = TextEditingController();
 
-  static const List<String> _bulan = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'Mei',
-    'Jun',
-    'Jul',
-    'Agu',
-    'Sep',
-    'Okt',
-    'Nov',
-    'Des',
-  ];
+  final Map<String, Future<Map<String, String>>> _detailCache = {};
 
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
-  String _selectedFilter = 'Semua'; // 'Semua', 'Perlu Direspon', 'Selesai'
+  late final Stream<QuerySnapshot<Map<String, dynamic>>>
+      _assignmentStream;
+  late final Stream<QuerySnapshot<Map<String, dynamic>>>
+      _reportStream;
 
-  // Stream dibuat sekali supaya tidak berkedip saat mengetik di kolom cari.
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> _laporanStream =
-      _firestore
-          .collection('laporan_kendala')
-          .orderBy('created_at', descending: true)
-          .snapshots();
+  Timer? _timer;
+
+  String _query = '';
+  String _status = 'semua';
+  String _jenis = 'semua';
+  String _prioritas = 'semua';
+  String _urut = 'terbaru';
+
+  @override
+  void initState() {
+    super.initState();
+
+    _assignmentStream =
+        _db.collection('penugasan').snapshots();
+
+    _reportStream = _service.streamSemuaLaporan();
+
+    _timer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
+  }
 
   @override
   void dispose() {
+    _timer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
-  // ===== HELPER =====
-  // Ubah nilai apa pun dari Firestore menjadi String (anti error tipe data).
-  String _str(dynamic v, [String fallback = '']) {
-    if (v == null) return fallback;
-    final t = v.toString().trim();
-    return t.isEmpty ? fallback : t;
+  String _value(
+    Map<String, dynamic> data,
+    String key, [
+    String fallback = '-',
+  ]) {
+    final value = (data[key] ?? '').toString().trim();
+    return value.isEmpty ? fallback : value;
   }
 
-  String _statusOf(Map<String, dynamic> data) {
-    final s = _str(data['status'], 'Menunggu Respon');
-    return _statusList.contains(s) ? s : 'Menunggu Respon';
+  DateTime? _dateOf(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    return null;
   }
 
-  bool _perluDirespon(String status) =>
-      status == 'Menunggu Respon' || status == 'Sedang Diproses';
+  String _tanggal(dynamic value) {
+    final date = _dateOf(value);
+    if (date == null) return '-';
 
-  String _tanggal(dynamic v) {
-    DateTime? d;
-    if (v is Timestamp) {
-      d = v.toDate();
-    } else if (v is String) {
-      d = DateTime.tryParse(v);
+    String two(int n) => n.toString().padLeft(2, '0');
+
+    return '${two(date.day)}/${two(date.month)}/'
+        '${date.year} ${two(date.hour)}:${two(date.minute)}';
+  }
+
+  bool _active(String status) {
+    return status == StatusLaporanKendala.menungguReview ||
+        status == StatusLaporanKendala.dalamPenanganan ||
+        status == StatusLaporanKendala.menungguKonfirmasi;
+  }
+
+  bool _terminal(String status) {
+    return status == StatusLaporanKendala.selesai ||
+        status == StatusLaporanKendala.ditolak;
+  }
+
+  DateTime? _processedAt(Map<String, dynamic> data) {
+    final status = _value(data, 'status', '');
+
+    if (status == StatusLaporanKendala.selesai) {
+      return _dateOf(
+        data['resolved_at'] ?? data['updated_at'],
+      );
     }
-    if (d == null) return '';
-    return '${d.day} ${_bulan[d.month - 1]} ${d.year}';
+
+    if (status == StatusLaporanKendala.ditolak) {
+      return _dateOf(
+        data['rejected_at'] ?? data['updated_at'],
+      );
+    }
+
+    return null;
+  }
+
+  bool _visible(
+    QueryDocumentSnapshot<Map<String, dynamic>> report,
+    Map<String, Map<String, dynamic>> assignments,
+  ) {
+    final data = report.data();
+    final status = _value(data, 'status', '');
+    final assignmentId = _value(data, 'penugasan_id', '');
+
+    final assignment = assignments[assignmentId];
+    if (assignment == null) return false;
+
+    if (_active(status)) {
+      if (_value(assignment, 'status', '') != 'terkendala') {
+        return false;
+      }
+
+      final activeId =
+          _value(assignment, 'kendala_aktif_id', '');
+
+      return activeId.isEmpty || activeId == report.id;
+    }
+
+    if (_terminal(status)) {
+      final processed = _processedAt(data);
+      if (processed == null) return false;
+
+      final now = DateTime.now();
+
+      return !processed.isAfter(now) &&
+          now.isBefore(processed.add(_masaTampil));
+    }
+
+    return false;
   }
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'Selesai':
-        return AppReportStatus.color('Selesai');
-      case 'Sedang Diproses':
-        return AppReportStatus.color('Sedang Diproses');
+      case StatusLaporanKendala.menungguReview:
+        return const Color(0xFFB96B00);
+      case StatusLaporanKendala.dalamPenanganan:
+        return _blue;
+      case StatusLaporanKendala.menungguKonfirmasi:
+        return const Color(0xFF7C3AED);
+      case StatusLaporanKendala.selesai:
+        return const Color(0xFF15803D);
+      case StatusLaporanKendala.ditolak:
+        return const Color(0xFFB42318);
       default:
-        return AppReportStatus.color('Menunggu Respon');
+        return Colors.blueGrey;
     }
   }
 
-  IconData _statusIcon(String status) {
-    switch (status) {
-      case 'Selesai':
-        return Icons.check_circle_rounded;
-      case 'Sedang Diproses':
-        return Icons.autorenew_rounded;
-      default:
-        return Icons.schedule_rounded;
-    }
-  }
-
-  void _snack(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+  Widget _pill(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 6,
+      ),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.09),
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          color: color,
+          fontWeight: FontWeight.bold,
         ),
+      ),
+    );
+  }
+
+  Future<Map<String, String>> _loadDetail(
+    Map<String, dynamic> data,
+  ) async {
+    final staffId = _value(data, 'pelapor_id', '');
+    final tugasId = _value(data, 'tugas_id', '');
+
+    String nama = _value(data, 'nama_staf', 'Staff');
+    String tugas = _value(
+      data,
+      'judul_tugas',
+      'Tugas tidak ditemukan',
+    );
+
+    if (staffId.isNotEmpty) {
+      final staff =
+          await _db.collection('users').doc(staffId).get();
+
+      if (staff.exists) {
+        nama = _value(staff.data()!, 'nama', nama);
+      }
+    }
+
+    if (tugasId.isNotEmpty) {
+      final task =
+          await _db.collection('tugas').doc(tugasId).get();
+
+      if (task.exists) {
+        tugas = _value(task.data()!, 'judul', tugas);
+      }
+    }
+
+    return {'nama': nama, 'tugas': tugas};
+  }
+
+  Future<Map<String, String>> _details(
+    String id,
+    Map<String, dynamic> data,
+  ) {
+    return _detailCache.putIfAbsent(
+      id,
+      () => _loadDetail(data),
+    );
+  }
+
+  void _reset() {
+    _searchController.clear();
+
+    setState(() {
+      _query = '';
+      _status = 'semua';
+      _jenis = 'semua';
+      _prioritas = 'semua';
+      _urut = 'terbaru';
+    });
+  }
+
+  bool _matches(
+    Map<String, dynamic> data,
+    String id,
+  ) {
+    if (_status != 'semua' &&
+        _value(data, 'status', '') != _status) {
+      return false;
+    }
+
+    if (_jenis != 'semua' &&
+        _value(
+          data,
+          'jenis_kendala',
+          '',
+        ).toLowerCase() != _jenis) {
+      return false;
+    }
+
+    if (_prioritas != 'semua' &&
+        _value(
+          data,
+          'prioritas',
+          '',
+        ).toLowerCase() != _prioritas) {
+      return false;
+    }
+
+    if (_query.isEmpty) return true;
+
+    final searchable = [
+      id,
+      ...data.values.map(
+        (v) => v is Timestamp ? '' : v.toString(),
+      ),
+    ].join(' ').toLowerCase();
+
+    return searchable.contains(_query);
+  }
+
+  int _priority(String value) {
+    switch (value.toLowerCase()) {
+      case 'tinggi':
+        return 3;
+      case 'sedang':
+        return 2;
+      default:
+        return 1;
+    }
+  }
+
+  void _sort(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    docs.sort((a, b) {
+      final x = a.data();
+      final y = b.data();
+
+      if (_urut == 'prioritas') {
+        final comparison = _priority(
+          _value(y, 'prioritas'),
+        ).compareTo(
+          _priority(_value(x, 'prioritas')),
+        );
+
+        if (comparison != 0) return comparison;
+      }
+
+      if (_urut == 'status') {
+        final comparison = _value(
+          x,
+          'status',
+        ).compareTo(_value(y, 'status'));
+
+        if (comparison != 0) return comparison;
+      }
+
+      final xDate = _dateOf(
+        x['tanggal_laporan'] ?? x['created_at'],
       );
+
+      final yDate = _dateOf(
+        y['tanggal_laporan'] ?? y['created_at'],
+      );
+
+      final comparison = (yDate ??
+              DateTime.fromMillisecondsSinceEpoch(0))
+          .compareTo(
+        xDate ?? DateTime.fromMillisecondsSinceEpoch(0),
+      );
+
+      return _urut == 'terlama'
+          ? -comparison
+          : comparison;
+    });
   }
 
-  // Gaya input mengikuti form login / form Kelola Staff.
-  InputDecoration _inputDecoration({String? hint}) {
-    const Color borderColor = Color(0xFFE2E8F0);
-    OutlineInputBorder border(Color c, [double w = 1]) => OutlineInputBorder(
-      borderRadius: BorderRadius.circular(14),
-      borderSide: BorderSide(color: c, width: w),
-    );
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: const TextStyle(
-        color: Color(0xFF94A3B8),
-        fontSize: AppTypography.body,
+  Widget _statCard(
+    String label,
+    int count,
+    IconData icon,
+    Color color,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+          ),
+        ],
       ),
-      filled: true,
-      fillColor: AppPalette.background,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      enabledBorder: border(borderColor),
-      border: border(borderColor),
-      focusedBorder: border(_biru, 1.5),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(9),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 21),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+                Text(
+                  label,
+                  maxLines: 2,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Colors.black54,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _fieldLabel(String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Text(
-      text,
-      style: const TextStyle(
-        fontSize: AppTypography.body,
-        fontWeight: FontWeight.w600,
-        color: Color(0xFF334155),
+  Widget _dropdown(
+    String label,
+    String value,
+    Map<String, String> options,
+    ValueChanged<String?> onChanged,
+  ) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
       ),
-    ),
-  );
-
-  // ===== MODAL BERI / UBAH TANGGAPAN =====
-  void _showTanggapanModal(String docId, Map<String, dynamic> data) {
-    final tanggapanController = TextEditingController(
-      text: _str(data['tanggapan_admin']),
+      items: options.entries.map((entry) {
+        return DropdownMenuItem(
+          value: entry.key,
+          child: Text(
+            entry.value,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12),
+          ),
+        );
+      }).toList(),
+      onChanged: onChanged,
     );
-    String statusSelected = _statusOf(data);
-    bool isSaving = false;
+  }
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      constraints: const BoxConstraints(maxWidth: 560),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+  Widget _filters() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
       ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (modalContext, setModalState) {
-            Future<void> kirim() async {
-              final tanggapan = tanggapanController.text.trim();
-
-              if (tanggapan.isEmpty) {
-                _snack('Tanggapan admin tidak boleh kosong.');
-                return;
-              }
-
-              setModalState(() => isSaving = true);
-
-              try {
-                await _firestore
-                    .collection('laporan_kendala')
-                    .doc(docId)
-                    .update({
-                      'tanggapan_admin': tanggapan,
-                      'status': statusSelected,
-                      'updated_at': FieldValue.serverTimestamp(),
-                    });
-
-                if (modalContext.mounted) Navigator.pop(modalContext);
-                _snack('Tanggapan berhasil dikirimkan ke staf.');
-              } catch (e) {
-                if (modalContext.mounted) {
-                  setModalState(() => isSaving = false);
-                }
-                _snack('Gagal menyimpan tanggapan: $e');
-              }
-            }
-
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(modalContext).viewInsets.bottom + 20,
-                top: 18,
-                left: 22,
-                right: 22,
+      child: Column(
+        children: [
+          TextField(
+            controller: _searchController,
+            onChanged: (value) {
+              setState(() {
+                _query = value.trim().toLowerCase();
+              });
+            },
+            decoration: InputDecoration(
+              hintText:
+                  'Cari laporan, tugas, jenis, atau kendala...',
+              prefixIcon: const Icon(
+                Icons.search_rounded,
+                color: _blue,
               ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Tanggapi Laporan Kendala',
-                                style: TextStyle(
-                                  fontSize: AppTypography.subtitle,
-                                  fontWeight: FontWeight.bold,
-                                  color: _biruTua,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'Berikan solusi dan perbarui status penanganan',
-                                style: TextStyle(
-                                  fontSize: AppTypography.small,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: isSaving
-                              ? null
-                              : () => Navigator.pop(modalContext),
-                          icon: const Icon(Icons.close_rounded),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-
-                    // Detail kendala dari staf
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: AppPalette.background,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Pelapor: ${_str(data['nama_staf'], 'Staf')} '
-                            '(${_str(data['nip_staf'], '-')})',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: AppTypography.body,
-                              color: _biruTua,
-                            ),
-                          ),
-                          if (_str(data['judul_tugas']).isNotEmpty) ...[
-                            const SizedBox(height: 3),
-                            Text(
-                              'Tugas: ${_str(data['judul_tugas'])}',
-                              style: const TextStyle(
-                                fontSize: AppTypography.small,
-                                color: _biru,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                          const Divider(height: 18),
-                          Text(
-                            'DESKRIPSI KENDALA',
-                            style: TextStyle(
-                              fontSize: AppTypography.caption,
-                              color: Colors.grey.shade600,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _str(data['deskripsi_kendala'], '-'),
-                            style: const TextStyle(
-                              fontSize: AppTypography.body,
-                              height: 1.35,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    _fieldLabel('Status Penanganan'),
-                    DropdownButtonFormField<String>(
-                      value: statusSelected,
-                      isExpanded: true,
-                      decoration: _inputDecoration(),
-                      borderRadius: BorderRadius.circular(14),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'Menunggu Respon',
-                          child: Text('Menunggu Respon'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Sedang Diproses',
-                          child: Text('Sedang Diproses'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Selesai',
-                          child: Text('Selesai / Teratasi'),
-                        ),
-                      ],
-                      onChanged: (val) {
-                        if (val != null) {
-                          setModalState(() => statusSelected = val);
-                        }
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _query = '');
                       },
                     ),
+              filled: true,
+              fillColor: _background,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth >= 700
+                  ? (constraints.maxWidth - 36) / 4
+                  : constraints.maxWidth >= 430
+                      ? (constraints.maxWidth - 12) / 2
+                      : constraints.maxWidth;
 
-                    const SizedBox(height: 16),
-
-                    _fieldLabel('Tanggapan / Solusi Admin'),
-                    TextField(
-                      controller: tanggapanController,
-                      maxLines: 4,
-                      style: const TextStyle(fontSize: AppTypography.body),
-                      decoration: _inputDecoration(
-                        hint:
-                            'Masukkan saran, instruksi, atau solusi untuk staf...',
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  SizedBox(
+                    width: width,
+                    child: _dropdown(
+                      'Status',
+                      _status,
+                      {
+                        'semua': 'Semua Status',
+                        StatusLaporanKendala.menungguReview:
+                            'Menunggu Review',
+                        StatusLaporanKendala.dalamPenanganan:
+                            'Dalam Penanganan',
+                        StatusLaporanKendala.menungguKonfirmasi:
+                            'Menunggu Konfirmasi',
+                        StatusLaporanKendala.selesai:
+                            'Selesai',
+                        StatusLaporanKendala.ditolak:
+                            'Ditolak',
+                      },
+                      (v) => setState(
+                        () => _status = v ?? 'semua',
                       ),
                     ),
-
-                    const SizedBox(height: 20),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 48,
-                            child: OutlinedButton(
-                              onPressed: isSaving
-                                  ? null
-                                  : () => Navigator.pop(modalContext),
-                              style: OutlinedButton.styleFrom(
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                              child: const Text('Batal'),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          flex: 2,
-                          child: SizedBox(
-                            height: 48,
-                            child: ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppPalette.blue,
-                                disabledBackgroundColor: _biru.withOpacity(0.6),
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                              onPressed: isSaving ? null : kirim,
-                              child: isSaving
-                                  ? const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2.5,
-                                      ),
-                                    )
-                                  : const Text(
-                                      'Kirim Tanggapan',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: AppTypography.body,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                        ),
-                      ],
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _dropdown(
+                      'Jenis Kendala',
+                      _jenis,
+                      {
+                        'semua': 'Semua Jenis',
+                        'internal': 'Internal',
+                        'eksternal': 'Eksternal',
+                      },
+                      (v) => setState(
+                        () => _jenis = v ?? 'semua',
+                      ),
                     ),
-                  ],
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _dropdown(
+                      'Prioritas',
+                      _prioritas,
+                      {
+                        'semua': 'Semua Prioritas',
+                        'tinggi': 'Tinggi',
+                        'sedang': 'Sedang',
+                        'rendah': 'Rendah',
+                      },
+                      (v) => setState(
+                        () => _prioritas = v ?? 'semua',
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _dropdown(
+                      'Urutkan',
+                      _urut,
+                      {
+                        'terbaru': 'Tanggal Terbaru',
+                        'terlama': 'Tanggal Terlama',
+                        'prioritas': 'Prioritas Tertinggi',
+                        'status': 'Status A–Z',
+                      },
+                      (v) => setState(
+                        () => _urut = v ?? 'terbaru',
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _reset,
+              icon: const Icon(Icons.restart_alt),
+              label: const Text('Reset Filter'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _reportCard(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+    final status = _value(
+      data,
+      'status',
+      StatusLaporanKendala.menungguReview,
+    );
+
+    return FutureBuilder<Map<String, String>>(
+      future: _details(doc.id, data),
+      builder: (context, snapshot) {
+        final info = snapshot.data;
+
+        return Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      DetailLaporanKendalaAdminPage(
+                    laporanId: doc.id,
+                  ),
+                ),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(17),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: const Color(0xFFE5EAF4),
                 ),
               ),
-            );
-          },
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          info?['tugas'] ??
+                              'Memuat nama tugas...',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _navy,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _pill(
+                        StatusLaporanKendala.label(status),
+                        _statusColor(status),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.person_outline,
+                        size: 16,
+                        color: Colors.blueGrey,
+                      ),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          info?['nama'] ?? 'Memuat staff...',
+                          style: const TextStyle(
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        _tanggal(
+                          data['tanggal_laporan'] ??
+                              data['created_at'],
+                        ),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.blueGrey,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _value(
+                      data,
+                      'deskripsi',
+                      _value(data, 'deskripsi_kendala'),
+                    ),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      height: 1.4,
+                      color: Color(0xFF39465E),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children: [
+                      _pill(
+                        'Jenis: ${_value(data, 'jenis_kendala')}',
+                        _blue,
+                      ),
+                      _pill(
+                        'Prioritas: ${_value(data, 'prioritas')}',
+                        const Color(0xFFCA6D00),
+                      ),
+                      if (_value(
+                            data,
+                            'bukti_path',
+                            '',
+                          ).isNotEmpty ||
+                          _value(
+                            data,
+                            'bukti_url',
+                            '',
+                          ).isNotEmpty)
+                        _pill(
+                          'Ada Lampiran',
+                          const Color(0xFF0C7C82),
+                        ),
+                      if (_terminal(status))
+                        _pill(
+                          'Riwayat 3 Hari',
+                          Colors.blueGrey,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Row(
+                    mainAxisAlignment:
+                        MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        'Lihat Detail',
+                        style: TextStyle(
+                          color: _blue,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right,
+                        color: _blue,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
         );
       },
     );
   }
 
-  // ===== KOMPONEN UI =====
-  Widget _buildSearchBar() {
-    return Container(
-      height: 48,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: TextField(
-        controller: _searchController,
-        onChanged: (v) => setState(() => _searchQuery = v),
-        textInputAction: TextInputAction.search,
-        decoration: InputDecoration(
-          hintText: 'Cari nama staf, NIP, tugas, atau kendala...',
-          hintStyle: TextStyle(
-            color: Colors.grey.shade500,
-            fontSize: AppTypography.body,
-          ),
-          prefixIcon: const Icon(Icons.search_rounded, color: _biru),
-          suffixIcon: _searchQuery.isEmpty
-              ? null
-              : IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 20),
-                  onPressed: () {
-                    _searchController.clear();
-                    setState(() => _searchQuery = '');
-                  },
-                ),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 14),
-        ),
-      ),
-    );
-  }
+  Widget _content(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>>
+        reports,
+    Map<String, Map<String, dynamic>> assignments,
+  ) {
+    final visible = reports
+        .where((doc) => _visible(doc, assignments))
+        .toList();
 
-  Widget _buildStat(String label, int value, IconData icon, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(icon, size: 18, color: color),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '$value',
-                      style: TextStyle(
-                        fontSize: AppTypography.section,
-                        fontWeight: FontWeight.bold,
-                        color: color,
-                      ),
+    final pending = visible.where(
+      (d) =>
+          d.data()['status'] ==
+          StatusLaporanKendala.menungguReview,
+    ).length;
+
+    final handling = visible.where(
+      (d) =>
+          d.data()['status'] ==
+          StatusLaporanKendala.dalamPenanganan,
+    ).length;
+
+    final confirming = visible.where(
+      (d) =>
+          d.data()['status'] ==
+          StatusLaporanKendala.menungguKonfirmasi,
+    ).length;
+
+    // Statistik selesai dihitung dari seluruh laporan.
+    final completed = reports.where(
+      (d) =>
+          d.data()['status'] ==
+          StatusLaporanKendala.selesai,
+    ).length;
+
+    final filtered = visible
+        .where((doc) => _matches(doc.data(), doc.id))
+        .toList();
+
+    _sort(filtered);
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        _detailCache.clear();
+        if (mounted) setState(() {});
+        await Future<void>.delayed(
+          const Duration(milliseconds: 300),
+        );
+      },
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Center(
+            child: ConstrainedBox(
+              constraints:
+                  const BoxConstraints(maxWidth: 1100),
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Monitoring & Penanganan',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: _navy,
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // Label boleh turun ke baris kedua, tidak dipotong.
-            Text(
-              label,
-              maxLines: 2,
-              softWrap: true,
-              style: TextStyle(
-                fontSize: AppTypography.caption,
-                height: 1.2,
-                fontWeight: FontWeight.w500,
-                color: Colors.grey.shade700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Gaya chip sama dengan Kelola Tugas: tinggi 36, tanpa border, font 12.
-  Widget _buildFilterChip(String label) {
-    final bool selected = _selectedFilter == label;
-    return InkWell(
-      onTap: () => setState(() => _selectedFilter = label),
-      borderRadius: BorderRadius.circular(30),
-      child: Container(
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: selected ? _biru : Colors.white,
-          borderRadius: BorderRadius.circular(30),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.white : _biruTua,
-            fontSize: AppTypography.small,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildToolbar(bool wide) {
-    final chips = SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _buildFilterChip('Semua'),
-          const SizedBox(width: 8),
-          _buildFilterChip('Perlu Direspon'),
-          const SizedBox(width: 8),
-          _buildFilterChip('Selesai'),
-        ],
-      ),
-    );
-
-    if (wide) {
-      return Row(
-        children: [
-          Expanded(child: _buildSearchBar()),
-          const SizedBox(width: 12),
-          chips,
-        ],
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [_buildSearchBar(), const SizedBox(height: 10), chips],
-    );
-  }
-
-  // Tampilan kosong, sama dengan _EmptyState di Kelola Tugas.
-  Widget _buildEmpty(bool belumAda) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: _biruTua.withOpacity(0.05),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.assignment_turned_in_outlined,
-            size: 48,
-            color: Color(0xFF5A6472),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            belumAda
-                ? 'Belum ada laporan kendala dari staf'
-                : 'Laporan kendala tidak ditemukan',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFF5A6472),
-              fontSize: AppTypography.body,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMessage(IconData icon, String title, String subtitle) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: _biru.withOpacity(0.08),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, size: 44, color: _biru),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: AppTypography.section,
-                fontWeight: FontWeight.bold,
-                color: _biruTua,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.grey.shade600,
-                fontSize: AppTypography.body,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLaporanCard(String docId, Map<String, dynamic> data) {
-    final String namaStaf = _str(data['nama_staf'], 'Staf');
-    final String nipStaf = _str(data['nip_staf'], '-');
-    final String judulTugas = _str(data['judul_tugas']);
-    final String deskripsi = _str(data['deskripsi_kendala'], '-');
-    final String tanggapan = _str(data['tanggapan_admin']);
-    final String status = _statusOf(data);
-    final String tanggal = _tanggal(data['created_at']);
-    final Color statusColor = _statusColor(status);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: _biruTua.withOpacity(0.05),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Garis warna status di sisi kiri
-            Container(width: 5, color: statusColor),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Staf + badge status
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        CircleAvatar(
-                          radius: 18,
-                          backgroundColor: AppPalette.blue.withOpacity(0.1),
-                          child: const Icon(
-                            Icons.person_rounded,
-                            color: _biru,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                namaStaf,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: AppTypography.body,
-                                  color: _biruTua,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                tanggal.isEmpty
-                                    ? 'NIP: $nipStaf'
-                                    : 'NIP: $nipStaf  •  $tanggal',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: AppTypography.caption,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                _statusIcon(status),
-                                size: 12,
-                                color: statusColor,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                status,
-                                style: TextStyle(
-                                  fontSize: AppTypography.caption,
-                                  fontWeight: FontWeight.w700,
-                                  color: statusColor,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                  const SizedBox(height: 5),
+                  const Text(
+                    'Pantau laporan kendala staff dan berikan solusi.',
+                    style: TextStyle(
+                      color: Colors.blueGrey,
                     ),
-
-                    if (judulTugas.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _biruMuda.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.assignment_outlined,
-                              size: 13,
-                              color: _biru,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                judulTugas,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: AppTypography.caption,
-                                  color: _biru,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-
-                    const SizedBox(height: 10),
-                    Text(
-                      deskripsi,
-                      style: const TextStyle(
-                        fontSize: AppTypography.body,
-                        height: 1.4,
-                        color: Colors.black87,
-                      ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Laporan selesai atau ditolak tampil selama '
+                    '3 hari. Riwayat tetap tersimpan di Firebase.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.blueGrey,
                     ),
+                  ),
+                  const SizedBox(height: 18),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns =
+                          constraints.maxWidth >= 700
+                              ? 4
+                              : 2;
 
-                    // Tanggapan admin jika sudah direspon
-                    if (tanggapan.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF0F6FF),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFCFE0F7)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Row(
-                              children: [
-                                Icon(
-                                  Icons.reply_rounded,
-                                  size: 16,
-                                  color: _biru,
-                                ),
-                                SizedBox(width: 5),
-                                Text(
-                                  'Tanggapan Admin',
-                                  style: TextStyle(
-                                    fontSize: AppTypography.caption,
-                                    fontWeight: FontWeight.bold,
-                                    color: _biru,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              tanggapan,
-                              style: const TextStyle(
-                                fontSize: AppTypography.small,
-                                height: 1.35,
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                      final width =
+                          (constraints.maxWidth -
+                                  (columns - 1) * 10) /
+                              columns;
 
-                    const SizedBox(height: 12),
-                    SizedBox(
+                      return Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          SizedBox(
+                            width: width,
+                            child: _statCard(
+                              'Menunggu Review',
+                              pending,
+                              Icons.pending_actions,
+                              const Color(0xFFB96B00),
+                            ),
+                          ),
+                          SizedBox(
+                            width: width,
+                            child: _statCard(
+                              'Dalam Penanganan',
+                              handling,
+                              Icons.build_circle_outlined,
+                              _blue,
+                            ),
+                          ),
+                          SizedBox(
+                            width: width,
+                            child: _statCard(
+                              'Menunggu Konfirmasi',
+                              confirming,
+                              Icons.fact_check_outlined,
+                              const Color(0xFF7C3AED),
+                            ),
+                          ),
+                          SizedBox(
+                            width: width,
+                            child: _statCard(
+                              'Selesai',
+                              completed,
+                              Icons.check_circle_outline,
+                              const Color(0xFF15803D),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                  _filters(),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Daftar Laporan (${filtered.length})',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: _navy,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (filtered.isEmpty)
+                    Container(
                       width: double.infinity,
-                      height: 38,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: _biru),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        onPressed: () => _showTanggapanModal(docId, data),
-                        icon: Icon(
-                          tanggapan.isEmpty
-                              ? Icons.reply_rounded
-                              : Icons.edit_note_rounded,
-                          size: 18,
-                          color: _biru,
-                        ),
-                        label: Text(
-                          tanggapan.isEmpty
-                              ? 'Beri Tanggapan'
-                              : 'Ubah Tanggapan',
-                          style: const TextStyle(
-                            color: _biru,
-                            fontWeight: FontWeight.bold,
-                            fontSize: AppTypography.small,
-                          ),
-                        ),
+                      padding: const EdgeInsets.all(36),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius:
+                            BorderRadius.circular(16),
                       ),
+                      child: const Column(
+                        children: [
+                          Icon(
+                            Icons.inbox_outlined,
+                            size: 44,
+                            color: Colors.blueGrey,
+                          ),
+                          SizedBox(height: 12),
+                          Text(
+                            'Tidak ada laporan yang sesuai filter.',
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final two =
+                            constraints.maxWidth >= 800;
+
+                        final width = two
+                            ? (constraints.maxWidth - 14) /
+                                2
+                            : constraints.maxWidth;
+
+                        return Wrap(
+                          spacing: 14,
+                          runSpacing: 14,
+                          children: [
+                            for (final doc in filtered)
+                              SizedBox(
+                                width: width,
+                                child: _reportCard(doc),
+                              ),
+                          ],
+                        );
+                      },
                     ),
-                  ],
-                ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildContent(bool wide) {
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: _laporanStream,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return _buildMessage(
-            Icons.error_outline_rounded,
-            'Gagal memuat laporan kendala',
-            '${snapshot.error}',
+  Widget _body() {
+    return StreamBuilder<
+        QuerySnapshot<Map<String, dynamic>>>(
+      stream: _assignmentStream,
+      builder: (context, assignmentSnapshot) {
+        if (assignmentSnapshot.hasError) {
+          return Center(
+            child: Text(
+              'Gagal memuat penugasan: '
+              '${assignmentSnapshot.error}',
+            ),
           );
         }
 
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
+        if (!assignmentSnapshot.hasData) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
         }
 
-        final docs = snapshot.data?.docs ?? [];
+        final assignments =
+            <String, Map<String, dynamic>>{
+          for (final doc in assignmentSnapshot.data!.docs)
+            doc.id: doc.data(),
+        };
 
-        final total = docs.length;
-        final perlu = docs
-            .where((d) => _perluDirespon(_statusOf(d.data())))
-            .length;
-        final selesai = total - perlu;
-
-        final query = _searchQuery.trim().toLowerCase();
-        final filtered = docs.where((doc) {
-          final data = doc.data();
-          final status = _statusOf(data);
-
-          final matchesSearch =
-              query.isEmpty ||
-              _str(data['nama_staf']).toLowerCase().contains(query) ||
-              _str(data['nip_staf']).toLowerCase().contains(query) ||
-              _str(data['judul_tugas']).toLowerCase().contains(query) ||
-              _str(data['deskripsi_kendala']).toLowerCase().contains(query);
-
-          bool matchesFilter = true;
-          if (_selectedFilter == 'Perlu Direspon') {
-            matchesFilter = _perluDirespon(status);
-          } else if (_selectedFilter == 'Selesai') {
-            matchesFilter = status == 'Selesai';
-          }
-
-          return matchesSearch && matchesFilter;
-        }).toList();
-
-        return SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildStat(
-                      'Total Laporan',
-                      total,
-                      Icons.report_gmailerrorred_rounded,
-                      _biru,
-                    ),
-                    const SizedBox(width: 10),
-                    _buildStat(
-                      'Perlu Direspon',
-                      perlu,
-                      Icons.pending_actions_rounded,
-                      Colors.orange.shade800,
-                    ),
-                    const SizedBox(width: 10),
-                    _buildStat(
-                      'Selesai',
-                      selesai,
-                      Icons.check_circle_rounded,
-                      Colors.green.shade700,
-                    ),
-                  ],
+        return StreamBuilder<
+            QuerySnapshot<Map<String, dynamic>>>(
+          stream: _reportStream,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return Center(
+                child: Text(
+                  'Gagal memuat laporan: '
+                  '${snapshot.error}',
                 ),
-              ),
-              const SizedBox(height: 12),
-              _buildToolbar(wide),
-              const SizedBox(height: 14),
-              if (filtered.isEmpty)
-                _buildEmpty(docs.isEmpty)
-              else
-                for (final doc in filtered)
-                  _buildLaporanCard(doc.id, doc.data()),
-            ],
-          ),
+              );
+            }
+
+            if (!snapshot.hasData) {
+              return const Center(
+                child: CircularProgressIndicator(),
+              );
+            }
+
+            return _content(
+              snapshot.data!.docs,
+              assignments,
+            );
+          },
         );
       },
     );
@@ -1008,21 +1024,1328 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final bool wide = constraints.maxWidth >= 900;
+        final wide = constraints.maxWidth >= 900;
+
         return Scaffold(
-          backgroundColor: _bg,
+          backgroundColor: _background,
           drawer: wide
               ? null
-              : const AdminSidebar(currentIndex: _sidebarIndex, isDrawer: true),
+              : const AdminSidebar(
+                  currentIndex: _sidebarIndex,
+                  isDrawer: true,
+                ),
           body: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment:
+                CrossAxisAlignment.stretch,
             children: [
-              if (wide) const AdminSidebar(currentIndex: _sidebarIndex),
+              if (wide)
+                const AdminSidebar(
+                  currentIndex: _sidebarIndex,
+                ),
               Expanded(
                 child: Column(
                   children: [
-                    AdminHeader(title: 'Laporan Kendala', showSidebar: wide),
-                    Expanded(child: _buildContent(wide)),
+                    AdminHeader(
+                      title: 'Laporan Kendala',
+                      showSidebar: wide,
+                    ),
+                    Expanded(child: _body()),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ============================================================
+// HALAMAN DETAIL LAPORAN KENDALA ADMIN
+// ============================================================
+
+class DetailLaporanKendalaAdminPage
+    extends StatefulWidget {
+  final String laporanId;
+
+  const DetailLaporanKendalaAdminPage({
+    super.key,
+    required this.laporanId,
+  });
+
+  @override
+  State<DetailLaporanKendalaAdminPage> createState() =>
+      _DetailLaporanKendalaAdminPageState();
+}
+
+class _DetailLaporanKendalaAdminPageState
+    extends State<DetailLaporanKendalaAdminPage> {
+  static const Color _navy = AppPalette.navy;
+  static const Color _blue = AppPalette.blue;
+  static const Color _background = AppPalette.background;
+
+  final _db = FirebaseFirestore.instance;
+  final _service = LaporanKendalaService();
+  final _storageService = SupabaseStorageService();
+
+  bool _saving = false;
+  bool _loadingBukti = false;
+
+  Future<Map<String, String>>? _identity;
+
+  late final Stream<DocumentSnapshot<Map<String, dynamic>>>
+      _detailStream;
+
+  late final Stream<QuerySnapshot<Map<String, dynamic>>>
+      _assignmentStream;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _detailStream =
+        _service.streamDetail(widget.laporanId);
+
+    _assignmentStream =
+        _db.collection('penugasan').snapshots();
+  }
+
+  String _value(
+    Map<String, dynamic> data,
+    String key, [
+    String fallback = '-',
+  ]) {
+    final value = (data[key] ?? '').toString().trim();
+    return value.isEmpty ? fallback : value;
+  }
+
+  String _tanggal(dynamic value) {
+    if (value is! Timestamp) return '-';
+
+    final date = value.toDate();
+
+    String two(int n) => n.toString().padLeft(2, '0');
+
+    return '${two(date.day)}/${two(date.month)}/'
+        '${date.year} ${two(date.hour)}:${two(date.minute)}';
+  }
+
+  Future<Map<String, String>> _loadIdentity(
+    Map<String, dynamic> data,
+  ) async {
+    final staffId = _value(data, 'pelapor_id', '');
+    final taskId = _value(data, 'tugas_id', '');
+
+    final staff = staffId.isEmpty
+        ? null
+        : await _db.collection('users').doc(staffId).get();
+
+    final task = taskId.isEmpty
+        ? null
+        : await _db.collection('tugas').doc(taskId).get();
+
+    return {
+      'staff': staff?.data()?['nama']?.toString() ??
+          _value(data, 'nama_staf', 'Staff'),
+      'tugas': task?.data()?['judul']?.toString() ??
+          _value(
+            data,
+            'judul_tugas',
+            'Tugas tidak ditemukan',
+          ),
+    };
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  Widget _line(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.blueGrey,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Color(0xFF23304A),
+              fontSize: 14,
+              height: 1.45,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _section(
+    String title,
+    List<Widget> children,
+  ) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(
+          color: const Color(0xFFE8EDF6),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: _navy,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Divider(height: 24),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _askText({
+    required String title,
+    required String hint,
+  }) async {
+    final controller = TextEditingController();
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 3,
+            maxLines: 5,
+            decoration: InputDecoration(
+              hintText: hint,
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext),
+              child: const Text('Batal'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final text = controller.text.trim();
+                if (text.isEmpty) return;
+
+                Navigator.pop(dialogContext, text);
+              },
+              child: const Text('Kirim'),
+            ),
+          ],
+        );
+      },
+    );
+
+    // Hindari dispose sebelum animasi dialog selesai.
+    Future<void>.delayed(
+      const Duration(milliseconds: 300),
+      controller.dispose,
+    );
+
+    return result;
+  }
+
+  Future<void> _action(
+    Future<void> Function() work,
+  ) async {
+    if (_saving) return;
+
+    setState(() => _saving = true);
+
+    try {
+      await work();
+
+      if (!mounted) return;
+
+      _snack('Laporan berhasil diperbarui.');
+    } catch (e) {
+      if (!mounted) return;
+
+      _snack('Gagal memproses laporan: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  Widget _button(
+    String label,
+    IconData icon,
+    VoidCallback? onPressed, {
+    bool outlined = false,
+    Color? color,
+  }) {
+    final buttonColor = color ?? _blue;
+
+    if (outlined) {
+      return OutlinedButton.icon(
+        onPressed: _saving ? null : onPressed,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: buttonColor,
+          side: BorderSide(color: buttonColor),
+          padding: const EdgeInsets.all(14),
+        ),
+        icon: Icon(icon),
+        label: Text(label),
+      );
+    }
+
+    return FilledButton.icon(
+      onPressed: _saving ? null : onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: buttonColor,
+        padding: const EdgeInsets.all(14),
+      ),
+      icon: Icon(icon),
+      label: Text(label),
+    );
+  }
+
+  // ============================================================
+  // RIWAYAT KENDALA
+  // ============================================================
+
+  Widget _riwayatLaporan() {
+    final stream = _db
+        .collection('laporan_kendala')
+        .doc(widget.laporanId)
+        .collection('riwayat')
+        .orderBy('created_at')
+        .snapshots();
+
+    return StreamBuilder<
+        QuerySnapshot<Map<String, dynamic>>>(
+      stream: stream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _section(
+            'Riwayat Kendala',
+            [
+              Text(
+                'Gagal memuat riwayat: '
+                '${snapshot.error}',
+              ),
+            ],
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return _section(
+            'Riwayat Kendala',
+            [
+              const Center(
+                child: CircularProgressIndicator(),
+              ),
+            ],
+          );
+        }
+
+        final docs = snapshot.data!.docs;
+
+        if (docs.isEmpty) {
+          return _section(
+            'Riwayat Kendala',
+            [
+              const Text(
+                'Belum ada laporan lanjutan. '
+                'Informasi laporan saat ini tersedia '
+                'pada bagian atas.',
+              ),
+            ],
+          );
+        }
+
+        return _section(
+          'Riwayat Kendala Sebelumnya',
+          [
+            for (var i = 0; i < docs.length; i++)
+              Builder(
+                builder: (context) {
+                  final data = docs[i].data();
+
+                  return Card(
+                    margin: const EdgeInsets.only(
+                      bottom: 10,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Putaran ${i + 1} • '
+                            '${_tanggal(data['created_at'])}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: _navy,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _line(
+                            'Kendala',
+                            _value(
+                              data,
+                              'deskripsi_sebelumnya',
+                            ),
+                          ),
+                          _line(
+                            'Dampak',
+                            _value(
+                              data,
+                              'dampak_sebelumnya',
+                            ),
+                          ),
+                          _line(
+                            'Solusi Atasan',
+                            _value(
+                              data,
+                              'solusi_sebelumnya',
+                            ),
+                          ),
+                          _line(
+                            'Tanggapan Staff',
+                            _value(data, 'feedback'),
+                          ),
+                          if (_value(
+                            data,
+                            'solusi_file_path',
+                            '',
+                          ).isNotEmpty)
+                            const Text(
+                              'Lampiran solusi sebelumnya '
+                              'tercatat dalam riwayat.',
+                              style: TextStyle(
+                                color: _blue,
+                                fontSize: 12,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ============================================================
+  // KIRIM DAN EDIT SOLUSI
+  // ============================================================
+
+  Future<void> _formSolusi({
+    required bool edit,
+  }) async {
+    if (_saving) return;
+
+    final current = await _db
+        .collection('laporan_kendala')
+        .doc(widget.laporanId)
+        .get();
+
+    if (!mounted) return;
+
+    final data = current.data() ?? {};
+
+    final controller = TextEditingController(
+      text: edit
+          ? (data['solusi'] ?? '').toString()
+          : '',
+    );
+
+    PlatformFile? selectedFile;
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return AlertDialog(
+              title: Text(
+                edit ? 'Edit Solusi' : 'Kirim Solusi',
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        labelText:
+                            'Keterangan solusi (wajib)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final result =
+                            await FilePicker.platform.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: [
+                            'pdf',
+                            'jpg',
+                            'jpeg',
+                            'png',
+                            'docx',
+                          ],
+                          withData: true,
+                        );
+
+                        if (result == null ||
+                            result.files.isEmpty) {
+                          return;
+                        }
+
+                        setModalState(() {
+                          selectedFile =
+                              result.files.first;
+                        });
+                      },
+                      icon: const Icon(
+                        Icons.attach_file,
+                      ),
+                      label: Text(
+                        selectedFile?.name ??
+                            'Lampiran solusi (opsional)',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () =>
+                      Navigator.pop(dialogContext),
+                  child: const Text('Batal'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final solusi =
+                        controller.text.trim();
+
+                    if (solusi.isEmpty) return;
+
+                    Navigator.pop(
+                      dialogContext,
+                      {
+                        'solusi': solusi,
+                        'file': selectedFile,
+                      },
+                    );
+                  },
+                  child: const Text('Simpan'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    Future<void>.delayed(
+      const Duration(milliseconds: 300),
+      controller.dispose,
+    );
+
+    if (result == null) return;
+
+    await _action(() async {
+      String? path;
+      String? nama;
+
+      final file = result['file'] as PlatformFile?;
+
+      if (file != null) {
+        final bytes = file.bytes;
+
+        if (bytes == null) {
+          throw StateError(
+            'File tidak berhasil dibaca. '
+            'Silakan pilih ulang lampiran.',
+          );
+        }
+
+        final uploaded =
+            await _storageService.uploadHasilTugas(
+          tugasId: 'solusi_${widget.laporanId}',
+          namaFile: file.name,
+          bytes: bytes,
+          contentType:
+              SupabaseStorageService.mimeTypeDariNama(
+            file.name,
+          ),
+        );
+
+        path = uploaded.path;
+        nama = file.name;
+      }
+
+      if (edit) {
+        await _service.editSolusi(
+          laporanId: widget.laporanId,
+          solusi: result['solusi'] as String,
+          filePath: path,
+          fileNama: nama,
+        );
+      } else {
+        await _service.kirimSolusi(
+          laporanId: widget.laporanId,
+          solusi: result['solusi'] as String,
+          filePath: path ?? '',
+          fileNama: nama ?? '',
+        );
+      }
+    });
+  }
+
+  // ============================================================
+  // TINDAKAN ADMIN
+  // ============================================================
+
+  Widget _actions(
+    String status, {
+    required bool isActiveAssignment,
+  }) {
+    final id = widget.laporanId;
+
+    final canHandle = isActiveAssignment &&
+        (status == StatusLaporanKendala.menungguReview ||
+            status ==
+                StatusLaporanKendala.dalamPenanganan);
+
+    if (!canHandle) {
+      if (status == StatusLaporanKendala.selesai) {
+        return const Text(
+          'Laporan telah diselesaikan dan '
+          'dikonfirmasi Staff.',
+          style: TextStyle(
+            color: Color(0xFF15803D),
+            fontWeight: FontWeight.w600,
+          ),
+        );
+      }
+
+      if (status == StatusLaporanKendala.ditolak) {
+        return const Text(
+          'Laporan telah ditolak. '
+          'Data tetap tersimpan sebagai riwayat.',
+          style: TextStyle(
+            color: Color(0xFFB42318),
+            fontWeight: FontWeight.w600,
+          ),
+        );
+      }
+
+      if (status ==
+              StatusLaporanKendala.menungguKonfirmasi &&
+          isActiveAssignment) {
+        return Column(
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Solusi telah dikirim. '
+              'Menunggu konfirmasi Staff.',
+            ),
+            const SizedBox(height: 10),
+            _button(
+              'Edit Solusi',
+              Icons.edit_outlined,
+              () => _formSolusi(edit: true),
+            ),
+          ],
+        );
+      }
+
+      return const Text(
+        'Laporan tidak dapat diproses karena '
+        'penugasan tidak sedang terkendala '
+        'atau laporan bukan kendala aktif.',
+        style: TextStyle(
+          color: Colors.blueGrey,
+        ),
+      );
+    }
+
+    if (status ==
+        StatusLaporanKendala.menungguReview) {
+      return Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          _button(
+            'Terima & Tangani',
+            Icons.handyman_outlined,
+            () {
+              _action(
+                () => _service.mulaiPenanganan(id),
+              );
+            },
+          ),
+          _button(
+            'Tolak Laporan',
+            Icons.block_outlined,
+            () async {
+              final alasan = await _askText(
+                title: 'Alasan Penolakan',
+                hint: 'Masukkan alasan penolakan...',
+              );
+
+              if (alasan != null) {
+                await _action(
+                  () => _service.tolakLaporan(
+                    laporanId: id,
+                    alasan: alasan,
+                  ),
+                );
+              }
+            },
+            outlined: true,
+            color: const Color(0xFFB42318),
+          ),
+        ],
+      );
+    }
+
+    if (status ==
+        StatusLaporanKendala.dalamPenanganan) {
+      return Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          _button(
+            'Kirim Solusi',
+            Icons.send_outlined,
+            () => _formSolusi(edit: false),
+          ),
+          _button(
+            'Tolak Laporan',
+            Icons.block_outlined,
+            () async {
+              final alasan = await _askText(
+                title: 'Alasan Penolakan',
+                hint: 'Masukkan alasan penolakan...',
+              );
+
+              if (alasan != null) {
+                await _action(
+                  () => _service.tolakLaporan(
+                    laporanId: id,
+                    alasan: alasan,
+                  ),
+                );
+              }
+            },
+            outlined: true,
+            color: const Color(0xFFB42318),
+          ),
+        ],
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  // ============================================================
+  // PREVIEW LAMPIRAN BUKTI
+  // ============================================================
+
+  Future<void> _lihatBukti(
+    Map<String, dynamic> data,
+  ) async {
+    if (_loadingBukti) return;
+
+    final path =
+        _value(data, 'bukti_path', '');
+
+    if (path.isEmpty) {
+      _snack('Lampiran bukti tidak ditemukan.');
+      return;
+    }
+
+    setState(() => _loadingBukti = true);
+
+    try {
+      final signedUrl =
+          await _storageService.ambilLinkBuktiKendala(
+        widget.laporanId,
+      );
+
+      if (!mounted) return;
+
+      final namaFile = Uri.decodeComponent(
+        path.split('/').last,
+      );
+
+      final extension =
+          namaFile.split('.').last.toLowerCase();
+
+      final isPdf = extension == 'pdf';
+
+      final isImage = [
+        'png',
+        'jpg',
+        'jpeg',
+      ].contains(extension);
+
+      if (!isPdf && !isImage) {
+        throw StateError(
+          'Format lampiran tidak mendukung preview.',
+        );
+      }
+
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          final size =
+              MediaQuery.sizeOf(dialogContext);
+
+          return Dialog(
+            insetPadding: const EdgeInsets.all(16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: SizedBox(
+              width: size.width > 900
+                  ? 850
+                  : size.width * 0.95,
+              height: size.height * 0.85,
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: const BoxDecoration(
+                      color: _navy,
+                      borderRadius:
+                          BorderRadius.vertical(
+                        top: Radius.circular(16),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isPdf
+                              ? Icons.picture_as_pdf
+                              : Icons.image_outlined,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            namaFile,
+                            overflow:
+                                TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight:
+                                  FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () =>
+                              Navigator.pop(
+                            dialogContext,
+                          ),
+                          icon: const Icon(
+                            Icons.close,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: isPdf
+                        ? SfPdfViewer.network(
+                            signedUrl,
+                            canShowScrollHead: true,
+                            canShowPaginationDialog: true,
+                          )
+                        : InteractiveViewer(
+                            minScale: 0.5,
+                            maxScale: 5,
+                            child: Center(
+                              child: Image.network(
+                                signedUrl,
+                                fit: BoxFit.contain,
+                                loadingBuilder:
+                                    (context, child,
+                                        progress) {
+                                  if (progress == null) {
+                                    return child;
+                                  }
+
+                                  return const Center(
+                                    child:
+                                        CircularProgressIndicator(),
+                                  );
+                                },
+                                errorBuilder:
+                                    (context, error,
+                                        stackTrace) {
+                                  return const Center(
+                                    child: Text(
+                                      'Gagal menampilkan gambar.',
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      if (mounted) {
+        _snack('Gagal membuka bukti: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingBukti = false);
+      }
+    }
+  }
+
+  // ============================================================
+  // KONTEN DETAIL
+  // ============================================================
+
+  Widget _detailContent(
+    Map<String, dynamic> data,
+    String assignmentStatus,
+    bool isActiveAssignment,
+  ) {
+    final status = _value(data, 'status');
+
+    _identity ??= _loadIdentity(data);
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints:
+                const BoxConstraints(maxWidth: 850),
+            child: Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
+              children: [
+                _section(
+                  'Informasi Laporan',
+                  [
+                    _line(
+                      'Status',
+                      StatusLaporanKendala.label(
+                        status,
+                      ),
+                    ),
+                    _line(
+                      'Status Penugasan',
+                      assignmentStatus.isEmpty
+                          ? '-'
+                          : assignmentStatus,
+                    ),
+                    _line(
+                      'Tanggal Laporan',
+                      _tanggal(
+                        data['tanggal_laporan'] ??
+                            data['created_at'],
+                      ),
+                    ),
+                    FutureBuilder<Map<String, String>>(
+                      future: _identity,
+                      builder: (context, snapshot) {
+                        return Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            _line(
+                              'Staff Pelapor',
+                              snapshot.data?['staff'] ??
+                                  'Memuat...',
+                            ),
+                            _line(
+                              'Tugas',
+                              snapshot.data?['tugas'] ??
+                                  'Memuat...',
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    _line(
+                      'Jenis Kendala',
+                      _value(
+                        data,
+                        'jenis_kendala',
+                      ),
+                    ),
+                    _line(
+                      'Prioritas',
+                      _value(data, 'prioritas'),
+                    ),
+                    _line(
+                      'Deskripsi Kendala',
+                      _value(
+                        data,
+                        'deskripsi',
+                        _value(
+                          data,
+                          'deskripsi_kendala',
+                        ),
+                      ),
+                    ),
+                    _line(
+                      'Dampak terhadap Tugas',
+                      _value(data, 'dampak'),
+                    ),
+                  ],
+                ),
+                _section(
+                  'Penanganan',
+                  [
+                    _line(
+                      'Solusi dari Atasan',
+                      _value(data, 'solusi'),
+                    ),
+                    if (_value(
+                          data,
+                          'alasan_penolakan',
+                        ) !=
+                        '-')
+                      _line(
+                        'Alasan Penolakan',
+                        _value(
+                          data,
+                          'alasan_penolakan',
+                        ),
+                      ),
+                    FutureBuilder<
+                        DocumentSnapshot<
+                            Map<String, dynamic>>>(
+                      future: _value(
+                        data,
+                        'ditangani_oleh',
+                        '',
+                      ).isEmpty
+                          ? null
+                          : _db
+                              .collection('users')
+                              .doc(
+                                _value(
+                                  data,
+                                  'ditangani_oleh',
+                                ),
+                              )
+                              .get(),
+                      builder: (context, snapshot) {
+                        final profile =
+                            snapshot.data?.data();
+
+                        final nama = (profile?['nama'] ??
+                                '')
+                            .toString()
+                            .trim();
+
+                        final jabatan =
+                            (profile?['jabatan'] ??
+                                    '')
+                                .toString()
+                                .trim();
+
+                        return _line(
+                          'Atasan Penanganan',
+                          nama.isEmpty
+                              ? 'Belum ada Atasan yang menangani'
+                              : '$nama'
+                                  '${jabatan.isEmpty ? '' : ' — $jabatan'}',
+                        );
+                      },
+                    ),
+                    _line(
+                      'Pembaruan Terakhir',
+                      _tanggal(
+                        data['updated_at'],
+                      ),
+                    ),
+                    if (data['resolved_at'] != null)
+                      _line(
+                        'Tanggal Selesai',
+                        _tanggal(
+                          data['resolved_at'],
+                        ),
+                      ),
+                    if (data['rejected_at'] != null)
+                      _line(
+                        'Tanggal Ditolak',
+                        _tanggal(
+                          data['rejected_at'],
+                        ),
+                      ),
+                  ],
+                ),
+                _riwayatLaporan(),
+                if (_value(
+                      data,
+                      'bukti_path',
+                      '',
+                    ).isNotEmpty ||
+                    _value(
+                      data,
+                      'bukti_url',
+                      '',
+                    ).isNotEmpty)
+                  _section(
+                    'Lampiran Bukti',
+                    [
+                      const Text(
+                        'Lampiran bukti yang dikirim '
+                        'Staff dapat dilihat melalui '
+                        'tombol berikut.',
+                      ),
+                      const SizedBox(height: 12),
+                      _line(
+                        'Provider',
+                        _value(
+                          data,
+                          'bukti_provider',
+                        ),
+                      ),
+                      _line(
+                        'Nama File',
+                        _value(
+                                  data,
+                                  'bukti_path',
+                                  '',
+                                )
+                                .isEmpty
+                            ? '-'
+                            : _value(
+                                data,
+                                'bukti_path',
+                              ).split('/').last,
+                      ),
+                      FilledButton.icon(
+                        onPressed: _loadingBukti ||
+                                _value(
+                                  data,
+                                  'bukti_path',
+                                  '',
+                                ).isEmpty
+                            ? null
+                            : () => _lihatBukti(data),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _blue,
+                          padding:
+                              const EdgeInsets.all(14),
+                        ),
+                        icon: _loadingBukti
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.visibility_outlined,
+                              ),
+                        label: Text(
+                          _loadingBukti
+                              ? 'Memuat Bukti...'
+                              : 'Lihat Bukti',
+                        ),
+                      ),
+                    ],
+                  ),
+                _section(
+                  'Tindakan Admin',
+                  [
+                    if (_saving)
+                      const LinearProgressIndicator(),
+                    const SizedBox(height: 8),
+                    _actions(
+                      status,
+                      isActiveAssignment:
+                          isActiveAssignment,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _body() {
+    return StreamBuilder<
+        DocumentSnapshot<Map<String, dynamic>>>(
+      stream: _detailStream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Gagal memuat laporan: ${snapshot.error}',
+            ),
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
+        }
+
+        if (!snapshot.data!.exists) {
+          return const Center(
+            child: Text(
+              'Laporan tidak ditemukan.',
+            ),
+          );
+        }
+
+        final data = snapshot.data!.data()!;
+
+        final assignmentId =
+            _value(data, 'penugasan_id', '');
+
+        return StreamBuilder<
+            QuerySnapshot<Map<String, dynamic>>>(
+          stream: _assignmentStream,
+          builder: (context, assignmentSnapshot) {
+            if (assignmentSnapshot.hasError) {
+              return Center(
+                child: Text(
+                  'Gagal memuat penugasan: '
+                  '${assignmentSnapshot.error}',
+                ),
+              );
+            }
+
+            if (!assignmentSnapshot.hasData) {
+              return const Center(
+                child: CircularProgressIndicator(),
+              );
+            }
+
+            Map<String, dynamic>? assignment;
+
+            for (final doc
+                in assignmentSnapshot.data!.docs) {
+              if (doc.id == assignmentId) {
+                assignment = doc.data();
+                break;
+              }
+            }
+
+            final assignmentStatus =
+                (assignment?['status'] ?? '')
+                    .toString();
+
+            final activeId =
+                (assignment?['kendala_aktif_id'] ??
+                        '')
+                    .toString();
+
+            final isActiveAssignment =
+                assignmentStatus == 'terkendala' &&
+                    (activeId.isEmpty ||
+                        activeId == widget.laporanId);
+
+            return _detailContent(
+              data,
+              assignmentStatus,
+              isActiveAssignment,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 900;
+
+        return Scaffold(
+          backgroundColor: _background,
+          drawer: wide
+              ? null
+              : const AdminSidebar(
+                  currentIndex: 6,
+                  isDrawer: true,
+                ),
+          body: Row(
+            crossAxisAlignment:
+                CrossAxisAlignment.stretch,
+            children: [
+              if (wide)
+                const AdminSidebar(
+                  currentIndex: 6,
+                ),
+              Expanded(
+                child: Column(
+                  children: [
+                    AdminHeader(
+                      title: 'Detail Laporan Kendala',
+                      showSidebar: wide,
+                    ),
+                    Expanded(child: _body()),
                   ],
                 ),
               ),

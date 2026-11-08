@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -6,6 +7,7 @@ import '../../widgets/pdf_iframe_stub.dart'
 import 'dart:typed_data';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/penugasan_workflow.dart';
+import '../../services/laporan_kendala_service.dart';
 import '../../services/pengiriman_hasil_service.dart';
 import 'riwayat_tugas.dart' show RiwayatTugasPage;
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,6 +18,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import '../../widgets/app_layout.dart';
 
 const Color kBiruTua = Color(0xFF1A1464);
@@ -29,6 +33,8 @@ class _DetailTugasModel {
   String judulTugas;
   String deskripsiTugas;
   String lokasi;
+  double? latitude;
+  double? longitude;
   DateTime tanggalDiberikan;
   DateTime tanggalMulai;
   DateTime batasWaktu;
@@ -50,6 +56,8 @@ class _DetailTugasModel {
     required this.judulTugas,
     required this.deskripsiTugas,
     required this.lokasi,
+    this.latitude,
+    this.longitude,
     required this.tanggalDiberikan,
     required this.tanggalMulai,
     required this.batasWaktu,
@@ -80,6 +88,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final SupabaseStorageService _storageService = SupabaseStorageService();
+  final LaporanKendalaService _kendalaService = LaporanKendalaService();
 
   _DetailTugasModel? _detailTugas;
 
@@ -165,6 +174,9 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
       case 'terkendala':
         return 'Terkendala';
 
+      case 'dihentikan':
+        return 'Dihentikan';
+
       default:
         return 'Pending';
     }
@@ -213,6 +225,8 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
         judulTugas: (task['judul'] ?? '-').toString(),
         deskripsiTugas: (task['deskripsi'] ?? '-').toString(),
         lokasi: (task['tempat_tugas'] ?? '-').toString(),
+        latitude: (task['latitude'] as num?)?.toDouble(),
+        longitude: (task['longitude'] as num?)?.toDouble(),
         tanggalDiberikan: _asDate(task['tanggal_tugas_diberikan']),
         tanggalMulai: _asDate(task['tanggal_mulai_tugas']),
         batasWaktu: _asDate(task['tanggal_selesai_tugas']),
@@ -245,15 +259,15 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
 
         if (refreshForm) {
           _selectedFile = null;
-          _keteranganController.text = model.keteranganHasil ?? '';
+          _keteranganController.text = currentStatus == 'Revisi' ? '' : (model.keteranganHasil ?? '');
 
-          _namaFileDipilih = model.fileHasil;
+          _namaFileDipilih = currentStatus == 'Revisi' ? null : model.fileHasil;
 
-          _fileHasilUrl =
+          _fileHasilUrl = currentStatus == 'Revisi' ? null :
               (assignment['file_hasil_url'] ?? '').toString().isEmpty
               ? null
               : assignment['file_hasil_url'].toString();
-          _fileHasilPath =
+          _fileHasilPath = currentStatus == 'Revisi' ? null :
               (assignment['file_hasil_path'] ?? '').toString().isEmpty
               ? null
               : assignment['file_hasil_path'].toString();
@@ -333,10 +347,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
       );
       return;
     }
-    if (_keteranganController.text.trim().isEmpty ||
-        (_selectedFile == null &&
-            (_fileHasilUrl ?? '').isEmpty &&
-            (_fileHasilPath ?? '').isEmpty)) {
+    if (_keteranganController.text.trim().isEmpty || _selectedFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -353,6 +364,37 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
       );
       return;
     }
+    // Periksa sebelum upload agar file tidak terunggah sia-sia jika revisi
+    // tidak memiliki pasangan riwayat yang sah.
+    if (_statusTerpilih == 'Revisi') {
+      try {
+        final assignment = await _firestore
+            .collection('penugasan').doc(widget.penugasanId).get();
+        final data = assignment.data();
+        final revisionId = (data?['revisi_aktif_id'] ?? '').toString();
+        if (data?['status'] != 'revisi' || revisionId.isEmpty) {
+          throw StateError(
+            'Instruksi revisi belum terhubung. Minta Atasan mengirim ulang '
+            'instruksi revisi sebelum mengumpulkan hasil.');
+        }
+        final revision = await assignment.reference
+            .collection('riwayat_revisi').doc(revisionId).get();
+        if (!revision.exists ||
+            revision.data()?['status'] != 'menunggu_perbaikan') {
+          throw StateError(
+            'Riwayat revisi aktif tidak ditemukan atau sudah selesai. '
+            'Hubungi Atasan untuk memperbarui instruksi revisi.');
+        }
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(duration: const Duration(seconds: 8),
+              content: Text('Tidak dapat mengirim revisi: $e')),
+        );
+        return;
+      }
+    }
+
     final statusSebelum = _statusTerpilih;
     final revisionBefore = _assignmentData?['tanggal_revisi'];
     final submittedNotes = _keteranganController.text.trim();
@@ -400,21 +442,15 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
       }
       _setSubmissionStage('Menyimpan hasil');
       await runSubmissionStep(
-        () => transitionAssignment(
-          _firestore,
-          widget.penugasanId,
-          'dikumpulkan',
-          data: {
-            'file_hasil_url': fileUrl ?? '',
-            'file_hasil_path': filePath ?? '',
-            'file_hasil_provider': filePath != null ? 'supabase' : 'firebase',
-            'file_hasil_nama': fileName ?? '',
-            'catatan_staff': submittedNotes,
-          },
+        () => _simpanPengumpulanDenganRiwayat(
+          statusSebelum: statusSebelum,
+          catatan: submittedNotes,
+          filePath: filePath ?? '',
+          fileUrl: fileUrl ?? '',
+          fileName: fileName ?? '',
         ),
         timeout: const Duration(seconds: 35),
-        timeoutMessage:
-            'Penyimpanan hasil belum mendapat konfirmasi. Periksa koneksi dan status tugas sebelum mencoba lagi.',
+        timeoutMessage: 'Penyimpanan hasil belum mendapat konfirmasi. Periksa koneksi dan status tugas sebelum mencoba lagi.',
       );
       if (!mounted) return;
       // Tampilkan status yang telah dikonfirmasi Firestore segera, tanpa
@@ -466,45 +502,409 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
     }
   }
 
+
+  Future<void> _simpanPengumpulanDenganRiwayat({
+    required String statusSebelum,
+    required String catatan,
+    required String filePath,
+    required String fileUrl,
+    required String fileName,
+  }) async {
+    final ref = _firestore.collection('penugasan').doc(widget.penugasanId);
+    final riwayat = ref.collection('riwayat_pengumpulan').doc();
+    await _firestore.runTransaction((tx) async {
+      final snapshot = await tx.get(ref);
+      final current = (snapshot.data()?['status'] ?? '').toString();
+      if (current != (statusSebelum == 'Revisi' ? 'revisi' : 'berlangsung')) {
+        throw StateError('Status berubah. Muat ulang tugas sebelum mengirim.');
+      }
+      if ((snapshot.data()?['kendala_aktif_id'] ?? '').toString().isNotEmpty) {
+        throw StateError('Selesaikan laporan kendala terlebih dahulu.');
+      }
+      final revisiId = statusSebelum == 'Revisi'
+          ? (snapshot.data()?['revisi_aktif_id'] ?? '').toString()
+          : '';
+      if (statusSebelum == 'Revisi' && revisiId.isEmpty) {
+        throw StateError('ID revisi aktif kosong. Hubungi Atasan untuk '
+            'mengirim ulang instruksi revisi.');
+      }
+      if (revisiId.isNotEmpty) {
+        final revision = await tx.get(
+            ref.collection('riwayat_revisi').doc(revisiId));
+        if (!revision.exists ||
+            revision.data()?['status'] != 'menunggu_perbaikan') {
+          throw StateError('Instruksi revisi sudah berubah atau tidak tersedia.');
+        }
+      }
+      tx.set(riwayat, {
+        'penugasan_id': widget.penugasanId,
+        'staff_id': _auth.currentUser!.uid,
+        'jenis': statusSebelum == 'Revisi' ? 'revisi' : 'awal',
+        'revisi_id': revisiId,
+        'keterangan': catatan,
+        'file_path': filePath,
+        'file_url': fileUrl,
+        'file_nama': fileName,
+        'created_at': FieldValue.serverTimestamp(),
+      });
+      if (revisiId.isNotEmpty) {
+        tx.update(ref.collection('riwayat_revisi').doc(revisiId), {
+          'hasil_pengumpulan_id': riwayat.id,
+          'status': 'selesai',
+          'tanggal_diperbaiki': FieldValue.serverTimestamp(),
+        });
+      }
+      tx.update(ref, {
+        'status': 'dikumpulkan',
+        'revisi_aktif_id': '',
+        'file_hasil_url': fileUrl,
+        'file_hasil_path': filePath,
+        'file_hasil_provider': filePath.isNotEmpty ? 'supabase' : 'firebase',
+        'file_hasil_nama': fileName,
+        'catatan_staff': catatan,
+        'updated_at': FieldValue.serverTimestamp(),
+        'tanggal_dikumpulkan': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Widget _riwayatPanel({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required Widget child,
+  }) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withOpacity(.20)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(.035), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, color: color, size: 19),
+          const SizedBox(width: 9),
+          Expanded(child: Text(title, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700))),
+        ]),
+        const SizedBox(height: 10),
+        child,
+      ]),
+    );
+  }
+
+  Widget _riwayatBaris(String label, dynamic value, {bool emphasize = false}) {
+    final content = (value ?? '').toString().trim();
+    if (content.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade600, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 3),
+        Text(content, style: TextStyle(fontSize: 13, height: 1.4, color: kBiruTua, fontWeight: emphasize ? FontWeight.w600 : FontWeight.normal)),
+      ]),
+    );
+  }
+
+  Widget _riwayatPengumpulan() {
+    final ref = _firestore.collection('penugasan').doc(widget.penugasanId);
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: ref.collection('riwayat_pengumpulan').orderBy('created_at').snapshots(),
+      builder: (context, hasilSnap) {
+        if (hasilSnap.hasError) {
+          return _riwayatPanel(title: 'Riwayat Pengerjaan dan Revisi', icon: Icons.history, color: kBiruSedang,
+            child: Text('Riwayat hasil belum dapat dimuat: ${hasilSnap.error}', style: const TextStyle(fontSize: 12)));
+        }
+        final hasil = hasilSnap.data?.docs ?? [];
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: ref.collection('riwayat_revisi').orderBy('created_at').snapshots(),
+          builder: (context, revisiSnap) {
+            if (revisiSnap.hasError) {
+              return _riwayatPanel(title: 'Riwayat Pengerjaan dan Revisi', icon: Icons.history, color: kBiruSedang,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('Riwayat revisi belum dapat diakses. Pastikan aturan Firestore untuk riwayat_revisi sudah dipublikasikan.', style: TextStyle(fontSize: 12)),
+                  const SizedBox(height: 5),
+                  Text('${revisiSnap.error}', style: const TextStyle(fontSize: 11, color: Colors.redAccent)),
+                ]));
+            }
+            final revisi = revisiSnap.data?.docs ?? [];
+            if (hasil.isEmpty && revisi.isEmpty) return const SizedBox.shrink();
+            final awal = hasil.where((d) => (d.data()['revisi_id'] ?? '').toString().isEmpty).toList();
+            final terkait = <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
+            for (final d in hasil) {
+              final id = (d.data()['revisi_id'] ?? '').toString();
+              if (id.isNotEmpty) terkait.putIfAbsent(id, () => []).add(d);
+            }
+            Widget hasilTile(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+              final d = doc.data();
+              final name = (d['file_nama'] ?? 'Lampiran hasil').toString();
+              return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _riwayatBaris('Keterangan Staff', d['keterangan']),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final url = await _storageService.ambilLinkRiwayat(widget.penugasanId, doc.id);
+                      await _bukaFile(url, namaFile: name);
+                    } catch (e) {
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(content: Text('Gagal membuka hasil: $e')));
+                    }
+                  },
+                  icon: const Icon(Icons.attach_file, size: 17),
+                  label: Text(name, overflow: TextOverflow.ellipsis),
+                ),
+              ]);
+            }
+            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Padding(padding: EdgeInsets.only(bottom: 10),
+                child: Text('Riwayat Pengerjaan dan Revisi', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: kBiruTua))),
+              for (final doc in awal)
+                _riwayatPanel(title: 'Pengumpulan Hasil Pertama', icon: Icons.upload_file, color: kBiruSedang, child: hasilTile(doc)),
+              for (var i = 0; i < revisi.length; i++)
+                _riwayatPanel(title: 'Revisi ke-${i + 1}', icon: Icons.edit_note, color: Colors.deepOrange.shade700,
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    _riwayatBaris('Instruksi Atasan', revisi[i].data()['catatan_atasan']),
+                    if ((revisi[i].data()['file_revisi_nama'] ?? '').toString().isNotEmpty)
+                      _riwayatBaris('Lampiran Instruksi', revisi[i].data()['file_revisi_nama']),
+                    const Divider(height: 22),
+                    Row(children: [
+                      Icon(Icons.task_alt, size: 17, color: Colors.green.shade700),
+                      const SizedBox(width: 6),
+                      const Expanded(child: Text('Hasil Perbaikan Staff', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13))),
+                    ]),
+                    const SizedBox(height: 9),
+                    if ((terkait[revisi[i].id] ?? []).isEmpty)
+                      const Text('Menunggu hasil perbaikan Staff', style: TextStyle(fontSize: 12, color: Colors.blueGrey)),
+                    for (final hasilDoc in terkait[revisi[i].id] ?? []) hasilTile(hasilDoc),
+                  ])),
+              for (final doc in hasil.where((d) =>
+                  (d.data()['revisi_id'] ?? '').toString().isNotEmpty &&
+                  !revisi.any((r) => r.id == d.data()['revisi_id'])))
+                _riwayatPanel(title: 'Hasil Revisi Lama (belum terhubung)', icon: Icons.history, color: Colors.blueGrey,
+                  child: hasilTile(doc)),
+              const SizedBox(height: 8),
+            ]);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _semuaRiwayatKendala() {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return const SizedBox.shrink();
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _firestore.collection('laporan_kendala')
+          .where('penugasan_id', isEqualTo: widget.penugasanId)
+          .where('pelapor_id', isEqualTo: uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _riwayatPanel(title: 'Seluruh Riwayat Kendala', icon: Icons.report_problem_outlined,
+            color: kBiruSedang, child: Text('Riwayat kendala gagal dimuat: ${snapshot.error}', style: const TextStyle(fontSize: 12)));
+        }
+        final reports = [...?snapshot.data?.docs];
+        if (reports.isEmpty) return const SizedBox.shrink();
+        reports.sort((a, b) {
+          final ta = a.data()['created_at'];
+          final tb = b.data()['created_at'];
+          if (ta is Timestamp && tb is Timestamp) return ta.compareTo(tb);
+          return 0;
+        });
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Padding(padding: EdgeInsets.only(bottom: 10),
+            child: Text('Seluruh Riwayat Kendala', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: kBiruTua))),
+          for (var i = 0; i < reports.length; i++)
+            _riwayatPanel(title: 'Laporan Kendala ${i + 1}', icon: Icons.report_problem_outlined, color: Colors.deepOrange.shade700,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _riwayatBaris('Laporan', reports[i].data()['deskripsi']),
+                _riwayatBaris('Dampak', reports[i].data()['dampak']),
+                _riwayatBaris('Solusi Terakhir', reports[i].data()['solusi']),
+                _riwayatBaris('Status', reports[i].data()['status'], emphasize: true),
+                _riwayatKendala(reports[i].id),
+              ])),
+          const SizedBox(height: 8),
+        ]);
+      },
+    );
+  }
+
+  Widget _riwayatKendala(String laporanId) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _firestore.collection('laporan_kendala').doc(laporanId)
+          .collection('riwayat').orderBy('created_at').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) return Text('Riwayat kendala gagal dimuat: ${snapshot.error}', style: const TextStyle(fontSize: 12));
+        final docs = snapshot.data?.docs ?? [];
+        if (docs.isEmpty) return const SizedBox.shrink();
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const SizedBox(height: 10),
+          const Divider(height: 16),
+          const Text('Riwayat Laporan dan Solusi Sebelumnya', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: kBiruTua)),
+          const SizedBox(height: 8),
+          ...docs.asMap().entries.map((entry) {
+            final d = entry.value.data();
+            final stamp = d['created_at'];
+            final tanggal = stamp is Timestamp ? stamp.toDate().toLocal().toString().substring(0, 16) : '-';
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 9),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: const Color(0xFFF5F7FC), borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE1E7F0))),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Putaran ${entry.key + 1} • $tanggal', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: kBiruTua)),
+                const SizedBox(height: 9),
+                _riwayatBaris('Kendala', d['deskripsi_sebelumnya']),
+                _riwayatBaris('Dampak', d['dampak_sebelumnya']),
+                _riwayatBaris('Solusi Atasan', d['solusi_sebelumnya']),
+                _riwayatBaris('Tanggapan Staff', d['feedback']),
+                if ((d['solusi_file_path'] ?? '').toString().isNotEmpty)
+                  const Text('Lampiran solusi sebelumnya tercatat dalam riwayat.', style: TextStyle(fontSize: 11, color: Colors.blueGrey)),
+              ]),
+            );
+          }),
+        ]);
+      },
+    );
+  }
+
+  Widget _solusiKendala() {
+    final id = (_assignmentData?['kendala_aktif_id'] ?? '').toString();
+    if (id.isEmpty) return const Text('Laporan kendala sedang disinkronkan.');
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: _firestore.collection('laporan_kendala').doc(id).snapshots(),
+      builder: (context, snapshot) {
+        final d = snapshot.data?.data();
+        if (d == null) return const CircularProgressIndicator();
+        final status = (d['status'] ?? '').toString();
+        if (status != StatusLaporanKendala.menungguKonfirmasi) {
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Text('Laporan sedang ditinjau Atasan.'),
+            _riwayatKendala(id),
+            if (status == StatusLaporanKendala.menungguReview)
+              OutlinedButton.icon(onPressed: _bukaFormKendala, icon: const Icon(Icons.edit), label: const Text('Edit Laporan Kendala')),
+          ]);
+        }
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _riwayatKendala(id),
+          const Text('Solusi dari Atasan', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text((d['solusi'] ?? '').toString()),
+          if ((d['solusi_file_path'] ?? '').toString().isNotEmpty)
+            TextButton.icon(onPressed: () async {
+              try { await _bukaFile(
+                  await _storageService.ambilLinkSolusi(id),
+                  namaFile: (d['solusi_file_nama'] ?? d['solusi_file_path'] ?? 'Lampiran Solusi').toString().split('/').last,
+                ); }
+              catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal membuka solusi: $e'))); }
+            }, icon: const Icon(Icons.attach_file), label: const Text('Lihat Lampiran Solusi')),
+          const SizedBox(height: 10),
+          ElevatedButton.icon(onPressed: _lanjutkanPekerjaan, icon: const Icon(Icons.check_circle), label: const Text('Kendala Teratasi, Lanjutkan Tugas')),
+          OutlinedButton.icon(onPressed: () => _bukaFormKendala(lanjutan: true), icon: const Icon(Icons.report_problem), label: const Text('Kendala Belum Teratasi')),
+        ]);
+      },
+    );
+  }
+
+  Future<void> _bukaNavigasi() async {
+    final tugas = await _firestore.collection('tugas').doc(_detailTugas!.idTugas).get();
+    final lat = (tugas.data()?['latitude'] as num?)?.toDouble();
+    final lng = (tugas.data()?['longitude'] as num?)?.toDouble();
+    if (lat == null || lng == null) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Koordinat lokasi belum tersedia.')));
+      return;
+    }
+    final url = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng');
+    await launchUrl(url, mode: LaunchMode.externalApplication);
+  }
+
   Future<void> _lanjutkanPekerjaan() async {
     try {
-      await transitionAssignment(_firestore, widget.penugasanId, 'berlangsung');
-
+      final penugasan = await _firestore.collection('penugasan')
+          .doc(widget.penugasanId).get();
+      final aktifId = (penugasan.data()?['kendala_aktif_id'] ?? '').toString();
+      if (aktifId.isEmpty) {
+        throw StateError(
+          'Laporan kendala lama belum tersinkronisasi. '
+          'Hubungi Atasan untuk memproses laporan terlebih dahulu.',
+        );
+      }
+      final laporan = await _firestore.collection('laporan_kendala')
+          .doc(aktifId).get();
+      final status = (laporan.data()?['status'] ?? '').toString();
+      if (status == StatusLaporanKendala.menungguKonfirmasi) {
+        await _kendalaService.konfirmasiSelesai(aktifId);
+      } else {
+        throw StateError(
+          'Belum dapat melanjutkan. Tunggu solusi Atasan dan konfirmasi '
+          'bahwa kendala telah teratasi.',
+        );
+      }
       if (!mounted) return;
-
-      setState(() {
-        _statusTerpilih = 'Berlangsung';
-
-        _detailTugas?.statusTugas = 'Berlangsung';
-
-        _detailTugas?.statusKendala = 'Selesai/Dibatalkan';
-      });
-
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Kendala diselesaikan, tugas kembali Berlangsung.'),
-        ),
+        const SnackBar(content: Text('Kendala dikonfirmasi selesai. Tugas kembali berlangsung.')),
       );
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Gagal melanjutkan tugas: $e')));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal melanjutkan tugas: $e')),
+      );
     }
   }
 
-  Future<void> _bukaFile(String url) async {
+  // Buka lampiran solusi dan riwayat di dalam SIMTAS, bukan tab browser.
+  Future<void> _bukaFile(String url, {String? namaFile}) async {
     try {
-      if (!await launchUrl(
-        Uri.parse(url),
-        mode: LaunchMode.externalApplication,
-      )) {
-        throw StateError('File tidak dapat dibuka.');
+      final uri = Uri.tryParse(url);
+      if (uri == null || !uri.hasScheme ||
+          (uri.scheme != 'https' && uri.scheme != 'http')) {
+        throw StateError('URL file tidak valid.');
       }
+      final pathName = uri.pathSegments.isEmpty
+          ? 'Lampiran'
+          : Uri.decodeComponent(uri.pathSegments.last);
+      var name = (namaFile?.trim().isNotEmpty ?? false)
+          ? namaFile!.trim()
+          : pathName;
+      // File Supabase kadang memiliki awalan timestamp, tetapi ekstensi tetap utuh.
+      final lower = name.toLowerCase();
+      final pdf = lower.endsWith('.pdf');
+      final image = lower.endsWith('.png') ||
+          lower.endsWith('.jpg') || lower.endsWith('.jpeg');
+      Uint8List bytes = Uint8List(0);
+      if (!kIsWeb || !pdf) {
+        final response = await http.get(uri);
+        if (response.statusCode != 200) {
+          throw StateError('Gagal mengambil file (HTTP ${response.statusCode}).');
+        }
+        bytes = response.bodyBytes;
+        // Untuk file dengan nama tanpa ekstensi, deteksi dari MIME response.
+        if (!pdf && !image && !name.contains('.')) {
+          final mime = (response.headers['content-type'] ?? '').toLowerCase();
+          if (mime.contains('application/pdf')) name += '.pdf';
+          if (mime.contains('image/png')) name += '.png';
+          if (mime.contains('image/jpeg')) name += '.jpg';
+        }
+      }
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _SimtasFilePreviewPage(
+            namaFile: name,
+            bytes: bytes,
+            externalUrl: url,
+          ),
+        ),
+      );
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Gagal membuka file: $e')));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal membuka preview: $e')),
+      );
     }
   }
 
@@ -691,7 +1091,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
     }
   }
 
-  Future<void> _bukaFormKendala() async {
+  Future<void> _bukaFormKendala({bool lanjutan = false}) async {
     final userAwal = _auth.currentUser;
     if (userAwal == null || _detailTugas == null) return;
 
@@ -715,7 +1115,10 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
               waktuA?.millisecondsSinceEpoch ?? 0,
             );
           });
-          laporanLama = daftar.first;
+          final aktifId = (_assignmentData?['kendala_aktif_id'] ?? '').toString();
+          final matches = daftar.where((d) => d.id == aktifId);
+          if (matches.isEmpty) throw StateError('Laporan aktif tidak ditemukan.');
+          laporanLama = matches.first;
         } else {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1221,9 +1624,32 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                                     };
 
                                     if (sedangEdit) {
+                                      final lama = await transaction.get(laporanRef);
+                                      final statusLaporanLama = (lama.data()?['status'] ?? '').toString();
+                                      final statusDiharapkan = lanjutan
+                                          ? 'menunggu_konfirmasi'
+                                          : 'menunggu_review';
+                                      if (!lama.exists || statusLaporanLama != statusDiharapkan) {
+                                        throw StateError('Laporan hanya dapat diedit saat menunggu review.');
+                                      }
+                                      if (lanjutan) {
+                                        final previous = lama.data()!;
+                                        final historyRef = laporanRef.collection('riwayat').doc();
+                                        transaction.set(historyRef, {
+                                          'laporan_id': laporanRef.id,
+                                          'pelapor_id': user.uid,
+                                          'deskripsi_sebelumnya': previous['deskripsi'] ?? '',
+                                          'dampak_sebelumnya': previous['dampak'] ?? '',
+                                          'solusi_sebelumnya': previous['solusi'] ?? '',
+                                          'solusi_file_path': previous['solusi_file_path'] ?? '',
+                                          'bukti_path': previous['bukti_path'] ?? '',
+                                          'feedback': deskripsi.text.trim(),
+                                          'created_at': FieldValue.serverTimestamp(),
+                                        });
+                                      }
                                       transaction.update(
                                         laporanRef,
-                                        dataLaporan,
+                                        {...dataLaporan, if (lanjutan) 'status': 'menunggu_review', if (lanjutan) 'konfirmasi_staff_at': FieldValue.serverTimestamp()},
                                       );
                                     } else {
                                       transaction.set(laporanRef, {
@@ -1241,6 +1667,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                                             FieldValue.serverTimestamp(),
                                       });
                                       transaction.update(penugasanRef, {
+                                        'kendala_aktif_id': laporanRef.id,
                                         'status': 'terkendala',
                                         'updated_at':
                                             FieldValue.serverTimestamp(),
@@ -1280,7 +1707,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                                       SnackBar(
                                         content: Text(
                                           sedangEdit
-                                              ? 'Laporan kendala berhasil diperbarui'
+                                              ? lanjutan ? 'Laporan lanjutan dikirim kepada Atasan' : 'Laporan kendala berhasil diperbarui'
                                               : 'Kendala berhasil dilaporkan kepada atasan',
                                         ),
                                       ),
@@ -1610,6 +2037,40 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                             tugas.lokasi,
                             scale,
                           ),
+                          if (tugas.latitude != null && tugas.longitude != null) ...[
+                            SizedBox(height: 8 * scale),
+                            SizedBox(
+                              height: 190,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: FlutterMap(
+                                  options: MapOptions(
+                                    initialCenter: LatLng(tugas.latitude!, tugas.longitude!),
+                                    initialZoom: 15,
+                                  ),
+                                  children: [
+                                    TileLayer(
+                                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                      userAgentPackageName: 'app_penugasan_kominfo',
+                                    ),
+                                    MarkerLayer(markers: [
+                                      Marker(
+                                        point: LatLng(tugas.latitude!, tugas.longitude!),
+                                        width: 40,
+                                        height: 40,
+                                        child: const Icon(Icons.location_pin, color: Colors.red, size: 38),
+                                      ),
+                                    ]),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: _bukaNavigasi,
+                              icon: const Icon(Icons.navigation),
+                              label: const Text('Petunjuk Arah (Google Maps)'),
+                            ),
+                          ],
                           _detailBaris(
                             Icons.event_available,
                             'Tanggal diberikan',
@@ -1701,6 +2162,10 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                       ],
 
                       SizedBox(height: 22 * scale),
+
+                      _riwayatPengumpulan(),
+                      _semuaRiwayatKendala(),
+                      SizedBox(height: 12 * scale),
 
                       // ==== FORM PENGERJAAN & Aksi TERGANTUNG STATUS ====
                       _sectionLabel("Pengerjaan Tugas", scale),
@@ -1921,60 +2386,15 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
 
                           // --- KONDISI 3: TERKENDALA ---
                           if (_statusTerpilih == "Terkendala") ...[
-                            Text(
-                              "Status tugas saat ini terkendala. Anda dapat mengedit laporan kendala atau menekan tombol di bawah jika masalah sudah selesai.",
-                              style: TextStyle(
-                                fontSize: 12.5 * scale,
-                                color: Colors.grey[700],
-                              ),
-                            ),
-                            SizedBox(height: 16 * scale),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 48 * scale,
-                              child: ElevatedButton.icon(
-                                onPressed: _lanjutkanPekerjaan,
-                                icon: const Icon(Icons.play_circle_fill),
-                                label: const Text(
-                                  "MASALAH SELESAI, LANJUTKAN",
-                                  style: TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.green.shade700,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(
-                                      14 * scale,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                            _solusiKendala(),
                             SizedBox(height: 12 * scale),
-                            OutlinedButton.icon(
-                              onPressed: _bukaFormKendala,
-                              icon: Icon(
-                                Icons.edit,
-                                color: Colors.red.shade700,
-                                size: 18 * scale,
-                              ),
-                              label: Text(
-                                "EDIT LAPORAN KENDALA",
-                                style: TextStyle(
-                                  color: Colors.red.shade700,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12.5 * scale,
-                                ),
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: Size(double.infinity, 48 * scale),
-                                side: BorderSide(color: Colors.red.shade700),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(
-                                    14 * scale,
-                                  ),
-                                ),
-                              ),
+                          ],
+                          if (_statusTerpilih == "Dihentikan") ...[
+                            const Text(
+                              'Penugasan dihentikan oleh Atasan. Pengumpulan hasil dinonaktifkan.',
+                            ),
+                            Text(
+                              'Alasan: ${_assignmentData?['alasan_penghentian'] ?? '-'}',
                             ),
                           ],
 
@@ -2302,10 +2722,10 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
   }
 }
 
-class HeaderCurveClipper extends CustomClipper<Path> {
+class HeaderCurveClipper extends CustomClipper<ui.Path> {
   @override
-  Path getClip(Size size) {
-    final path = Path();
+  ui.Path getClip(Size size) {
+    final path = ui.Path();
 
     path.lineTo(0, size.height - 20);
 
@@ -2328,7 +2748,7 @@ class HeaderCurveClipper extends CustomClipper<Path> {
   }
 
   @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) {
+  bool shouldReclip(CustomClipper<ui.Path> oldClipper) {
     return false;
   }
 }

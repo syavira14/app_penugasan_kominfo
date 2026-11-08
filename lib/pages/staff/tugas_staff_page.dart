@@ -105,6 +105,7 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
       'prioritas': tugasData['prioritas'] ?? 'sedang',
       'nama_atasan': adminData['nama'] ?? '-',
       'status': assignmentData['status'] ?? 'pending',
+      'tanggal_dihentikan': assignmentData['tanggal_dihentikan'],
       'file_hasil_url': assignmentData['file_hasil_url'],
       'file_hasil_nama': assignmentData['file_hasil_nama'],
       'catatan_staff': assignmentData['catatan_staff'],
@@ -124,6 +125,10 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
 
         if (status == 'disetujui') {
           continue;
+        }
+        if (status == 'dihentikan') {
+          final tanggal = _asDate(data['tanggal_dihentikan']);
+          if (tanggal != null && DateTime.now().difference(tanggal).inHours >= 72) continue;
         }
 
         result.add(
@@ -173,6 +178,8 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
 
   String _displayStatus(String status) {
     switch (status.toLowerCase()) {
+      case 'dihentikan':
+        return 'Dihentikan';
       case 'pending':
         return 'Pending';
       case 'berlangsung':

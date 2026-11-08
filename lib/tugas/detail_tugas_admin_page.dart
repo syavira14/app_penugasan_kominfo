@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:file_picker/file_picker.dart';
 import 'dart:typed_data';
@@ -597,7 +598,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
             : 'Tugas berhasil diperbarui.',
       );
 
-      Navigator.pop(context);
+      Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
         _message('Gagal menyimpan tugas: $e', error: true);
@@ -698,7 +699,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
 
       Uint8List bytes = Uint8List(0);
 
-      if (!name.toLowerCase().endsWith('.pdf')) {
+      if (!kIsWeb || !name.toLowerCase().endsWith('.pdf')) {
         final response = await http.get(Uri.parse(url));
 
         if (response.statusCode != 200) {
@@ -750,6 +751,216 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     }
   }
 
+  Future<void> _editCatatanRevisi(String id, String awal) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => _RevisionDialog(catatanAwal: awal, isEdit: true),
+    );
+    if (result == null || !mounted) return;
+    final catatan = (result['catatan'] ?? '').toString().trim();
+    if (catatan.isEmpty) return;
+    final selected = result['file'] as PlatformFile?;
+    try {
+      // Upload sebelum transaksi: transaksi Firestore tidak boleh melakukan I/O.
+      String? newPath;
+      String? newName;
+      if (selected != null) {
+        final uploaded = await _storage.uploadHasilTugas(
+          tugasId: 'revisi_$id',
+          namaFile: selected.name,
+          bytes: await selected.readAsBytes(),
+          contentType: _contentType(selected.extension),
+        );
+        newPath = uploaded.path;
+        newName = uploaded.namaFile;
+      }
+      await _firestore.runTransaction((tx) async {
+        final ref = _firestore.collection('penugasan').doc(id);
+        final snap = await tx.get(ref);
+        if (snap.data()?['status'] != 'revisi') {
+          throw StateError('Revisi sudah ditanggapi Staff atau tidak aktif.');
+        }
+        final data = snap.data()!;
+        final revisiId = (data['revisi_aktif_id'] ?? '').toString();
+        final updates = <String, dynamic>{
+          'catatan_revisi': catatan,
+          'updated_at': FieldValue.serverTimestamp(),
+          if (newPath != null) 'file_revisi_path': newPath,
+          if (newPath != null) 'file_revisi_url': '',
+          if (newPath != null) 'file_revisi_provider': 'supabase',
+          if (newName != null) 'file_revisi_nama': newName,
+          if (newPath != null) 'file_revisi_uploaded_by': FirebaseAuth.instance.currentUser!.uid,
+        };
+        tx.update(ref, updates);
+        if (revisiId.isNotEmpty) {
+          tx.update(ref.collection('riwayat_revisi').doc(revisiId), {
+            'catatan_atasan': catatan,
+            if (newPath != null) 'file_revisi_path': newPath,
+            if (newName != null) 'file_revisi_nama': newName,
+            'updated_at': FieldValue.serverTimestamp(),
+          });
+        }
+      });
+      _message('Revisi aktif berhasil diperbarui.');
+    } catch (e) {
+      _message('Gagal mengedit revisi: $e', error: true);
+    }
+  }
+
+  Future<void> _hentikanPenugasan(String id) async {
+    final controller = TextEditingController();
+    PlatformFile? file;
+    final result = await showDialog<Map<String, dynamic>>(context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, update) => AlertDialog(
+        title: const Text('Hentikan Penugasan'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: controller, maxLines: 3, decoration: const InputDecoration(labelText: 'Alasan penghentian (wajib)')),
+          OutlinedButton.icon(onPressed: () async {
+            final picked = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: const ['pdf','png','jpg','jpeg','docx']);
+            if (picked != null) update(() => file = picked);
+          }, icon: const Icon(Icons.attach_file), label: Text(file?.name ?? 'Bukti (opsional)')),
+        ]),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
+          FilledButton(onPressed: () { if (controller.text.trim().isNotEmpty) Navigator.pop(ctx, {'alasan': controller.text.trim(), 'file': file}); }, child: const Text('Hentikan'))],
+      )));
+    controller.dispose();
+    if (result == null) return;
+    try {
+      String path = '';
+      final picked = result['file'] as PlatformFile?;
+      if (picked != null) {
+        final uploaded = await _storage.uploadHasilTugas(tugasId: 'penghentian_$id', namaFile: picked.name,
+          bytes: await picked.readAsBytes(), contentType: _contentType(picked.extension));
+        path = uploaded.path;
+      }
+      await _firestore.runTransaction((tx) async {
+        final ref = _firestore.collection('penugasan').doc(id);
+        final snap = await tx.get(ref);
+        final status = (snap.data()?['status'] ?? '').toString();
+        if (status == 'dihentikan' || status == 'disetujui') throw StateError('Penugasan tidak dapat dihentikan.');
+        tx.update(ref, {'status': 'dihentikan', 'status_sebelum_dihentikan': status,
+          'alasan_penghentian': result['alasan'], 'bukti_penghentian_path': path,
+          'tanggal_dihentikan': FieldValue.serverTimestamp(), 'updated_at': FieldValue.serverTimestamp()});
+      });
+      _message('Penugasan dihentikan.');
+      await _loadPage();
+    } catch (e) { _message('Gagal menghentikan tugas: $e', error: true); }
+  }
+
+  Future<void> _mulaiUlangPenugasan(String id) async {
+    // Form edit tugas harus disimpan terlebih dahulu sebelum aktivasi.
+    if (widget.tugasId == null) return;
+    final disimpan = await Navigator.push<bool>(context,
+      MaterialPageRoute(builder: (_) => DetailTugasAdminPage(tugasId: widget.tugasId, modeLihat: false)));
+    if (disimpan != true || !mounted) return;
+    // Data tugas wajib diperiksa ulang pada form edit sebelum diaktifkan.
+    final lanjut = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('Mulai Ulang Penugasan'),
+      content: const Text('Pastikan data tugas, jadwal, lokasi dan Staff sudah diperbarui pada form edit tugas. Aktifkan kembali dengan status Pending?'),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Aktifkan'))],
+    ));
+    if (lanjut != true) return;
+    try {
+      await _firestore.runTransaction((tx) async {
+        final ref = _firestore.collection('penugasan').doc(id);
+        final snap = await tx.get(ref);
+        if (snap.data()?['status'] != 'dihentikan') throw StateError('Penugasan tidak dihentikan.');
+        final hasKendala = (snap.data()?['kendala_aktif_id'] ?? '').toString().isNotEmpty;
+        tx.update(ref, {'status': hasKendala ? 'terkendala' : 'pending',
+          'tanggal_diaktifkan_ulang': FieldValue.serverTimestamp(), 'updated_at': FieldValue.serverTimestamp()});
+      });
+      _message('Penugasan kembali Pending.');
+      await _loadPage();
+    } catch (e) { _message('Gagal memulai ulang: $e', error: true); }
+  }
+
+  // Memulihkan revisi lama yang berstatus revisi tetapi belum punya ID aktif.
+  // Tidak mengubah instruksi, file, atau riwayat pengumpulan sebelumnya.
+  Future<void> _pulihkanRevisiLama(String id) async {
+    if (_reviewing.contains(id)) return;
+    final lanjut = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Hubungkan Revisi Lama'),
+        content: const Text(
+          'Sistem akan menghubungkan instruksi revisi yang sudah ada dengan '
+          'riwayat revisi, tanpa mengubah catatan atau lampiran. Lanjutkan?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Batal')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Hubungkan')),
+        ],
+      ),
+    );
+    if (lanjut != true || !mounted) return;
+    setState(() => _reviewing.add(id));
+    try {
+      final adminUid = _auth.currentUser?.uid;
+      if (adminUid == null) throw StateError('Silakan login ulang sebagai Atasan.');
+      final assignmentRef = _firestore.collection('penugasan').doc(id);
+      // Ambil kandidat di luar transaksi, lalu verifikasi kembali di dalamnya.
+      final history = await assignmentRef.collection('riwayat_revisi').get();
+      final pending = history.docs.where((d) =>
+          (d.data()['status'] ?? '').toString() == 'menunggu_perbaikan' &&
+          (d.data()['hasil_pengumpulan_id'] ?? '').toString().isEmpty).toList();
+      if (pending.length > 1) {
+        throw StateError('Ada lebih dari satu instruksi revisi yang belum '
+            'ditanggapi. Periksa riwayat terlebih dahulu agar tidak salah pasangan.');
+      }
+      final revisionRef = pending.isEmpty
+          ? assignmentRef.collection('riwayat_revisi').doc()
+          : pending.single.reference;
+      await _firestore.runTransaction((tx) async {
+        final assignment = await tx.get(assignmentRef);
+        if (!assignment.exists) throw StateError('Penugasan tidak ditemukan.');
+        final data = assignment.data()!;
+        if (data['status'] != 'revisi') {
+          throw StateError('Status tugas bukan revisi. Muat ulang halaman.');
+        }
+        if ((data['revisi_aktif_id'] ?? '').toString().isNotEmpty) {
+          throw StateError('Revisi sudah terhubung. Muat ulang halaman.');
+        }
+        if ((data['kendala_aktif_id'] ?? '').toString().isNotEmpty) {
+          throw StateError('Selesaikan kendala aktif terlebih dahulu.');
+        }
+        final catatan = (data['catatan_revisi'] ?? '').toString().trim();
+        if (catatan.isEmpty) {
+          throw StateError('Catatan revisi lama kosong. Periksa data tugas.');
+        }
+        if (pending.isNotEmpty) {
+          final existing = await tx.get(revisionRef);
+          if (!existing.exists ||
+              existing.data()?['status'] != 'menunggu_perbaikan' ||
+              (existing.data()?['hasil_pengumpulan_id'] ?? '').toString().isNotEmpty) {
+            throw StateError('Riwayat revisi berubah. Muat ulang halaman.');
+          }
+        }
+        if (pending.isEmpty) {
+          tx.set(revisionRef, {
+            'penugasan_id': id,
+            'atasan_id': adminUid,
+            'catatan_atasan': catatan,
+            'file_revisi_path': (data['file_revisi_path'] ?? '').toString(),
+            'file_revisi_nama': (data['file_revisi_nama'] ?? '').toString(),
+            'status': 'menunggu_perbaikan',
+            'created_at': FieldValue.serverTimestamp(),
+          });
+        }
+        tx.update(assignmentRef, {
+          'revisi_aktif_id': revisionRef.id,
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      });
+      _message('Revisi lama berhasil dihubungkan. Staff dapat mengirim perbaikan.');
+    } catch (e) {
+      _message('Gagal menghubungkan revisi lama: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _reviewing.remove(id));
+    }
+  }
+
   Future<void> _mintaRevisi(String id) async {
     if (_reviewing.contains(id)) return;
 
@@ -788,26 +999,52 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         name = uploaded.namaFile;
       }
 
-      await transitionAssignment(
-        _firestore,
-
-        id,
-
-        'revisi',
-
-        data: {
+      // Satu transaksi: status, instruksi, dan ID revisi selalu konsisten.
+      final assignmentRef = _firestore.collection('penugasan').doc(id);
+      final revisionRef = assignmentRef.collection('riwayat_revisi').doc();
+      final adminUid = _auth.currentUser?.uid;
+      if (adminUid == null) {
+        throw StateError('Sesi Atasan berakhir. Silakan login kembali.');
+      }
+      await _firestore.runTransaction((tx) async {
+        final current = await tx.get(assignmentRef);
+        if (!current.exists) throw StateError('Penugasan tidak ditemukan.');
+        final data = current.data()!;
+        final status = (data['status'] ?? '').toString();
+        final existingId = (data['revisi_aktif_id'] ?? '').toString();
+        if (existingId.isNotEmpty) {
+          throw StateError('Masih ada revisi aktif. Selesaikan revisi sebelumnya.');
+        }
+        // Status revisi tanpa ID dari proses lama boleh diperbaiki dengan
+        // membuat instruksi baru, tanpa menghapus riwayat yang sudah ada.
+        if (status != 'dikumpulkan' && status != 'revisi') {
+          throw StateError('Revisi hanya dapat diminta setelah hasil dikumpulkan.');
+        }
+        if ((data['kendala_aktif_id'] ?? '').toString().isNotEmpty) {
+          throw StateError('Selesaikan kendala aktif terlebih dahulu.');
+        }
+        tx.set(revisionRef, {
+          'penugasan_id': id,
+          'catatan_atasan': result['catatan'],
+          'file_revisi_path': path,
+          'file_revisi_nama': name,
+          'atasan_id': adminUid,
+          'status': 'menunggu_perbaikan',
+          'created_at': FieldValue.serverTimestamp(),
+        });
+        tx.update(assignmentRef, {
+          'status': 'revisi',
+          'revisi_aktif_id': revisionRef.id,
           'catatan_revisi': result['catatan'],
           'file_revisi_url': '',
           'file_revisi_path': path,
           'file_revisi_provider': path.isEmpty ? '' : 'supabase',
           'file_revisi_nama': name,
-          'file_revisi_uploaded_by': path.isEmpty
-              ? ''
-              : FirebaseAuth.instance.currentUser!.uid,
+          'file_revisi_uploaded_by': path.isEmpty ? '' : adminUid,
           'tanggal_revisi': FieldValue.serverTimestamp(),
-        },
-      );
-
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      });
       _message('Permintaan revisi berhasil dikirim.');
     } catch (e) {
       _message('Gagal mengirim revisi: $e', error: true);
@@ -885,6 +1122,15 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         const _LabelForm(label: 'Catatan Revisi'),
 
         Text(data['catatan_revisi'].toString()),
+        if (status == 'revisi') TextButton.icon(onPressed: () => _editCatatanRevisi(id, data['catatan_revisi'].toString()),
+          icon: const Icon(Icons.edit), label: const Text('Edit Keterangan Revisi')),
+        if (status == 'revisi' &&
+            (data['revisi_aktif_id'] ?? '').toString().isEmpty)
+          OutlinedButton.icon(
+            onPressed: _reviewing.contains(id) ? null : () => _pulihkanRevisiLama(id),
+            icon: const Icon(Icons.link),
+            label: const Text('Hubungkan Revisi Lama'),
+          ),
 
         if (revisionUrl.isNotEmpty || revisionPath.isNotEmpty)
           TextButton.icon(
@@ -899,7 +1145,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
 
                 Uint8List bytes = Uint8List(0);
 
-                if (!name.toLowerCase().endsWith('.pdf')) {
+                if (!kIsWeb || !name.toLowerCase().endsWith('.pdf')) {
                   final response = await http.get(Uri.parse(url));
 
                   if (response.statusCode != 200) {
@@ -936,6 +1182,33 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
             ),
           ),
       ],
+
+      StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: _firestore.collection('penugasan').doc(id).collection('riwayat_pengumpulan')
+            .orderBy('created_at', descending: true).snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const SizedBox.shrink();
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const SizedBox(height: 12),
+            const Text('Riwayat Pengumpulan Staff', style: TextStyle(fontWeight: FontWeight.bold)),
+            ...snapshot.data!.docs.map((doc) {
+              final d = doc.data();
+              return ListTile(
+                dense: true,
+                title: Text('${d['jenis'] ?? 'Pengumpulan'}: ${d['keterangan'] ?? ''}'),
+                subtitle: Text((d['file_nama'] ?? 'Lampiran').toString()),
+                trailing: const Icon(Icons.open_in_new),
+                onTap: () async {
+                  try {
+                    final url = await _storage.ambilLinkRiwayat(id, doc.id);
+                    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+                  } catch (e) { _message('Gagal membuka riwayat: $e', error: true); }
+                },
+              );
+            }),
+          ]);
+        },
+      ),
 
       if (status == 'dikumpulkan') ...[
         const SizedBox(height: 10),
@@ -1544,6 +1817,14 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                     ],
                   ),
                   ..._hasilPenugasan(assignment.id, data),
+                  if (status != 'dihentikan' && status != 'disetujui')
+                    OutlinedButton.icon(onPressed: () => _hentikanPenugasan(assignment.id),
+                      icon: const Icon(Icons.stop_circle_outlined), label: const Text('Hentikan Tugas')),
+                  if (status == 'dihentikan') ...[
+                    Text('Alasan penghentian: ${data['alasan_penghentian'] ?? '-'}'),
+                    TextButton.icon(onPressed: () => _mulaiUlangPenugasan(assignment.id),
+                      icon: const Icon(Icons.restart_alt), label: const Text('Mulai Ulang Tugas')),
+                  ],
                 ],
               ),
             );
@@ -1692,16 +1973,25 @@ class _Badge extends StatelessWidget {
 }
 
 class _RevisionDialog extends StatefulWidget {
-  const _RevisionDialog();
+  const _RevisionDialog({this.catatanAwal = '', this.isEdit = false});
+
+  final String catatanAwal;
+  final bool isEdit;
 
   @override
   State<_RevisionDialog> createState() => _RevisionDialogState();
 }
 
 class _RevisionDialogState extends State<_RevisionDialog> {
-  final _controller = TextEditingController();
+  late final TextEditingController _controller;
 
   PlatformFile? _file;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.catatanAwal);
+  }
 
   @override
   void dispose() {
@@ -1713,7 +2003,7 @@ class _RevisionDialogState extends State<_RevisionDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Minta Revisi'),
+      title: Text(widget.isEdit ? 'Edit Revisi Aktif' : 'Minta Revisi'),
 
       content: SingleChildScrollView(
         child: Column(
@@ -1789,7 +2079,7 @@ class _RevisionDialogState extends State<_RevisionDialog> {
                   'file': _file,
                 }),
 
-          child: const Text('Kirim Revisi'),
+          child: Text(widget.isEdit ? 'Simpan Perubahan' : 'Kirim Revisi'),
         ),
       ],
     );

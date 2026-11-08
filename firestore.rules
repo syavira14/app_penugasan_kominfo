@@ -5,185 +5,162 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ==========================================
-    // 1. FUNGSI DASAR
+    // FUNGSI DASAR
     // ==========================================
 
-    function signedIn() {
+    function logged() {
       return request.auth != null;
     }
 
-    function myUserPath() {
+    function userPath() {
       return /databases/$(database)/documents/users/$(request.auth.uid);
     }
 
-    function isAdmin() {
-      return signedIn()
-        && exists(myUserPath())
-        && get(myUserPath()).data.role == 'Admin';
+    function roleIs(roles) {
+      return logged()
+        && exists(userPath())
+        && get(userPath()).data.role in roles;
     }
 
-    function isStaff() {
-      return signedIn()
-        && exists(myUserPath())
-        && get(myUserPath()).data.role == 'Staff';
+    function admin() {
+      return roleIs(['Admin', 'admin']);
     }
 
-    function isOwnStaffAssignment() {
-      return isStaff()
-        && resource.data.staff_id == request.auth.uid;
+    function staff() {
+      return roleIs(['Staff', 'staff']);
     }
 
-    function validUpdateTime() {
+    function nowUpdated() {
       return request.resource.data.updated_at == request.time;
     }
 
-    function validTransition(fromStatus, toStatus) {
-      return
-        (fromStatus == 'pending'
-          && toStatus == 'berlangsung')
-        ||
-        (fromStatus == 'berlangsung'
-          && toStatus in ['dikumpulkan', 'terkendala'])
-        ||
-        (fromStatus == 'revisi'
-          && toStatus == 'dikumpulkan')
-        ||
-        (fromStatus == 'terkendala'
-          && toStatus == 'berlangsung');
+    function aPath(id) {
+      return /databases/$(database)/documents/penugasan/$(id);
     }
 
-    function staffStatusOnlyUpdate() {
-      return resource.data.status in ['pending', 'terkendala']
-        && request.resource.data.status == 'berlangsung'
-        && request.resource.data.diff(resource.data)
-          .affectedKeys().hasOnly([
-            'status',
-            'updated_at'
-          ]);
+    function rPath(id) {
+      return /databases/$(database)/documents/laporan_kendala/$(id);
     }
 
-    function staffSubmissionUpdate() {
-      return resource.data.status in ['berlangsung', 'revisi']
-        && request.resource.data.status == 'dikumpulkan'
-        && request.resource.data.diff(resource.data)
-          .affectedKeys().hasOnly([
-            'status',
-            'updated_at',
-            'tanggal_dikumpulkan',
-            'file_hasil_url',
-            'file_hasil_path',
-            'file_hasil_provider',
-            'file_hasil_nama',
-            'catatan_staff'
-          ])
-        && request.resource.data.tanggal_dikumpulkan == request.time
-        && request.resource.data.file_hasil_path is string
-        && request.resource.data.file_hasil_nama is string
-        && request.resource.data.catatan_staff is string
-        && request.resource.data.catatan_staff.size() > 0;
+    function noActive(d) {
+      return d.get('kendala_aktif_id', '') == '';
     }
 
-    function staffObstacleUpdate() {
-      return resource.data.status == 'berlangsung'
-        && request.resource.data.status == 'terkendala'
-        && request.resource.data.diff(resource.data)
-          .affectedKeys().hasOnly([
-            'status',
-            'updated_at'
-          ]);
+    function hasActive(d) {
+      return d.get('kendala_aktif_id', '') is string
+        && d.get('kendala_aktif_id', '').size() > 0;
     }
 
-    function validStaffAssignmentUpdate() {
-      return isOwnStaffAssignment()
-        && validUpdateTime()
-        && validTransition(
-          resource.data.status,
-          request.resource.data.status
-        )
-        && (
-          staffStatusOnlyUpdate()
-          || staffSubmissionUpdate()
-          || staffObstacleUpdate()
-        );
+    function sameReport() {
+      return request.resource.data.diff(resource.data)
+        .affectedKeys().hasOnly([
+          'status',
+          'ditangani_oleh',
+          'solusi',
+          'solusi_file_path',
+          'solusi_file_nama',
+          'alasan_penolakan',
+          'updated_at'
+        ]);
     }
 
     // ==========================================
-    // 2. USERS
+    // USERS
     // ==========================================
 
-    match /users/{userId} {
-
-      // Sementara mendukung daftar Staff dan profil.
-      allow get, list: if signedIn();
-
-      // Akun dibuat manual melalui Firebase Console.
-      allow create, delete: if false;
-
-      // Pengguna hanya dapat mengubah profil sendiri.
-      allow update: if signedIn()
-        && request.auth.uid == userId
-        && validUpdateTime()
-        && request.resource.data.diff(resource.data)
-          .affectedKeys().hasOnly([
-            'foto_base64',
-            'no_hp',
-            'updated_at'
-          ]);
+         match /users/{id} {
+      // email_kontak = email opsional untuk kontak saja (BUKAN email login).
+      function validStaffProfile(d) {
+        return d.role in ['Staff', 'staff']
+          && d.nama is string && d.nama.size() > 0 && d.nama.size() <= 200
+          && d.jabatan is string && d.jabatan.size() > 0 && d.jabatan.size() <= 200
+          && d.no_hp is string && d.no_hp.size() <= 30
+          && d.get('email_kontak', '') is string && d.get('email_kontak', '').size() <= 200
+          && d.foto_base64 is string && d.foto_base64.size() <= 700000;
+      }
+      // NIP boleh berubah asal formatnya benar dan email login ikut NIP.
+      // Kalau NIP tidak berubah, email login tidak boleh disentuh.
+      function nipEmailOk(d, old) {
+        return (d.nip == old.get('nip', '') && d.get('email', '') == old.get('email', ''))
+          || (d.nip is string && d.nip.matches('^[0-9]{6,30}$')
+              && d.email == d.nip + '@simtas.internal');
+      }
+      allow read: if logged();
+      allow create: if admin() && request.auth.uid != id
+        && validStaffProfile(request.resource.data)
+        && request.resource.data.keys().hasAll(['uid','email','nama','nip','jabatan','no_hp','role','status_pekerjaan','foto_base64','is_first_login','created_at','updated_at'])
+        && request.resource.data.keys().hasOnly(['uid','email','email_kontak','nama','nip','jabatan','no_hp','role','status_pekerjaan','foto_base64','is_first_login','created_at','updated_at'])
+        && request.resource.data.uid == id && id.size() <= 128
+        && request.resource.data.nip is string
+        && request.resource.data.nip.matches('^[0-9]{6,30}$')
+        && request.resource.data.email == request.resource.data.nip + '@simtas.internal'
+        && request.resource.data.status_pekerjaan == 'tersedia'
+        && request.resource.data.is_first_login == true
+        && request.resource.data.created_at == request.time && nowUpdated();
+      allow delete: if admin() && request.auth.uid != id && resource.data.role in ['Staff','staff'];
+      // Admin mengedit staf: nama, nip, email (login, ikut nip), email_kontak,
+      // jabatan, no_hp, foto.
+      allow update: if admin() && resource.data.role in ['Staff','staff']
+        && validStaffProfile(request.resource.data) && nowUpdated()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nama','nip','email','email_kontak','jabatan','no_hp','foto_base64','updated_at'])
+        && nipEmailOk(request.resource.data, resource.data);
+      // Staf mengisi sendiri email kontak & no HP (langsung tampil di halaman admin).
+      allow update: if logged() && request.auth.uid == id && nowUpdated()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['foto_base64','no_hp','email_kontak','updated_at'])
+        && request.resource.data.get('no_hp', '') is string && request.resource.data.get('no_hp', '').size() <= 30
+        && request.resource.data.get('email_kontak', '') is string && request.resource.data.get('email_kontak', '').size() <= 200;
+      // Admin mengubah profil dirinya sendiri. NIP/email lewat Cloud Function changeOwnNip.
+      allow update: if admin() && request.auth.uid == id && nowUpdated()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nama','jabatan','no_hp','foto_base64','updated_at'])
+        && request.resource.data.nama is string && request.resource.data.nama.size() > 0 && request.resource.data.nama.size() <= 200
+        && request.resource.data.jabatan is string && request.resource.data.jabatan.size() <= 200
+        && request.resource.data.no_hp is string && request.resource.data.no_hp.size() <= 30;
     }
 
     // ==========================================
-    // 3. TUGAS
+    // TUGAS
     // ==========================================
 
-    match /tugas/{tugasId} {
+    match /tugas/{id} {
 
-      // Admin dapat membaca seluruh tugas.
-      // Staff hanya dapat membaca tugas miliknya.
-      allow get: if isAdmin()
+      allow get: if admin()
         || (
-          isStaff()
-          && resource.data.keys().hasAll(['staff_ids'])
-          && resource.data.staff_ids is list
-          && request.auth.uid in resource.data.staff_ids
+          staff()
+          && resource.data.get('staff_ids', []) is list
+          && request.auth.uid
+            in resource.data.get('staff_ids', [])
         );
 
-      // Hanya Admin dapat mengambil daftar seluruh tugas.
-      allow list: if isAdmin();
+      allow list: if admin();
 
-      // Hanya Admin dapat membuat tugas.
-      allow create: if isAdmin()
+      allow create: if admin()
         && request.resource.data.dibuat_oleh
           == request.auth.uid
         && request.resource.data.staff_ids is list
         && request.resource.data.staff_ids.size() > 0;
 
-      // Hanya Admin dapat mengedit tugas.
-      allow update: if isAdmin()
+      allow update: if admin()
         && request.resource.data.dibuat_oleh
           == resource.data.dibuat_oleh
         && request.resource.data.staff_ids is list
         && request.resource.data.staff_ids.size() > 0;
 
-      // Hanya Admin dapat menghapus tugas.
-      allow delete: if isAdmin();
+      allow delete: if admin();
     }
 
     // ==========================================
-    // 4. PENUGASAN
+    // PENUGASAN
     // ==========================================
 
-    match /penugasan/{penugasanId} {
+    match /penugasan/{id} {
 
-      // Admin dapat membaca seluruh penugasan.
-      // Staff hanya dapat membaca penugasan sendiri.
-      allow get, list: if isAdmin()
+      allow read: if admin()
         || (
-          isStaff()
+          staff()
           && resource.data.staff_id == request.auth.uid
         );
 
-      // Hanya Admin dapat membuat penugasan.
-      allow create: if isAdmin()
+      allow create: if admin()
         && request.resource.data.status == 'pending'
         && request.resource.data.staff_id is string
         && request.resource.data.tugas_id is string
@@ -191,49 +168,354 @@ service cloud.firestore {
           /databases/$(database)/documents/users/$(request.resource.data.staff_id)
         );
 
-      // Admin dapat mengelola seluruh penugasan.
-      // Staff hanya dapat melakukan transisi tertentu.
-      allow update: if isAdmin()
-        || validStaffAssignmentUpdate();
+      allow delete: if admin()
+        && noActive(resource.data);
 
-      // Hanya Admin dapat menghapus penugasan.
-      allow delete: if isAdmin();
+      allow update: if (
+
+        // ADMIN
+        admin()
+        && nowUpdated()
+        && (
+
+          // Perubahan penugasan biasa.
+          (
+            noActive(resource.data)
+            && resource.data.status != 'terkendala'
+            && noActive(request.resource.data)
+            && request.resource.data.status != 'terkendala'
+          )
+
+          ||
+
+          // Admin menghentikan penugasan dengan alasan wajib.
+          (
+            resource.data.status != 'dihentikan'
+            && resource.data.status != 'disetujui'
+            && request.resource.data.status == 'dihentikan'
+            && request.resource.data.alasan_penghentian is string
+            && request.resource.data.alasan_penghentian.size() > 0
+            && request.resource.data.bukti_penghentian_path is string
+          )
+          ||
+          // Admin mengaktifkan kembali penugasan yang dihentikan.
+          (
+            resource.data.status == 'dihentikan'
+            && (
+              (request.resource.data.status == 'pending' && noActive(request.resource.data))
+              || (request.resource.data.status == 'terkendala'
+                && hasActive(resource.data)
+                && request.resource.data.kendala_aktif_id == resource.data.kendala_aktif_id)
+            )
+          )
+          ||
+          // Admin memperbarui metadata penugasan yang dihentikan.
+          (
+            resource.data.status == 'dihentikan'
+            && request.resource.data.status == 'dihentikan'
+            && request.resource.data.get('kendala_aktif_id', '') == resource.data.get('kendala_aktif_id', '')
+          )
+          ||
+          // Admin memperbarui data penugasan
+          // tanpa menutup kendala aktif.
+          (
+            hasActive(resource.data)
+            && request.resource.data.status == 'terkendala'
+            && request.resource.data.kendala_aktif_id
+              == resource.data.kendala_aktif_id
+          )
+
+          ||
+
+          // Admin menolak laporan.
+          // Penugasan kembali berlangsung.
+          (
+            resource.data.status == 'terkendala'
+            && request.resource.data.status == 'berlangsung'
+            && hasActive(resource.data)
+            && noActive(request.resource.data)
+            && getAfter(
+              rPath(resource.data.kendala_aktif_id)
+            ).data.status == 'ditolak'
+          )
+
+          ||
+
+          // Menautkan laporan lama yang belum
+          // mempunyai kendala_aktif_id.
+          (
+            resource.data.status == 'terkendala'
+            && noActive(resource.data)
+            && request.resource.data.status == 'terkendala'
+            && hasActive(request.resource.data)
+            && getAfter(
+              rPath(request.resource.data.kendala_aktif_id)
+            ).data.penugasan_id == id
+            && getAfter(
+              rPath(request.resource.data.kendala_aktif_id)
+            ).data.status in [
+              'menunggu_review',
+              'dalam_penanganan',
+              'menunggu_konfirmasi'
+            ]
+          )
+        )
+      )
+
+      ||
+
+      (
+        // STAFF
+        staff()
+        && resource.data.staff_id == request.auth.uid
+        && nowUpdated()
+        && (
+
+          // Mulai mengerjakan tugas.
+          (
+            resource.data.status == 'pending'
+            && request.resource.data.status == 'berlangsung'
+            && request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly([
+                'status',
+                'updated_at'
+              ])
+          )
+
+          ||
+
+          // Mengumpulkan hasil tugas.
+          (
+            resource.data.status in [
+              'berlangsung',
+              'revisi'
+            ]
+            && request.resource.data.status == 'dikumpulkan'
+            && noActive(resource.data)
+            && noActive(request.resource.data)
+            && request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly([
+                'status',
+                'updated_at',
+                'tanggal_dikumpulkan',
+                'file_hasil_url',
+                'file_hasil_path',
+                'file_hasil_provider',
+                'file_hasil_nama',
+                'catatan_staff',
+                'revisi_aktif_id'
+              ])
+            && request.resource.data.tanggal_dikumpulkan
+              == request.time
+            && request.resource.data.file_hasil_path is string
+            && request.resource.data.file_hasil_nama is string
+            && request.resource.data.catatan_staff is string
+            && request.resource.data.catatan_staff.size() > 0
+          )
+
+          ||
+
+          // Membuat laporan kendala.
+          (
+            resource.data.status == 'berlangsung'
+            && request.resource.data.status == 'terkendala'
+            && noActive(resource.data)
+            && hasActive(request.resource.data)
+            && request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly([
+                'status',
+                'updated_at',
+                'kendala_aktif_id'
+              ])
+            && getAfter(
+              rPath(request.resource.data.kendala_aktif_id)
+            ).data.penugasan_id == id
+            && getAfter(
+              rPath(request.resource.data.kendala_aktif_id)
+            ).data.pelapor_id == request.auth.uid
+            && getAfter(
+              rPath(request.resource.data.kendala_aktif_id)
+            ).data.status == 'menunggu_review'
+          )
+
+          ||
+
+          // Staff mengonfirmasi kendala selesai.
+          (
+            resource.data.status == 'terkendala'
+            && request.resource.data.status == 'berlangsung'
+            && hasActive(resource.data)
+            && noActive(request.resource.data)
+            && request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly([
+                'status',
+                'updated_at',
+                'kendala_aktif_id'
+              ])
+            && getAfter(
+              rPath(resource.data.kendala_aktif_id)
+            ).data.status == 'selesai'
+            && getAfter(
+              rPath(resource.data.kendala_aktif_id)
+            ).data.pelapor_id == request.auth.uid
+          )
+        )
+      );
+
+      // Hak baca riwayat hanya untuk Atasan atau Staff pemilik penugasan.
+      // Pemeriksaan exists mencegah akses ke parent yang tidak tersedia.
+      function canReadAssignmentHistory() {
+        return admin() || (
+          staff()
+          && exists(aPath(id))
+          && get(aPath(id)).data.staff_id == request.auth.uid
+        );
+      }
+
+      // Setiap instruksi revisi terhubung dengan satu hasil perbaikan.
+      match /riwayat_revisi/{revisiId} {
+        allow get, list: if canReadAssignmentHistory();
+
+        allow create: if admin()
+          && getAfter(aPath(id)).data.status == 'revisi'
+          && get(aPath(id)).data.status in ['dikumpulkan', 'revisi']
+          && request.resource.data.penugasan_id == id
+          && request.resource.data.atasan_id == request.auth.uid
+          && request.resource.data.status == 'menunggu_perbaikan'
+          && request.resource.data.catatan_atasan is string
+          && request.resource.data.catatan_atasan.size() > 0
+          && request.resource.data.file_revisi_path is string
+          && request.resource.data.file_revisi_nama is string
+          && request.resource.data.created_at == request.time
+          && getAfter(aPath(id)).data.revisi_aktif_id == revisiId;
+
+        allow update: if (
+          // Atasan hanya mengedit instruksi revisi yang belum dijawab Staff.
+          admin()
+          && resource.data.status == 'menunggu_perbaikan'
+          && get(aPath(id)).data.status == 'revisi'
+          && get(aPath(id)).data.revisi_aktif_id == revisiId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'catatan_atasan', 'file_revisi_path', 'file_revisi_nama', 'updated_at'
+          ])
+          && request.resource.data.catatan_atasan is string
+          && request.resource.data.catatan_atasan.size() > 0
+          && request.resource.data.get('updated_at', null) == request.time
+        ) || (
+          // Staff menautkan satu pengumpulan pada revisi aktif dalam batch.
+          staff()
+          && get(aPath(id)).data.staff_id == request.auth.uid
+          && resource.data.status == 'menunggu_perbaikan'
+          && get(aPath(id)).data.status == 'revisi'
+          && get(aPath(id)).data.revisi_aktif_id == revisiId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'hasil_pengumpulan_id', 'status', 'tanggal_diperbaiki'
+          ])
+          && request.resource.data.status == 'selesai'
+          && request.resource.data.hasil_pengumpulan_id is string
+          && request.resource.data.hasil_pengumpulan_id.size() > 0
+          && request.resource.data.tanggal_diperbaiki == request.time
+          && getAfter(aPath(id)).data.status == 'dikumpulkan'
+          && getAfter(aPath(id)).data.get('revisi_aktif_id', '') == ''
+          && getAfter(aPath(id)).data.staff_id == request.auth.uid
+          && getAfter(aPath(id)).data.tugas_id == get(aPath(id)).data.tugas_id
+          // Keterkaitan revisi diverifikasi pada CREATE riwayat_pengumpulan.
+          // Hindari pembacaan silang getAfter ke dokumen yang baru dibuat
+          // saat memvalidasi update revisi dalam transaksi yang sama.
+          && getAfter(aPath(id)).data.status == 'dikumpulkan' 
+        );
+        allow delete: if false;
+      }
+
+      match /riwayat_pengumpulan/{riwayatId} {
+        allow get, list: if canReadAssignmentHistory();
+        allow create: if staff()
+          && get(aPath(id)).data.staff_id == request.auth.uid
+          && request.resource.data.staff_id == request.auth.uid
+          && request.resource.data.penugasan_id == id
+          && request.resource.data.jenis in ['awal', 'revisi']
+          && request.resource.data.revisi_id is string
+          && (
+            (request.resource.data.jenis == 'awal' && request.resource.data.revisi_id == '')
+            || (request.resource.data.jenis == 'revisi'
+              && request.resource.data.revisi_id == get(aPath(id)).data.revisi_aktif_id
+              && request.resource.data.revisi_id.size() > 0)
+          )
+          && request.resource.data.keterangan is string
+          && request.resource.data.keterangan.size() > 0
+          && request.resource.data.file_path is string
+          && request.resource.data.file_nama is string
+          && request.resource.data.created_at == request.time
+          && getAfter(aPath(id)).data.status == 'dikumpulkan';
+        allow update, delete: if false;
+      }
     }
 
     // ==========================================
-    // 5. LAPORAN KENDALA
+    // LAPORAN KENDALA
     // ==========================================
 
-    match /laporan_kendala/{laporanId} {
+    match /laporan_kendala/{id} {
 
-      function assignmentPath() {
-        return /databases/$(database)/documents/penugasan/$(request.resource.data.penugasan_id);
+      function oldAssignment() {
+        return aPath(resource.data.penugasan_id);
       }
 
-      function validReportOwner() {
-        return isStaff()
-          && request.resource.data.pelapor_id
-            == request.auth.uid
-          && request.resource.data.penugasan_id is string
-          && exists(assignmentPath())
-          && get(assignmentPath()).data.staff_id
-            == request.auth.uid
-          && get(assignmentPath()).data.tugas_id
-            == request.resource.data.tugas_id;
+      function newAssignment() {
+        return aPath(request.resource.data.penugasan_id);
       }
 
-      // Admin dapat membaca seluruh laporan kendala.
-      // Staff hanya membaca laporan miliknya.
-      allow get, list: if isAdmin()
+      function identitySame() {
+        return request.resource.data.pelapor_id
+            == resource.data.pelapor_id
+          && request.resource.data.penugasan_id
+            == resource.data.penugasan_id
+          && request.resource.data.tugas_id
+            == resource.data.tugas_id
+          && request.resource.data.created_at
+            == resource.data.created_at;
+      }
+
+      function assignmentActive() {
+        return exists(oldAssignment())
+          && get(oldAssignment()).data.status == 'terkendala'
+          && get(oldAssignment()).data.get(
+            'kendala_aktif_id',
+            id
+          ) == id;
+      }
+
+      // Admin membaca semua laporan.
+      // Staff membaca laporan sendiri.
+      allow read: if admin()
         || (
-          isStaff()
+          staff()
           && resource.data.pelapor_id == request.auth.uid
         );
 
-      // Staff membuat laporan kendala.
-      allow create: if validReportOwner()
-        && request.resource.data.status == 'menunggu_review'
-        && request.resource.data.prioritas == 'sedang'
+      // ========================================
+      // STAFF MEMBUAT LAPORAN
+      // ========================================
+
+      allow create: if staff()
+        && request.resource.data.pelapor_id
+          == request.auth.uid
+        && request.resource.data.penugasan_id is string
+        && request.resource.data.tugas_id is string
+        && exists(newAssignment())
+        && get(newAssignment()).data.staff_id
+          == request.auth.uid
+        && get(newAssignment()).data.tugas_id
+          == request.resource.data.tugas_id
+        && get(newAssignment()).data.status
+          == 'berlangsung'
+        && request.resource.data.status
+          == 'menunggu_review'
+        && request.resource.data.prioritas in [
+          'rendah',
+          'sedang',
+          'tinggi'
+        ]
         && request.resource.data.solusi == ''
         && request.resource.data.ditangani_oleh == ''
         && request.resource.data.created_at == request.time
@@ -253,9 +535,12 @@ service cloud.firestore {
           'status',
           'solusi',
           'ditangani_oleh',
+          'alasan_penolakan',
           'tanggal_laporan',
           'created_at',
-          'updated_at'
+          'updated_at',
+          'resolved_at',
+          'konfirmasi_staff_at'
         ])
         && request.resource.data.keys().hasAll([
           'tugas_id',
@@ -267,55 +552,216 @@ service cloud.firestore {
           'status',
           'created_at',
           'updated_at'
-        ]);
+        ])
+        && getAfter(
+          newAssignment()
+        ).data.status == 'terkendala'
+        && getAfter(
+          newAssignment()
+        ).data.kendala_aktif_id == id;
 
-      // Staff hanya dapat mengedit laporan sendiri.
-      allow update: if isStaff()
+      // ========================================
+      // UPDATE LAPORAN
+      // ========================================
+
+      allow update: if (
+
+        // Staff mengedit laporan sendiri
+        // atau mengonfirmasi solusi.
+        staff()
+        && identitySame()
+        && nowUpdated()
         && resource.data.pelapor_id == request.auth.uid
-        && request.resource.data.pelapor_id
-          == resource.data.pelapor_id
-        && request.resource.data.penugasan_id
-          == resource.data.penugasan_id
-        && validUpdateTime()
-        && request.resource.data.diff(resource.data)
-          .affectedKeys().hasOnly([
-            'jenis_kendala',
-            'deskripsi',
-            'dampak',
-            'bukti_url',
-            'bukti_path',
-            'bukti_provider',
-            'updated_at'
-          ]);
+        && assignmentActive()
+        && (
 
-      // Hanya Admin dapat menghapus laporan kendala.
-      allow delete: if isAdmin();
+          // Edit saat menunggu review.
+          (
+            resource.data.status == 'menunggu_review'
+            && request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly([
+                'jenis_kendala',
+                'deskripsi',
+                'dampak',
+                'bukti_url',
+                'bukti_path',
+                'bukti_provider',
+                'updated_at'
+              ])
+          )
+
+          ||
+
+          // Staff mengirim laporan lanjutan pada ID laporan yang sama.
+          (
+            resource.data.status == 'menunggu_konfirmasi'
+            && request.resource.data.status == 'menunggu_review'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'jenis_kendala', 'deskripsi', 'dampak',
+              'bukti_url', 'bukti_path', 'bukti_provider',
+              'konfirmasi_staff_at', 'updated_at'
+            ])
+            && request.resource.data.konfirmasi_staff_at == request.time
+          )
+          ||
+          // Konfirmasi solusi admin.
+          (
+            resource.data.status == 'menunggu_konfirmasi'
+            && request.resource.data.status in [
+              'selesai',
+              'dalam_penanganan'
+            ]
+            && request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly([
+                'status',
+                'updated_at',
+                'konfirmasi_staff_at',
+                'resolved_at'
+              ])
+            && request.resource.data.konfirmasi_staff_at
+              == request.time
+            && (
+
+              // Solusi berhasil.
+              (
+                request.resource.data.status == 'selesai'
+                && request.resource.data.resolved_at
+                  == request.time
+                && getAfter(
+                  oldAssignment()
+                ).data.status == 'berlangsung'
+                && noActive(
+                  getAfter(oldAssignment()).data
+                )
+              )
+
+              ||
+
+              // Solusi belum berhasil.
+              (
+                request.resource.data.status
+                  == 'dalam_penanganan'
+                && getAfter(
+                  oldAssignment()
+                ).data.status == 'terkendala'
+                && getAfter(
+                  oldAssignment()
+                ).data.kendala_aktif_id == id
+              )
+            )
+          )
+        )
+      )
+
+      ||
+
+      (
+        // ADMIN MENANGANI LAPORAN
+        admin()
+        && identitySame()
+        && nowUpdated()
+        && assignmentActive()
+        && sameReport()
+        && request.resource.data.ditangani_oleh
+          == request.auth.uid
+        && (
+
+          (
+            resource.data.status == 'menunggu_review'
+            && request.resource.data.status in [
+              'dalam_penanganan',
+              'ditolak'
+            ]
+          )
+
+          ||
+
+          (
+            resource.data.status == 'menunggu_konfirmasi'
+            && request.resource.data.status == 'menunggu_konfirmasi'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'solusi', 'solusi_file_path', 'solusi_file_nama', 'ditangani_oleh', 'updated_at'
+            ])
+          )
+          ||
+          (
+            resource.data.status == 'dalam_penanganan'
+            && request.resource.data.status in [
+              'menunggu_konfirmasi',
+              'ditolak'
+            ]
+          )
+        )
+        && (
+
+          // Admin menolak laporan.
+          (
+            request.resource.data.status == 'ditolak'
+            && getAfter(
+              oldAssignment()
+            ).data.status == 'berlangsung'
+            && noActive(
+              getAfter(oldAssignment()).data
+            )
+          )
+
+          ||
+
+          // Admin menerima / mengirim solusi.
+          (
+            request.resource.data.status != 'ditolak'
+            && getAfter(
+              oldAssignment()
+            ).data.status == 'terkendala'
+            && getAfter(
+              oldAssignment()
+            ).data.get(
+              'kendala_aktif_id',
+              id
+            ) == id
+          )
+        )
+      );
+
+      // Riwayat setiap solusi yang belum berhasil (immutable).
+      match /riwayat/{riwayatId} {
+        allow read: if admin() || (staff() && get(rPath(id)).data.pelapor_id == request.auth.uid);
+        allow create: if staff()
+          && get(rPath(id)).data.pelapor_id == request.auth.uid
+          && get(rPath(id)).data.status == 'menunggu_konfirmasi'
+          && getAfter(rPath(id)).data.status == 'menunggu_review'
+          && request.resource.data.laporan_id == id
+          && request.resource.data.pelapor_id == request.auth.uid
+          && request.resource.data.created_at == request.time;
+        allow update, delete: if false;
+      }
+
+      // Laporan tidak dihapus dari aplikasi.
+      allow delete: if false;
     }
 
     // ==========================================
-    // 6. NOTIFIKASI
+    // NOTIFIKASI
     // ==========================================
 
-    match /notifikasi/{notifikasiId} {
+    match /notifikasi/{id} {
 
-      // Hanya penerima yang dapat membaca notifikasi.
-      allow get, list: if signedIn()
+      allow read: if logged()
         && resource.data.user_id == request.auth.uid;
 
-      // Pembuatan dan penghapusan notifikasi
-      // belum diizinkan melalui aplikasi.
       allow create, delete: if false;
 
-      // Penerima hanya dapat menandai dibaca.
-      allow update: if signedIn()
+      allow update: if logged()
         && resource.data.user_id == request.auth.uid
         && request.resource.data.dibaca == true
         && request.resource.data.diff(resource.data)
-          .affectedKeys().hasOnly(['dibaca']);
+          .affectedKeys().hasOnly([
+            'dibaca'
+          ]);
     }
 
     // ==========================================
-    // 7. KOLEKSI LAIN
+    // KOLEKSI LAIN
     // ==========================================
 
     match /{document=**} {

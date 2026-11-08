@@ -6,6 +6,7 @@ import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import '../../services/supabase_storage_service.dart';
 
 import '../../widgets/admin_header.dart';
 import 'admin_sidebar.dart';
@@ -336,6 +337,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
   ];
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final SupabaseStorageService _storage = SupabaseStorageService();
 
   /// Cache user terdaftar (id -> data), diisi saat data dibangun.
   Map<String, Map<String, dynamic>> _usersById = {};
@@ -482,7 +484,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     for (final item in assignments) {
       final aData = item.data();
       final status = (aData['status'] ?? '').toString().toLowerCase();
-      if (status != 'disetujui' && status != 'selesai') continue;
+      if (status != 'disetujui' && status != 'selesai' && status != 'dihentikan') continue;
 
       final tid = (aData['tugas_id'] ?? '').toString();
       final tData = tugas[tid] ?? <String, dynamic>{};
@@ -531,6 +533,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
         'mulai': _parseDate(
           tData['tanggal_mulai_tugas'] ?? tData['created_at'],
         ),
+        'status_akhir': status,
         'selesai': _parseDate(
           tData['tanggal_selesai_tugas'] ?? aData['updated_at'],
         ),
@@ -562,6 +565,8 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
 
     final sub = <Map<String, dynamic>>[];
     final kendala = <Map<String, dynamic>>[];
+    final pengumpulan = <Map<String, dynamic>>[];
+    final revisi = <Map<String, dynamic>>[];
 
     try {
       final s = await _firestore
@@ -608,12 +613,43 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
               (kUid.isEmpty && kNama.isEmpty) ||
               (kUid.isNotEmpty && kUid == staffUid) ||
               (kNama.isNotEmpty && kNama == staffNama);
-          if (_s(k['penugasan_id']) == id || sameStaff) kendala.add(k);
+          if (_s(k['penugasan_id']) == id || sameStaff) kendala.add({'_id': d.id, ...k});
         }
       }
     } catch (_) {}
 
-    return {'sub': sub, 'kendala': kendala};
+    // Riwayat pengerjaan dan revisi dipasangkan menggunakan revisi_id.
+    try {
+      final snap = await _firestore.collection('penugasan').doc(id)
+          .collection('riwayat_pengumpulan').get();
+      for (final doc in snap.docs) {
+        pengumpulan.add({'_id': doc.id, ...doc.data()});
+      }
+      pengumpulan.sort((a,b) => (_parseDate(a['created_at']) ?? DateTime(1970))
+          .compareTo(_parseDate(b['created_at']) ?? DateTime(1970)));
+    } catch (e) { pengumpulan.add({'_error': e.toString()}); }
+    try {
+      final snap = await _firestore.collection('penugasan').doc(id)
+          .collection('riwayat_revisi').get();
+      for (final doc in snap.docs) {
+        revisi.add({'_id': doc.id, ...doc.data()});
+      }
+      revisi.sort((a,b) => (_parseDate(a['created_at']) ?? DateTime(1970))
+          .compareTo(_parseDate(b['created_at']) ?? DateTime(1970)));
+    } catch (e) { revisi.add({'_error': e.toString()}); }
+    // Hanya laporan milik penugasan yang sedang dibuka.
+    kendala.removeWhere((k) => _s(k['penugasan_id']) != id);
+    for (final k in kendala) {
+      try {
+        final laporanId = _s(k['_id']);
+        if (laporanId.isEmpty) continue;
+        final snap = await _firestore.collection('laporan_kendala').doc(laporanId)
+            .collection('riwayat').get();
+        k['_riwayat'] = snap.docs.map((d) => {'_id': d.id, ...d.data()}).toList();
+      } catch (e) { k['_riwayat_error'] = e.toString(); }
+    }
+    return {'sub': sub, 'kendala': kendala,
+      'pengumpulan': pengumpulan, 'revisi': revisi};
   }
 
   /// Susun alur status lengkap: diberikan → dikerjakan → kendala/revisi → ACC.
@@ -1541,7 +1577,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
               flex: 11,
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: _donePill('Selesai'),
+                child: _donePill(_s(t['status_akhir']) == 'dihentikan' ? 'Dihentikan' : 'Selesai'),
               ),
             ),
           ],
@@ -1621,7 +1657,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                         ),
                       ),
                       const SizedBox(width: 8),
-                      _donePill('Selesai'),
+                      _donePill(_s(t['status_akhir']) == 'dihentikan' ? 'Dihentikan' : 'Selesai'),
                     ],
                   ),
                 ),
@@ -1807,7 +1843,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [_sectionTitle('Status'), _donePill('Selesai')],
+                children: [_sectionTitle('Status'), _donePill(_s(t['status_akhir']) == 'dihentikan' ? 'Dihentikan' : 'Selesai')],
               ),
             ),
           ],
@@ -1840,6 +1876,12 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
         else
           for (final f in files) _fileCard(ctx, f, t),
         const Divider(height: 28),
+        _sectionTitle('Riwayat Pengumpulan & Revisi Berpasangan'),
+        _pairedHistory(ctx, t, extra),
+        const Divider(height: 28),
+        _sectionTitle('Riwayat Kendala & Solusi'),
+        _issueHistory(extra),
+        const Divider(height: 28),
         _sectionTitle('Rekap Revisi & Kendala'),
         _rekapSection(rekap),
         const Divider(height: 28),
@@ -1849,6 +1891,129 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
           _timelineRow(events[i], isLast: i == events.length - 1),
       ],
     );
+  }
+
+  Widget _historyFile(String label, String name, {Future<String> Function()? getUrl}) {
+    if (name.trim().isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(children: [
+        const Icon(Icons.attach_file, size: 17, color: blue),
+        const SizedBox(width: 6),
+        Expanded(child: Text('$label: $name', style: const TextStyle(fontSize: 12))),
+        if (getUrl != null) IconButton(
+          tooltip: 'Buka lampiran',
+          icon: const Icon(Icons.visibility_outlined, color: blue),
+          onPressed: () async {
+            try {
+              final url = await getUrl();
+              if (!mounted) return;
+              await _previewFile(context, {'url': url}, name);
+            } catch (e) {
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Gagal membuka lampiran: $e')));
+            }
+          },
+        ),
+      ]),
+    );
+  }
+
+  Widget _historyCard(String title, List<Widget> children) => Container(
+    width: double.infinity,
+    margin: const EdgeInsets.only(bottom: 10),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF1F6FC),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFFD8E7F5)),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: const TextStyle(fontWeight: FontWeight.bold, color: navy)),
+      const SizedBox(height: 8),
+      ...children,
+    ]),
+  );
+
+  Widget _pairedHistory(BuildContext ctx, Map<String, dynamic> task,
+      Map<String, List<Map<String, dynamic>>> extra) {
+    final submissions = (extra['pengumpulan'] ?? []).where((e) => !e.containsKey('_error')).toList();
+    final revisions = (extra['revisi'] ?? []).where((e) => !e.containsKey('_error')).toList();
+    final assignmentId = _s(task['id']);
+    if (submissions.isEmpty && revisions.isEmpty) {
+      final errors = [...?extra['pengumpulan'], ...?extra['revisi']]
+          .where((e) => e.containsKey('_error')).map((e) => _s(e['_error'])).toList();
+      return Text(errors.isNotEmpty ? 'Riwayat tidak dapat dimuat: ${errors.join('; ')}'
+          : 'Belum ada data riwayat pengumpulan dan revisi.');
+    }
+    final first = submissions.where((s) => _s(s['revisi_id']).isEmpty).toList();
+    final used = <String>{};
+    final widgets = <Widget>[];
+    for (final s in first) {
+      used.add(_s(s['_id']));
+      widgets.add(_historyCard('Pengumpulan Awal', [
+        Text(_s(s['keterangan']), style: const TextStyle(fontSize: 12)),
+        _historyFile('Hasil Staff', _s(s['file_nama']), getUrl:
+          _s(s['file_path']).isNotEmpty ? () => _storage.ambilLinkRiwayat(assignmentId, _s(s['_id'])) : null),
+      ]));
+    }
+    for (var i = 0; i < revisions.length; i++) {
+      final r = revisions[i];
+      final rid = _s(r['_id']);
+      final linked = submissions.where((s) => _s(s['revisi_id']) == rid ||
+          (_s(r['hasil_pengumpulan_id']).isNotEmpty &&
+           _s(s['_id']) == _s(r['hasil_pengumpulan_id']))).toList();
+      used.addAll(linked.map((s) => _s(s['_id'])));
+      widgets.add(_historyCard('Revisi ke-${i+1}', [
+        const Text('Instruksi Atasan', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+        Text(_s(r['catatan_atasan']).isEmpty ? '-' : _s(r['catatan_atasan']),
+          style: const TextStyle(fontSize: 12)),
+        // URL historis membutuhkan dukungan Edge Function untuk revisionId.
+        _historyFile('Lampiran Atasan', _s(r['file_revisi_nama'])),
+        const Divider(height: 18),
+        const Text('Hasil Perbaikan Staff', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+        if (linked.isEmpty) const Text('Belum ada hasil perbaikan.', style: TextStyle(fontSize: 12)),
+        for (final s in linked) ...[
+          Text(_s(s['keterangan']), style: const TextStyle(fontSize: 12)),
+          _historyFile('File Perbaikan', _s(s['file_nama']), getUrl:
+            _s(s['file_path']).isNotEmpty ? () => _storage.ambilLinkRiwayat(assignmentId, _s(s['_id'])) : null),
+        ],
+      ]));
+    }
+    final orphan = submissions.where((s) => !used.contains(_s(s['_id']))).toList();
+    for (final s in orphan) {
+      widgets.add(_historyCard('Pengumpulan Lama (belum terhubung ke revisi)', [
+        Text(_s(s['keterangan']), style: const TextStyle(fontSize: 12)),
+        _historyFile('File Staff', _s(s['file_nama']), getUrl:
+          _s(s['file_path']).isNotEmpty ? () => _storage.ambilLinkRiwayat(assignmentId, _s(s['_id'])) : null),
+      ]));
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: widgets);
+  }
+
+  Widget _issueHistory(Map<String, List<Map<String, dynamic>>> extra) {
+    final issues = extra['kendala'] ?? [];
+    if (issues.isEmpty) return const Text('Tidak ada laporan kendala.');
+    return Column(children: [
+      for (var i=0; i<issues.length; i++)
+        _historyCard('Laporan Kendala ${i+1}', [
+          Text('Kendala: ${_s(issues[i]['deskripsi'])}', style: const TextStyle(fontSize: 12)),
+          Text('Dampak: ${_s(issues[i]['dampak'])}', style: const TextStyle(fontSize: 12)),
+          Text('Solusi Atasan: ${_s(issues[i]['solusi'])}', style: const TextStyle(fontSize: 12)),
+          _historyFile('Bukti Kendala', _s(issues[i]['bukti_path']).split('/').last),
+          _historyFile('Lampiran Solusi', _s(issues[i]['solusi_file_path']).split('/').last,
+            getUrl: _s(issues[i]['solusi_file_path']).isNotEmpty
+              ? () => _storage.ambilLinkSolusi(_s(issues[i]['_id'])) : null),
+          for (final h in (issues[i]['_riwayat'] is List ? issues[i]['_riwayat'] as List : const []))
+            if (h is Map) ...[
+              const Divider(height: 18),
+              Text('Kendala sebelumnya: ${_s(h['deskripsi_sebelumnya'])}', style: const TextStyle(fontSize: 12)),
+              Text('Solusi sebelumnya: ${_s(h['solusi_sebelumnya'])}', style: const TextStyle(fontSize: 12)),
+              Text('Tanggapan Staff: ${_s(h['feedback'])}', style: const TextStyle(fontSize: 12)),
+              _historyFile('Lampiran solusi sebelumnya', _s(h['solusi_file_path']).split('/').last),
+            ],
+        ]),
+    ]);
   }
 
   Widget _fileCard(

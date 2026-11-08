@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'admin_navbar.dart';
@@ -20,6 +22,85 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
   String? _selectedStaffImageBase64;
   bool _isSaving = false;
 
+  Future<void> _tambahStaff({
+    required String nama,
+    required String nip,
+    required String jabatan,
+    required String noHp,
+    required String fotoBase64,
+  }) async {
+    final email = '$nip@simtas.internal';
+    final existing = await _firestore.collection('users').get();
+    if (existing.docs.any((doc) => (doc.data()['nip'] ?? '').toString() == nip)) {
+      throw StateError('NIP sudah terdaftar. Gunakan NIP staf yang berbeda.');
+    }
+    // Auth kedua membuat akun staf tanpa mengganti sesi admin pada app utama.
+    final app = await Firebase.initializeApp(
+      name: 'kelola-staff-${DateTime.now().microsecondsSinceEpoch}',
+      options: Firebase.app().options,
+    );
+    final auth = FirebaseAuth.instanceFor(app: app);
+    try {
+      if (kIsWeb) await auth.setPersistence(Persistence.NONE);
+      final credential = await auth.createUserWithEmailAndPassword(
+        email: email,
+        password: nip,
+      );
+      final user = credential.user!;
+      try {
+        await _firestore.collection('users').doc(user.uid).set({
+          'uid': user.uid,
+          'email': email,
+          'nama': nama,
+          'nip': nip,
+          'jabatan': jabatan,
+          'no_hp': noHp,
+          'role': 'Staff',
+          'status_pekerjaan': 'tersedia',
+          'foto_base64': fotoBase64,
+          'is_first_login': true,
+          'created_at': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      } on FirebaseException catch (e) {
+        // Batalkan akun baru hanya bila penulisan dipastikan ditolak server.
+        if (['permission-denied', 'invalid-argument', 'unauthenticated']
+            .contains(e.code)) {
+          try {
+            await user.delete();
+          } on FirebaseAuthException catch (_) {
+            throw StateError(
+              'Profil gagal disimpan dan akun $email belum dapat dibatalkan. '
+              'Periksa akun tersebut di Firebase Authentication sebelum mencoba lagi.',
+            );
+          }
+        }
+        rethrow;
+      }
+    } finally {
+      // Kegagalan cleanup tidak boleh menutupi hasil penyimpanan profil.
+      try {
+        await auth.signOut();
+      } on FirebaseAuthException catch (_) {
+        // App sekunder tetap ditutup di bawah.
+      }
+      try {
+        await app.delete();
+      } on FirebaseException catch (_) {
+        // Profil yang sudah berhasil ditulis tetap merupakan hasil akhir.
+      }
+    }
+  }
+
+  MemoryImage? _fotoStaff(String? value) {
+    if (value == null || value.isEmpty) return null;
+    try {
+      return MemoryImage(base64Decode(value));
+    } on FormatException {
+      return null;
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -29,15 +110,15 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
   // ==== DIALOG / BOTTOM SHEET TAMBAH & EDIT STAF FIRESTORE ====
   void _showStaffModal({Map<String, dynamic>? staffDoc}) {
     final isEdit = staffDoc != null;
-    final String? docId = staffDoc?['id'];
+    final String? docId = staffDoc?['id']?.toString();
 
-    final namaController = TextEditingController(text: staffDoc?['nama'] ?? '');
-    final nipController = TextEditingController(text: staffDoc?['nip'] ?? '');
+    final namaController = TextEditingController(text: (staffDoc?['nama'] ?? '').toString());
+    final nipController = TextEditingController(text: (staffDoc?['nip'] ?? '').toString());
     final jabatanController = TextEditingController(
-      text: staffDoc?['jabatan'] ?? '',
+      text: (staffDoc?['jabatan'] ?? '').toString(),
     );
-    final waController = TextEditingController(text: staffDoc?['wa'] ?? '');
-    _selectedStaffImageBase64 = staffDoc?['foto_base64'];
+    final waController = TextEditingController(text: (staffDoc?['no_hp'] ?? staffDoc?['wa'] ?? '').toString());
+    _selectedStaffImageBase64 = staffDoc?['foto_base64']?.toString();
 
     showModalBottomSheet(
       context: context,
@@ -63,6 +144,13 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
               if (image == null) return;
 
               final bytes = await image.readAsBytes();
+              if (!modalContext.mounted) return;
+              if (base64Encode(bytes).length > 700000) {
+                ScaffoldMessenger.of(modalContext).showSnackBar(
+                  const SnackBar(content: Text('Foto terlalu besar. Pilih foto di bawah 500 KB.')),
+                );
+                return;
+              }
               setModalState(() {
                 _selectedStaffImageBase64 = base64Encode(bytes);
               });
@@ -142,9 +230,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                           backgroundImage:
                               _selectedStaffImageBase64 != null &&
                                   _selectedStaffImageBase64!.isNotEmpty
-                              ? MemoryImage(
-                                  base64Decode(_selectedStaffImageBase64!),
-                                )
+                              ? _fotoStaff(_selectedStaffImageBase64)
                               : null,
                           child:
                               _selectedStaffImageBase64 == null ||
@@ -187,6 +273,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                         onPressed: _isSaving
                             ? null
                             : () async {
+                                if (_isSaving) return;
                                 final nama = namaController.text.trim();
                                 final nip = nipController.text.trim();
                                 final jabatan = jabatanController.text.trim();
@@ -206,6 +293,14 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                                   return;
                                 }
 
+                                if ((!isEdit && !RegExp(r'^[0-9]{6,30}$').hasMatch(nip)) ||
+                                    nama.length > 200 || jabatan.length > 200 || wa.length > 30) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('NIP baru harus 6–30 digit; nama/jabatan maksimal 200 karakter dan nomor WhatsApp maksimal 30 karakter.')),
+                                  );
+                                  return;
+                                }
+
                                 setModalState(() {
                                   _isSaving = true;
                                 });
@@ -219,49 +314,23 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                                         .update({
                                           'nama': nama,
                                           'jabatan': jabatan,
-                                          'wa': wa,
+                                          'no_hp': wa,
                                           'foto_base64':
                                               _selectedStaffImageBase64 ?? '',
                                           'updated_at':
                                               FieldValue.serverTimestamp(),
                                         });
                                   } else {
-                                    // TAMBAH STAF BARU KE FIRESTORE & AUTH
-                                    final String virtualEmail =
-                                        "$nip@simtas.internal";
-                                    final String defaultPassword = nip;
-
-                                    UserCredential credential =
-                                        await FirebaseAuth.instance
-                                            .createUserWithEmailAndPassword(
-                                              email: virtualEmail,
-                                              password: defaultPassword,
-                                            );
-
-                                    final String newUid = credential.user!.uid;
-
-                                    await _firestore
-                                        .collection('users')
-                                        .doc(newUid)
-                                        .set({
-                                          'uid': newUid,
-                                          'nama': nama,
-                                          'nip': nip,
-                                          'jabatan': jabatan,
-                                          'wa': wa,
-                                          'role': 'staff',
-                                          'status': 'Tersedia',
-                                          'foto_base64':
-                                              _selectedStaffImageBase64 ?? '',
-                                          'is_first_login': true,
-                                          'created_at':
-                                              FieldValue.serverTimestamp(),
-                                          'updated_at':
-                                              FieldValue.serverTimestamp(),
-                                        });
+                                    await _tambahStaff(
+                                      nama: nama,
+                                      nip: nip,
+                                      jabatan: jabatan,
+                                      noHp: wa,
+                                      fotoBase64: _selectedStaffImageBase64 ?? '',
+                                    );
                                   }
 
-                                  if (!mounted) return;
+                                  if (!mounted || !modalContext.mounted) return;
                                   _selectedStaffImageBase64 = null;
                                   Navigator.pop(modalContext);
 
@@ -275,6 +344,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                                     ),
                                   );
                                 } catch (e) {
+                                  if (!modalContext.mounted) return;
                                   ScaffoldMessenger.of(
                                     modalContext,
                                   ).showSnackBar(
@@ -283,9 +353,8 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                                     ),
                                   );
                                 } finally {
-                                  setModalState(() {
-                                    _isSaving = false;
-                                  });
+                                  _isSaving = false;
+                                  if (modalContext.mounted) setModalState(() {});
                                 }
                               },
                         child: _isSaving
@@ -487,7 +556,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                     final data = doc.data();
                     final role = (data['role'] ?? 'staff')
                         .toString()
-                        .toLowerCase();
+                        .trim().toLowerCase();
 
                     if (role == 'admin') return false;
 
@@ -535,12 +604,14 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                       final docId = doc.id;
 
                       final String nama =
-                          staff['nama'] ?? staff['email'] ?? 'Staf';
-                      final String nip = staff['nip'] ?? '-';
-                      final String jabatan = staff['jabatan'] ?? '-';
-                      final String wa = staff['wa'] ?? '-';
-                      final String status = staff['status'] ?? 'Tersedia';
-                      final String? fotoBase64 = staff['foto_base64'];
+                          (staff['nama'] ?? staff['email'] ?? 'Staf').toString();
+                      final String nip = (staff['nip'] ?? '-').toString();
+                      final String jabatan = (staff['jabatan'] ?? '-').toString();
+                      final String wa = (staff['no_hp'] ?? staff['wa'] ?? '-').toString();
+                      final rawStatus = (staff['status_pekerjaan'] ?? staff['status'] ?? 'Tersedia').toString().trim();
+                      final String status = rawStatus.isEmpty ? 'Tersedia'
+                          : rawStatus[0].toUpperCase() + rawStatus.substring(1);
+                      final String? fotoBase64 = staff['foto_base64']?.toString();
 
                       final bool isTersedia = status == "Tersedia";
 
@@ -565,7 +636,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                               backgroundColor: const Color(0xFF0066B3),
                               backgroundImage:
                                   fotoBase64 != null && fotoBase64.isNotEmpty
-                                  ? MemoryImage(base64Decode(fotoBase64))
+                                  ? _fotoStaff(fotoBase64)
                                   : null,
                               child: fotoBase64 == null || fotoBase64.isEmpty
                                   ? const Icon(

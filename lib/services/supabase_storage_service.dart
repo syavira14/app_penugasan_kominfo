@@ -1,5 +1,6 @@
-import 'dart:typed_data';
-
+import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -88,6 +89,20 @@ class SupabaseStorageService {
     }
   }
 
+  /// MIME ditentukan dari nama file, bukan dari MIME generik browser.
+  static String mimeTypeDariNama(String namaFile) {
+    final ext = namaFile.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'pdf': return 'application/pdf';
+      case 'jpg':
+      case 'jpeg': return 'image/jpeg';
+      case 'png': return 'image/png';
+      case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      case 'doc': return 'application/msword';
+      default: throw FormatException('Format file .$ext belum didukung. Gunakan PDF, JPG, PNG, atau DOCX.');
+    }
+  }
+
   /// Mengunggah file hasil pekerjaan atau lampiran
   /// kendala ke bucket Supabase Storage.
   ///
@@ -140,7 +155,7 @@ class SupabaseStorageService {
           .uploadBinary(
             filePath,
             bytes,
-            fileOptions: FileOptions(contentType: contentType, upsert: false),
+            fileOptions: FileOptions(contentType: mimeTypeDariNama(namaFile), upsert: false),
           );
 
       // 7. Normalisasi path hasil upload.
@@ -212,6 +227,123 @@ class SupabaseStorageService {
       throw Exception('Gagal mengambil akses file: ${e.message}');
     } catch (e) {
       debugPrint('Gagal membuat signed URL: $e');
+      rethrow;
+    }
+  }
+
+  /// Akses file laporan melalui Edge Function setelah verifikasi Firebase token.
+  Future<String> ambilLinkSolusi(String laporanId) async =>
+      _ambilLinkFileAman(kind: 'solusi', laporanId: laporanId);
+
+  Future<String> ambilLinkRiwayat(String penugasanId, String submissionId) async =>
+      _ambilLinkFileAman(kind: 'riwayat', assignmentId: penugasanId, submissionId: submissionId);
+
+  Future<String> ambilLinkPenghentian(String penugasanId) async =>
+      _ambilLinkFileAman(kind: 'penghentian', assignmentId: penugasanId);
+
+  Future<String> _ambilLinkFileAman({required String kind, String? laporanId,
+      String? assignmentId, String? submissionId}) async {
+    final user = _auth.currentUser;
+    if (user == null) throw StateError('Sesi login tidak tersedia.');
+    final token = await user.getIdToken(true);
+    final response = await http.post(
+      Uri.parse('https://uxdloenucntsmcviskfo.supabase.co/functions/v1/get-assignment-file-url'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: jsonEncode({'kind': kind, if (laporanId != null) 'laporanId': laporanId,
+        if (assignmentId != null) 'assignmentId': assignmentId,
+        if (submissionId != null) 'submissionId': submissionId}),
+    );
+    final data = jsonDecode(response.body);
+    if (response.statusCode != 200 || data is! Map || data['url'] == null) {
+      throw StateError('Gagal mengakses file ($kind): ${data is Map ? data['error'] : response.statusCode}');
+    }
+    return data['url'].toString();
+  }
+
+  /// Mengambil signed URL bukti laporan kendala
+  /// melalui Supabase Edge Function.
+  ///
+  /// Admin dapat melihat semua laporan.
+  /// Staff hanya dapat melihat laporan miliknya.
+  Future<String> ambilLinkBuktiKendala(String laporanId) async {
+    try {
+      final id = laporanId.trim();
+
+      if (id.isEmpty) {
+        throw Exception('ID laporan kendala tidak boleh kosong.');
+      }
+
+      // 1. Pastikan pengguna login ke Firebase.
+      final user = _auth.currentUser;
+
+      if (user == null) {
+        throw Exception('Sesi login tidak ditemukan. Silakan login kembali.');
+      }
+
+      // 2. Ambil Firebase ID Token terbaru.
+      final firebaseToken = await user.getIdToken(true);
+
+      if (firebaseToken == null || firebaseToken.isEmpty) {
+        throw Exception('Gagal mendapatkan token Firebase.');
+      }
+
+      // 3. Endpoint Supabase Edge Function.
+      final endpoint = Uri.parse(
+        'https://uxdloenucntsmcviskfo.supabase.co'
+        '/functions/v1/get-assignment-file-url',
+      );
+
+      // 4. Kirim permintaan untuk bukti kendala.
+      final response = await http
+          .post(
+            endpoint,
+            headers: {
+              'Authorization': 'Bearer $firebaseToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'kind': 'kendala', 'laporanId': id}),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      // 5. Baca respons Edge Function.
+      final dynamic decoded = jsonDecode(response.body);
+
+      if (decoded is! Map<String, dynamic>) {
+        throw Exception('Format respons server tidak valid.');
+      }
+
+      if (response.statusCode != 200) {
+        final pesan =
+            decoded['error']?.toString() ?? 'Gagal mengakses bukti laporan.';
+
+        throw Exception('$pesan (HTTP ${response.statusCode})');
+      }
+
+      // 6. Ambil signed URL.
+      final signedUrl = decoded['url']?.toString() ?? '';
+
+      if (signedUrl.isEmpty) {
+        throw Exception('Link bukti laporan tidak ditemukan.');
+      }
+
+      final uri = Uri.tryParse(signedUrl);
+
+      if (uri == null ||
+          uri.scheme != 'https' ||
+          uri.host != 'uxdloenucntsmcviskfo.supabase.co' ||
+          !uri.path.startsWith('/storage/v1/object/sign/file-tugas/')) {
+        throw Exception('Link file dari server tidak valid.');
+      }
+
+      debugPrint('Signed URL bukti kendala berhasil diperoleh.');
+
+      return signedUrl;
+    } on TimeoutException {
+      throw Exception('Permintaan terlalu lama. Periksa koneksi internet.');
+    } on FormatException {
+      throw Exception('Respons Edge Function bukan JSON yang valid.');
+    } catch (e) {
+      debugPrint('Gagal membuka bukti kendala: $e');
       rethrow;
     }
   }

@@ -41,9 +41,11 @@ class _TugasStats {
 
     int pending = 0, berlangsung = 0, terkendala = 0, selesai = 0;
 
+    int dihentikan = 0;
     for (final doc in snap.docs) {
       final data = doc.data() as Map<String, dynamic>;
       final status = (data['status'] ?? '').toString().toLowerCase();
+      if (status == 'dihentikan') { dihentikan++; continue; }
 
       if (status == 'pending' || status == 'belum dimulai') {
         pending++;
@@ -62,7 +64,7 @@ class _TugasStats {
     }
 
     return _TugasStats(
-      total: snap.docs.length,
+      total: snap.docs.length - dihentikan,
       pending: pending,
       berlangsung: berlangsung,
       terkendala: terkendala,

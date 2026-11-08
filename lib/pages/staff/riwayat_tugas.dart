@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'tugas_detail_page.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -395,7 +396,11 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                             child: InkWell(
                               borderRadius: BorderRadius.circular(16 * scale),
                               onTap: () {
-                                _tampilkanPopUpDetail(context, tugas);
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => TugasDetailPage(penugasanId: tugas.id),
+                                  ),
+                                );
                               },
                               child: Padding(
                                 padding: EdgeInsets.all(14 * scale),

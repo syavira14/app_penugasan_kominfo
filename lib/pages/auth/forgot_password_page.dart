@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../services/staff_admin_api.dart';
 
 class AppColors {
   static const Color biruTua = Color(0xFF0D1B2A);
@@ -29,86 +30,58 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   final _formKey = GlobalKey<FormState>();
 
   final TextEditingController _nipController = TextEditingController();
-  final TextEditingController _birthDateController = TextEditingController();
-  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _namaController = TextEditingController();
 
   bool _isLoading = false;
   bool _isSuccess = false;
-  String _successEmailMessage = '';
+  String _successMessage = '';
+  String? _errorMessage;
 
   @override
   void dispose() {
     _nipController.dispose();
-    _birthDateController.dispose();
-    _emailController.dispose();
+    _namaController.dispose();
     super.dispose();
   }
 
-  // Picker Tanggal Lahir
-  Future<void> _selectBirthDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime(1995, 1, 1),
-      firstDate: DateTime(1950),
-      lastDate: DateTime.now(),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: AppColors.biruSedang,
-              onPrimary: Colors.white,
-              onSurface: AppColors.biruTua,
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _birthDateController.text =
-            "${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}";
-      });
-    }
-  }
-
-  void _handleProsesPemulihan() async {
+  // Kirim permintaan reset ke admin (tanpa email / WhatsApp).
+  // Admin menyetujui di menu Kelola Staff, lalu kata sandi menjadi NIP.
+  Future<void> _handleProsesPemulihan() async {
     if (!_formKey.currentState!.validate()) return;
 
     FocusScope.of(context).unfocus();
 
     setState(() {
       _isLoading = true;
+      _errorMessage = null;
     });
 
-    // Simulasi proses validasi data & pengiriman email pemulihan
-    await Future.delayed(const Duration(seconds: 2));
-
-    if (!mounted) return;
-
-    String rawEmail = _emailController.text.trim();
-    String maskedEmail = _maskEmail(rawEmail);
-
-    setState(() {
-      _isLoading = false;
-      _isSuccess = true;
-      _successEmailMessage =
-          'Email berisi kata sandi baru akun SIMTAS Anda telah dikirim ke $maskedEmail. Silakan cek email Anda (termasuk folder spam). Terimakasih!';
-    });
-  }
-
-  // Sensor Email (contoh: gizz*******@gmail.com)
-  String _maskEmail(String email) {
-    final parts = email.split('@');
-    if (parts.length != 2) return email;
-    String name = parts[0];
-    String domain = parts[1];
-
-    if (name.length <= 3) {
-      return "${name[0]}***@$domain";
+    try {
+      final bool sudahAda = await StaffAdminApi.requestReset(
+        _nipController.text.trim(),
+        _namaController.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _isSuccess = true;
+        _successMessage = sudahAda
+            ? 'Permintaan reset Anda sudah dikirim sebelumnya dan masih menunggu persetujuan admin.'
+            : 'Permintaan terkirim ke admin. Setelah disetujui, kata sandi Anda menjadi NIP. Silakan masuk dengan NIP sebagai kata sandi, lalu segera ganti kata sandi di menu Profil.';
+      });
+    } on StaffAdminException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorMessage = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Gagal mengirim permintaan. Periksa koneksi internet.';
+      });
     }
-    return "${name.substring(0, 3)}${'*' * (name.length - 3)}@$domain";
   }
 
   @override
@@ -360,7 +333,49 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 letterSpacing: 0.5,
               ),
             ),
+            const SizedBox(height: 10),
+            const Text(
+              'Isi NIP dan nama lengkap Anda. Permintaan dikirim ke admin, dan setelah disetujui kata sandi Anda menjadi NIP.',
+              style: TextStyle(
+                color: AppColors.abuTeks,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
             const SizedBox(height: 20),
+
+            if (_errorMessage != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFECACA)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: Color(0xFFB91C1C),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _errorMessage!,
+                        style: const TextStyle(
+                          color: Color(0xFF991B1B),
+                          fontSize: 12.5,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // NOTIFIKASI SUKSES DENGAN WARNA HIJAU SOFT
             if (_isSuccess) ...[
@@ -382,7 +397,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        _successEmailMessage,
+                        _successMessage,
                         style: const TextStyle(
                           color: Color(0xFF1B5E20),
                           fontSize: 12.5,
@@ -418,23 +433,20 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
             const SizedBox(height: 16),
 
-            // INPUT EMAIL PEMULIHAN
-            _buildInputLabel('Email Pemulihan'),
+            // INPUT NAMA LENGKAP (pencocokan data)
+            _buildInputLabel('Nama Lengkap'),
             const SizedBox(height: 8),
             TextFormField(
-              controller: _emailController,
-              keyboardType: TextInputType.emailAddress,
+              controller: _namaController,
+              textCapitalization: TextCapitalization.words,
               style: const TextStyle(fontSize: 14, color: AppColors.biruTua),
               decoration: _inputDecoration(
-                hint: 'Masukkan email terdaftar Anda',
-                icon: Icons.email_outlined,
+                hint: 'Masukkan nama sesuai data akun',
+                icon: Icons.person_outline_rounded,
               ),
               validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Email pemulihan wajib diisi';
-                }
-                if (!value.contains('@')) {
-                  return 'Format email tidak valid';
+                if (value == null || value.trim().length < 2) {
+                  return 'Nama lengkap wajib diisi';
                 }
                 return null;
               },
@@ -447,7 +459,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               width: double.infinity,
               height: 48,
               child: ElevatedButton(
-                onPressed: _isLoading ? null : _handleProsesPemulihan,
+                onPressed: (_isLoading || _isSuccess)
+                    ? null
+                    : _handleProsesPemulihan,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color.fromARGB(
                     255,
@@ -473,7 +487,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                         ),
                       )
                     : const Text(
-                        'PROSES',
+                        'KIRIM PERMINTAAN',
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,

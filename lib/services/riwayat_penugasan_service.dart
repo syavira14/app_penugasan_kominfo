@@ -71,20 +71,49 @@ Stream<List<Map<String, dynamic>>> streamRiwayatPenugasan({String? staffId}) {
       return 'Atasan';
     }
 
+    Future<String> namaStaff(Map<String, dynamic> assignment) async {
+      final direct =
+          (assignment['staff_nama'] ?? assignment['nama_staff'] ?? '')
+              .toString()
+              .trim();
+      if (direct.isNotEmpty) return direct;
+      final sId = (assignment['staff_id'] ?? assignment['staff_uid'] ?? '')
+          .toString()
+          .trim();
+      if (sId.isNotEmpty) {
+        final u = await user(sId);
+        final nama = (u['nama'] ?? '').toString().trim();
+        if (nama.isNotEmpty) return nama;
+      }
+      return 'Staff';
+    }
+
     final result = <Map<String, dynamic>>[];
     for (final doc in snapshot.docs) {
       final assignment = doc.data();
-      if (assignment['status'] != 'disetujui') continue;
+      final status = (assignment['status'] ?? '').toString().toLowerCase();
+      if (status != 'disetujui' &&
+          status != 'selesai' &&
+          status != 'dihentikan') {
+        continue;
+      }
       final taskId = (assignment['tugas_id'] ?? '').toString();
       if (taskId.isEmpty) continue;
       final task = await tugas(taskId);
+      final resolvedStaff = await namaStaff(assignment);
+      final resolvedAtasan = await namaAtasan(task, assignment);
 
       result.add({
         ...task,
         ...assignment,
         'id': doc.id,
-        'nama_staff': assignment['staff_nama'] ?? 'Staf tidak ditemukan',
-        'nama_atasan': await namaAtasan(task, assignment),
+        'tugas_id': taskId,
+        'staff_uid': (assignment['staff_id'] ?? staffId ?? '').toString(),
+        'nama_staff': resolvedStaff,
+        'nama_atasan': resolvedAtasan,
+        'status_akhir': status,
+        'raw_assignment': assignment,
+        'raw_task': task,
         // Pastikan tanggal dari dokumen tugas tidak tertimpa field penugasan.
         'tanggal_mulai_tugas':
             task['tanggal_mulai_tugas'] ??

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
 import '../admin/dashboard_admin_page.dart';
 import '../staff/staff_dashboard.dart';
-import 'forgot_password_page.dart';
 
 class AppColors {
   static const Color biruTua = Color(0xFF0D1B2A);
@@ -50,6 +50,8 @@ class _LoginPageState extends State<LoginPage> {
     if (!_formKey.currentState!.validate()) return;
 
     FocusScope.of(context).unfocus();
+    // Hapus pesan error lama supaya tidak terbawa ke halaman berikutnya.
+    ScaffoldMessenger.of(context).clearSnackBars();
 
     setState(() {
       _isLoading = true;
@@ -73,6 +75,7 @@ class _LoginPageState extends State<LoginPage> {
       setState(() {
         _isLoading = false;
       });
+      ScaffoldMessenger.of(context).clearSnackBars();
 
       if (userModel.role.toLowerCase() == 'admin') {
         Navigator.pushReplacement(
@@ -100,13 +103,6 @@ class _LoginPageState extends State<LoginPage> {
         ),
       );
     }
-  }
-
-  void _handleForgotPassword() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
-    );
   }
 
   @override
@@ -357,12 +353,15 @@ class _LoginPageState extends State<LoginPage> {
             ),
             const SizedBox(height: 28),
 
-            // INPUT NIP
+            // INPUT NIP (Hanya NIP angka, menolak input email/@gmail.com)
             _buildInputLabel('NIP'),
             const SizedBox(height: 8),
             TextFormField(
               controller: _identifierController,
-              keyboardType: TextInputType.text,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.deny(RegExp(r'\s')),
+              ],
               textInputAction: TextInputAction.next,
               style: const TextStyle(fontSize: 14, color: AppColors.biruTua),
               decoration: _inputDecoration(
@@ -373,8 +372,13 @@ class _LoginPageState extends State<LoginPage> {
                 FocusScope.of(context).requestFocus(_passwordFocusNode);
               },
               validator: (value) {
-                if (value == null || value.trim().isEmpty) {
+                final clean = (value ?? '').trim();
+                if (clean.isEmpty) {
                   return 'NIP wajib diisi';
+                }
+                if (clean.contains('@') ||
+                    !RegExp(r'^[0-9]+$').hasMatch(clean)) {
+                  return 'Masuk hanya menggunakan NIP (angka), bukan email';
                 }
                 return null;
               },
@@ -420,28 +424,7 @@ class _LoginPageState extends State<LoginPage> {
               },
             ),
 
-            // LUPA PASSWORD
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: _handleForgotPassword,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.only(top: 8, bottom: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text(
-                  'Lupa kata sandi?',
-                  style: TextStyle(
-                    color: AppColors.biruSedang,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
 
             // TOMBOL MASUK
             SizedBox(
@@ -596,52 +579,39 @@ class _LoginPageState extends State<LoginPage> {
 class _BackgroundWavePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
+    final paint1 = Paint()
       ..color = Colors.white.withOpacity(0.05)
       ..style = PaintingStyle.fill;
 
-    final path1 = Path();
-    path1.moveTo(0, size.height * 0.7);
-    path1.quadraticBezierTo(
-      size.width * 0.25,
-      size.height * 0.5,
-      size.width * 0.5,
-      size.height * 0.65,
-    );
-    path1.quadraticBezierTo(
-      size.width * 0.75,
-      size.height * 0.8,
-      size.width,
-      size.height * 0.6,
-    );
-    path1.lineTo(size.width, 0);
-    path1.lineTo(0, 0);
-    path1.close();
-
-    canvas.drawPath(path1, paint);
+    final path1 = Path()
+      ..moveTo(0, size.height * 0.25)
+      ..quadraticBezierTo(
+        size.width * 0.4,
+        size.height * 0.1,
+        size.width,
+        size.height * 0.35,
+      )
+      ..lineTo(size.width, 0)
+      ..lineTo(0, 0)
+      ..close();
 
     final paint2 = Paint()
       ..color = AppColors.cyan.withOpacity(0.08)
       ..style = PaintingStyle.fill;
 
-    final path2 = Path();
-    path2.moveTo(0, size.height * 0.5);
-    path2.quadraticBezierTo(
-      size.width * 0.35,
-      size.height * 0.75,
-      size.width * 0.7,
-      size.height * 0.55,
-    );
-    path2.quadraticBezierTo(
-      size.width * 0.85,
-      size.height * 0.45,
-      size.width,
-      size.height * 0.5,
-    );
-    path2.lineTo(size.width, 0);
-    path2.lineTo(0, 0);
-    path2.close();
+    final path2 = Path()
+      ..moveTo(0, size.height * 0.65)
+      ..quadraticBezierTo(
+        size.width * 0.6,
+        size.height * 0.85,
+        size.width,
+        size.height * 0.55,
+      )
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
 
+    canvas.drawPath(path1, paint1);
     canvas.drawPath(path2, paint2);
   }
 

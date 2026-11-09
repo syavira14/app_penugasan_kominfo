@@ -5,6 +5,8 @@ class UserModel {
   final String nip;
   final String nama;
   final String email;
+  // Email kontak opsional (bukan email login).
+  final String emailKontak;
   final String noHp;
   final String jabatan;
   final String role;
@@ -21,6 +23,7 @@ class UserModel {
     required this.nip,
     required this.nama,
     required this.email,
+    this.emailKontak = '',
     required this.noHp,
     required this.jabatan,
     required this.role,
@@ -35,7 +38,8 @@ class UserModel {
       uid: map['uid'] ?? uid,
       nip: map['nip'] ?? '',
       nama: map['nama'] ?? map['nama_lengkap'] ?? '',
-      email: map['email'] ?? map['email_user'] ?? '',
+      email: map['email'] ?? '',
+      emailKontak: _kontakEmail(map),
       noHp: map['no_hp'] ?? map['no_hp'] ?? '',
       jabatan: map['jabatan'] ?? '',
       role: map['role'] ?? 'Staff',
@@ -54,6 +58,25 @@ class UserModel {
     );
   }
 
+  // Email kontak: pakai email_kontak; kalau kosong, pakai field email lama
+  // asalkan bukan email bayangan NIP (@simtas.internal).
+  static String _kontakEmail(Map<String, dynamic> map) {
+    // Buang sisa format lama ("email||password||alias"): hanya email yang dipakai.
+    final kontak = (map['email_kontak'] ?? '')
+        .toString()
+        .split('||')
+        .first
+        .split('\t')
+        .first
+        .trim();
+    if (kontak.isNotEmpty) return kontak;
+    final lama = (map['email'] ?? '').toString().trim();
+    if (lama.isNotEmpty && !lama.toLowerCase().endsWith('@simtas.internal')) {
+      return lama;
+    }
+    return '';
+  }
+
   factory UserModel.fromFirestore(DocumentSnapshot doc) {
     final map = doc.data() as Map<String, dynamic>? ?? {};
 
@@ -66,6 +89,7 @@ class UserModel {
       'nip': nip,
       'nama': nama,
       'email': email,
+      'email_kontak': emailKontak,
       'no_hp': noHp,
       'jabatan': jabatan,
       'role': role,

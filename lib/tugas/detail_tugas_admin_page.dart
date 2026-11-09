@@ -35,6 +35,29 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   static const Color latarAbu = AppPalette.background;
   static const int _sidebarIndex = 2; // posisi menu Kelola Tugas di sidebar
   static const Color abuBorder = Color(0xFFE1E5F0);
+
+  // Batas kuota tugas per staff sesuai aturan Status Staff:
+  // - Maksimal 5 tugas aktif yang sedang dikerjakan pada satu waktu.
+  // - Maksimal 15 tugas per bulan: Rendah maks 5, Sedang maks 5, Tinggi maks 5.
+  static const int _maxActiveTugas = 5;
+  static const int _maxPerPrioritasBulanan = 5;
+  static const int _maxTotalBulanan = 15;
+
+  static const List<String> _namaBulanList = [
+    'Januari',
+    'Februari',
+    'Maret',
+    'April',
+    'Mei',
+    'Juni',
+    'Juli',
+    'Agustus',
+    'September',
+    'Oktober',
+    'November',
+    'Desember',
+  ];
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final SupabaseStorageService _storage = SupabaseStorageService();
@@ -55,6 +78,14 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   List<Map<String, dynamic>> _daftarStaff = [];
   final Set<String> _stafDipilih = {};
   final Map<String, String> _namaStaff = {};
+
+  // Data seluruh tugas & penugasan lain untuk perhitungan kuota aktif & bulanan.
+  Map<String, Map<String, dynamic>> _allTugasMap = {};
+  List<Map<String, dynamic>> _allPenugasanList = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _allPenugasanSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _allTugasSubscription;
 
   bool _loading = true;
   bool _saving = false;
@@ -80,6 +111,8 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   @override
   void dispose() {
     _assignmentSubscription?.cancel();
+    _allPenugasanSubscription?.cancel();
+    _allTugasSubscription?.cancel();
 
     _judulController.dispose();
 
@@ -95,6 +128,28 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   Future<void> _loadPage() async {
     try {
       await _loadStaff();
+      await _loadWorkloadData();
+
+      _allTugasSubscription = _firestore.collection('tugas').snapshots().listen(
+        (snap) {
+          if (!mounted) return;
+          setState(() {
+            _allTugasMap = {for (final d in snap.docs) d.id: d.data()};
+          });
+        },
+      );
+
+      _allPenugasanSubscription = _firestore
+          .collection('penugasan')
+          .snapshots()
+          .listen((snap) {
+            if (!mounted) return;
+            setState(() {
+              _allPenugasanList = snap.docs
+                  .map((d) => {'_id': d.id, ...d.data()})
+                  .toList();
+            });
+          });
 
       if (widget.tugasId != null) {
         await _loadTugas();
@@ -144,11 +199,18 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     }
   }
 
+  Future<void> _loadWorkloadData() async {
+    final snaps = await Future.wait([
+      _firestore.collection('tugas').get(),
+      _firestore.collection('penugasan').get(),
+    ]);
+    _allTugasMap = {for (final d in snaps[0].docs) d.id: d.data()};
+    _allPenugasanList = snaps[1].docs
+        .map((d) => {'_id': d.id, ...d.data()})
+        .toList();
+  }
+
   Future<void> _loadStaff() async {
-    // Role lama menggunakan "Staff" dan sebagian akun tidak memiliki
-
-    // status_akun. Nama tetap dimuat untuk staf lama yang sudah nonaktif.
-
     final snapshot = await _firestore.collection('users').get();
 
     _namaStaff.clear();
@@ -173,6 +235,162 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
       (a, b) =>
           (a['nama'] ?? '').toString().compareTo((b['nama'] ?? '').toString()),
     );
+  }
+
+  // ─────────────────────── Perhitungan Kuota Staff ───────────────────────
+
+  DateTime? _parseAnyDate(dynamic v) {
+    if (v is Timestamp) return v.toDate();
+    if (v is DateTime) return v;
+    if (v is String && v.trim().isNotEmpty) return DateTime.tryParse(v.trim());
+    return null;
+  }
+
+  String _normPrioritas(dynamic raw) {
+    final p = (raw ?? 'sedang').toString().toLowerCase().trim();
+    if (p.contains('tinggi') || p == 'high') return 'tinggi';
+    if (p.contains('rendah') || p == 'low') return 'rendah';
+    return 'sedang';
+  }
+
+  String _labelPrioritas(String p) {
+    switch (_normPrioritas(p)) {
+      case 'tinggi':
+        return 'Tinggi';
+      case 'rendah':
+        return 'Rendah';
+      default:
+        return 'Sedang';
+    }
+  }
+
+  bool _isStatusAktif(dynamic rawStatus) {
+    final s = (rawStatus ?? 'pending').toString().toLowerCase().trim();
+    return s != 'disetujui' &&
+        s != 'selesai' &&
+        s != 'dihentikan' &&
+        s != 'antrean' &&
+        s != 'menunggu giliran';
+  }
+
+  /// Menghitung beban kerja staff (di luar tugas yang sedang diedit `widget.tugasId`):
+  /// - `active`: jumlah tugas aktif saat ini (maks 5)
+  /// - `rendah`, `sedang`, `tinggi`: jumlah tugas per prioritas pada bulan target (masing-masing maks 5)
+  /// - `monthlyTotal`: total tugas pada bulan target (maks 15)
+  Map<String, int> _hitungKuotaStaff(String staffId, {DateTime? targetMonth}) {
+    final refDate = targetMonth ?? _tanggalMulai ?? DateTime.now();
+    final int month = refDate.month;
+    final int year = refDate.year;
+
+    int active = 0;
+    int rendah = 0;
+    int sedang = 0;
+    int tinggi = 0;
+
+    final staffNameLow = (_namaStaff[staffId] ?? '').trim().toLowerCase();
+
+    for (final a in _allPenugasanList) {
+      final tugasId = (a['tugas_id'] ?? '').toString().trim();
+      // Abaikan tugas yang sedang diedit agar tidak dihitung ganda.
+      if (widget.tugasId != null && tugasId == widget.tugasId) continue;
+
+      final aUid =
+          (a['staff_uid'] ??
+                  a['staff_id'] ??
+                  a['uid_staff'] ??
+                  a['user_id'] ??
+                  '')
+              .toString()
+              .trim();
+      final aName = (a['staff_nama'] ?? a['nama_staff'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      final bool matchStaff =
+          (aUid.isNotEmpty && aUid == staffId) ||
+          (aUid.isEmpty && staffNameLow.isNotEmpty && aName == staffNameLow);
+      if (!matchStaff) continue;
+
+      final statusRaw = (a['status'] ?? 'pending').toString().toLowerCase();
+      if (statusRaw == 'dihentikan') continue;
+
+      if (_isStatusAktif(statusRaw)) {
+        active++;
+      }
+
+      final task = _allTugasMap[tugasId];
+      final tenggat = _parseAnyDate(
+        task?['tanggal_selesai_tugas'] ?? a['deadline'] ?? a['tenggat'],
+      );
+      final diberikan =
+          _parseAnyDate(
+            task?['tanggal_mulai_tugas'] ??
+                task?['tanggal_tugas_diberikan'] ??
+                a['created_at'] ??
+                a['tanggal_diberikan'],
+          ) ??
+          tenggat;
+
+      if (diberikan != null &&
+          diberikan.month == month &&
+          diberikan.year == year) {
+        final prio = _normPrioritas(
+          a['prioritas'] ??
+              a['priority'] ??
+              task?['prioritas'] ??
+              task?['priority'],
+        );
+        if (prio == 'tinggi') {
+          tinggi++;
+        } else if (prio == 'rendah') {
+          rendah++;
+        } else {
+          sedang++;
+        }
+      }
+    }
+
+    return {
+      'active': active,
+      'rendah': rendah,
+      'sedang': sedang,
+      'tinggi': tinggi,
+      'monthlyTotal': rendah + sedang + tinggi,
+    };
+  }
+
+  /// Mengembalikan alasan penolakan jika staff tidak bisa diberikan tugas baru
+  /// pada bulan & prioritas yang dipilih, atau `null` jika masih memenuhi kuota.
+  String? _cekBatasKuotaStaff(
+    String staffId, {
+    DateTime? targetMonth,
+    String? prioritasOverride,
+  }) {
+    final refDate = targetMonth ?? _tanggalMulai ?? DateTime.now();
+    final prioKey = _normPrioritas(prioritasOverride ?? _prioritas);
+    final prioLabel = _labelPrioritas(prioKey);
+    final bulanLabel = '${_namaBulanList[refDate.month - 1]} ${refDate.year}';
+    final nama = _staffName(staffId);
+    final stats = _hitungKuotaStaff(staffId, targetMonth: refDate);
+
+    final int active = stats['active'] ?? 0;
+    final int monthlyTotal = stats['monthlyTotal'] ?? 0;
+    final int prioCount = stats[prioKey] ?? 0;
+
+    if (active >= _maxActiveTugas) {
+      return 'Staf $nama sedang memiliki $active/$_maxActiveTugas tugas aktif. '
+          'Selesaikan tugas aktif terlebih dahulu sebelum memberikan tugas baru.';
+    }
+    if (monthlyTotal >= _maxTotalBulanan) {
+      return 'Total tugas bulanan $nama pada $bulanLabel sudah penuh '
+          '($monthlyTotal/$_maxTotalBulanan tugas).';
+    }
+    if (prioCount >= _maxPerPrioritasBulanan) {
+      return 'Kuota prioritas $prioLabel untuk $nama pada $bulanLabel sudah mencapai batas '
+          '($prioCount/$_maxPerPrioritasBulanan tugas). Gunakan prioritas lain yang masih tersedia.';
+    }
+    return null;
   }
 
   Future<void> _loadTugas() async {
@@ -475,6 +693,22 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
       return;
     }
 
+    // segarkan data beban kerja terbaru sebelum validasi akhir
+    await _loadWorkloadData();
+
+    // Validasi batas 5 tugas aktif & kuota bulanan 15 tugas (5 Rendah, 5 Sedang, 5 Tinggi)
+    for (final staffId in _stafDipilih) {
+      final alasan = _cekBatasKuotaStaff(
+        staffId,
+        targetMonth: mulai,
+        prioritasOverride: _prioritas,
+      );
+      if (alasan != null) {
+        _message(alasan, error: true);
+        return;
+      }
+    }
+
     final currentUser = _auth.currentUser;
 
     if (currentUser == null) {
@@ -626,10 +860,6 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     }
   }
 
-  // Signed URL diberikan oleh backend setelah memverifikasi role admin,
-
-  // pemilik tugas, dan ID penugasan. Tidak memakai service_role di Flutter.
-
   /// Meminta signed URL dari backend gratis Supabase Edge Functions.
   /// Backend memverifikasi Firebase ID token dan hak akses penugasan.
   Future<String> _ambilUrlFileDariEdgeFunction(
@@ -761,7 +991,6 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     if (catatan.isEmpty) return;
     final selected = result['file'] as PlatformFile?;
     try {
-      // Upload sebelum transaksi: transaksi Firestore tidak boleh melakukan I/O.
       String? newPath;
       String? newName;
       if (selected != null) {
@@ -789,7 +1018,8 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           if (newPath != null) 'file_revisi_url': '',
           if (newPath != null) 'file_revisi_provider': 'supabase',
           if (newName != null) 'file_revisi_nama': newName,
-          if (newPath != null) 'file_revisi_uploaded_by': FirebaseAuth.instance.currentUser!.uid,
+          if (newPath != null)
+            'file_revisi_uploaded_by': FirebaseAuth.instance.currentUser!.uid,
         };
         tx.update(ref, updates);
         if (revisiId.isNotEmpty) {
@@ -810,73 +1040,150 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   Future<void> _hentikanPenugasan(String id) async {
     final controller = TextEditingController();
     PlatformFile? file;
-    final result = await showDialog<Map<String, dynamic>>(context: context,
-      builder: (ctx) => StatefulBuilder(builder: (ctx, update) => AlertDialog(
-        title: const Text('Hentikan Penugasan'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: controller, maxLines: 3, decoration: const InputDecoration(labelText: 'Alasan penghentian (wajib)')),
-          OutlinedButton.icon(onPressed: () async {
-            final picked = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: const ['pdf','png','jpg','jpeg','docx']);
-            if (picked != null) update(() => file = picked);
-          }, icon: const Icon(Icons.attach_file), label: Text(file?.name ?? 'Bukti (opsional)')),
-        ]),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
-          FilledButton(onPressed: () { if (controller.text.trim().isNotEmpty) Navigator.pop(ctx, {'alasan': controller.text.trim(), 'file': file}); }, child: const Text('Hentikan'))],
-      )));
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, update) => AlertDialog(
+          title: const Text('Hentikan Penugasan'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Alasan penghentian (wajib)',
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final picked = await FilePicker.pickFile(
+                    type: FileType.custom,
+                    allowedExtensions: const [
+                      'pdf',
+                      'png',
+                      'jpg',
+                      'jpeg',
+                      'docx',
+                    ],
+                  );
+                  if (picked != null) update(() => file = picked);
+                },
+                icon: const Icon(Icons.attach_file),
+                label: Text(file?.name ?? 'Bukti (opsional)'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Batal'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (controller.text.trim().isNotEmpty) {
+                  Navigator.pop(ctx, {
+                    'alasan': controller.text.trim(),
+                    'file': file,
+                  });
+                }
+              },
+              child: const Text('Hentikan'),
+            ),
+          ],
+        ),
+      ),
+    );
     controller.dispose();
     if (result == null) return;
     try {
       String path = '';
       final picked = result['file'] as PlatformFile?;
       if (picked != null) {
-        final uploaded = await _storage.uploadHasilTugas(tugasId: 'penghentian_$id', namaFile: picked.name,
-          bytes: await picked.readAsBytes(), contentType: _contentType(picked.extension));
+        final uploaded = await _storage.uploadHasilTugas(
+          tugasId: 'penghentian_$id',
+          namaFile: picked.name,
+          bytes: await picked.readAsBytes(),
+          contentType: _contentType(picked.extension),
+        );
         path = uploaded.path;
       }
       await _firestore.runTransaction((tx) async {
         final ref = _firestore.collection('penugasan').doc(id);
         final snap = await tx.get(ref);
         final status = (snap.data()?['status'] ?? '').toString();
-        if (status == 'dihentikan' || status == 'disetujui') throw StateError('Penugasan tidak dapat dihentikan.');
-        tx.update(ref, {'status': 'dihentikan', 'status_sebelum_dihentikan': status,
-          'alasan_penghentian': result['alasan'], 'bukti_penghentian_path': path,
-          'tanggal_dihentikan': FieldValue.serverTimestamp(), 'updated_at': FieldValue.serverTimestamp()});
+        if (status == 'dihentikan' || status == 'disetujui') {
+          throw StateError('Penugasan tidak dapat dihentikan.');
+        }
+        tx.update(ref, {
+          'status': 'dihentikan',
+          'status_sebelum_dihentikan': status,
+          'alasan_penghentian': result['alasan'],
+          'bukti_penghentian_path': path,
+          'tanggal_dihentikan': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
       });
       _message('Penugasan dihentikan.');
       await _loadPage();
-    } catch (e) { _message('Gagal menghentikan tugas: $e', error: true); }
+    } catch (e) {
+      _message('Gagal menghentikan tugas: $e', error: true);
+    }
   }
 
   Future<void> _mulaiUlangPenugasan(String id) async {
-    // Form edit tugas harus disimpan terlebih dahulu sebelum aktivasi.
     if (widget.tugasId == null) return;
-    final disimpan = await Navigator.push<bool>(context,
-      MaterialPageRoute(builder: (_) => DetailTugasAdminPage(tugasId: widget.tugasId, modeLihat: false)));
+    final disimpan = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            DetailTugasAdminPage(tugasId: widget.tugasId, modeLihat: false),
+      ),
+    );
     if (disimpan != true || !mounted) return;
-    // Data tugas wajib diperiksa ulang pada form edit sebelum diaktifkan.
-    final lanjut = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-      title: const Text('Mulai Ulang Penugasan'),
-      content: const Text('Pastikan data tugas, jadwal, lokasi dan Staff sudah diperbarui pada form edit tugas. Aktifkan kembali dengan status Pending?'),
-      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
-        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Aktifkan'))],
-    ));
+    final lanjut = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Mulai Ulang Penugasan'),
+        content: const Text(
+          'Pastikan data tugas, jadwal, lokasi dan Staff sudah diperbarui pada form edit tugas. Aktifkan kembali dengan status Pending?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Aktifkan'),
+          ),
+        ],
+      ),
+    );
     if (lanjut != true) return;
     try {
       await _firestore.runTransaction((tx) async {
         final ref = _firestore.collection('penugasan').doc(id);
         final snap = await tx.get(ref);
-        if (snap.data()?['status'] != 'dihentikan') throw StateError('Penugasan tidak dihentikan.');
-        final hasKendala = (snap.data()?['kendala_aktif_id'] ?? '').toString().isNotEmpty;
-        tx.update(ref, {'status': hasKendala ? 'terkendala' : 'pending',
-          'tanggal_diaktifkan_ulang': FieldValue.serverTimestamp(), 'updated_at': FieldValue.serverTimestamp()});
+        if (snap.data()?['status'] != 'dihentikan') {
+          throw StateError('Penugasan tidak dihentikan.');
+        }
+        final hasKendala = (snap.data()?['kendala_aktif_id'] ?? '')
+            .toString()
+            .isNotEmpty;
+        tx.update(ref, {
+          'status': hasKendala ? 'terkendala' : 'pending',
+          'tanggal_diaktifkan_ulang': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
       });
       _message('Penugasan kembali Pending.');
       await _loadPage();
-    } catch (e) { _message('Gagal memulai ulang: $e', error: true); }
+    } catch (e) {
+      _message('Gagal memulai ulang: $e', error: true);
+    }
   }
 
-  // Memulihkan revisi lama yang berstatus revisi tetapi belum punya ID aktif.
-  // Tidak mengubah instruksi, file, atau riwayat pengumpulan sebelumnya.
   Future<void> _pulihkanRevisiLama(String id) async {
     if (_reviewing.contains(id)) return;
     final lanjut = await showDialog<bool>(
@@ -885,12 +1192,17 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         title: const Text('Hubungkan Revisi Lama'),
         content: const Text(
           'Sistem akan menghubungkan instruksi revisi yang sudah ada dengan '
-          'riwayat revisi, tanpa mengubah catatan atau lampiran. Lanjutkan?'),
+          'riwayat revisi, tanpa mengubah catatan atau lampiran. Lanjutkan?',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Batal')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Hubungkan')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Hubungkan'),
+          ),
         ],
       ),
     );
@@ -898,16 +1210,23 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     setState(() => _reviewing.add(id));
     try {
       final adminUid = _auth.currentUser?.uid;
-      if (adminUid == null) throw StateError('Silakan login ulang sebagai Atasan.');
+      if (adminUid == null) {
+        throw StateError('Silakan login ulang sebagai Atasan.');
+      }
       final assignmentRef = _firestore.collection('penugasan').doc(id);
-      // Ambil kandidat di luar transaksi, lalu verifikasi kembali di dalamnya.
       final history = await assignmentRef.collection('riwayat_revisi').get();
-      final pending = history.docs.where((d) =>
-          (d.data()['status'] ?? '').toString() == 'menunggu_perbaikan' &&
-          (d.data()['hasil_pengumpulan_id'] ?? '').toString().isEmpty).toList();
+      final pending = history.docs
+          .where(
+            (d) =>
+                (d.data()['status'] ?? '').toString() == 'menunggu_perbaikan' &&
+                (d.data()['hasil_pengumpulan_id'] ?? '').toString().isEmpty,
+          )
+          .toList();
       if (pending.length > 1) {
-        throw StateError('Ada lebih dari satu instruksi revisi yang belum '
-            'ditanggapi. Periksa riwayat terlebih dahulu agar tidak salah pasangan.');
+        throw StateError(
+          'Ada lebih dari satu instruksi revisi yang belum '
+          'ditanggapi. Periksa riwayat terlebih dahulu agar tidak salah pasangan.',
+        );
       }
       final revisionRef = pending.isEmpty
           ? assignmentRef.collection('riwayat_revisi').doc()
@@ -933,7 +1252,9 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           final existing = await tx.get(revisionRef);
           if (!existing.exists ||
               existing.data()?['status'] != 'menunggu_perbaikan' ||
-              (existing.data()?['hasil_pengumpulan_id'] ?? '').toString().isNotEmpty) {
+              (existing.data()?['hasil_pengumpulan_id'] ?? '')
+                  .toString()
+                  .isNotEmpty) {
             throw StateError('Riwayat revisi berubah. Muat ulang halaman.');
           }
         }
@@ -953,7 +1274,9 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           'updated_at': FieldValue.serverTimestamp(),
         });
       });
-      _message('Revisi lama berhasil dihubungkan. Staff dapat mengirim perbaikan.');
+      _message(
+        'Revisi lama berhasil dihubungkan. Staff dapat mengirim perbaikan.',
+      );
     } catch (e) {
       _message('Gagal menghubungkan revisi lama: $e', error: true);
     } finally {
@@ -999,7 +1322,6 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         name = uploaded.namaFile;
       }
 
-      // Satu transaksi: status, instruksi, dan ID revisi selalu konsisten.
       final assignmentRef = _firestore.collection('penugasan').doc(id);
       final revisionRef = assignmentRef.collection('riwayat_revisi').doc();
       final adminUid = _auth.currentUser?.uid;
@@ -1013,12 +1335,14 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         final status = (data['status'] ?? '').toString();
         final existingId = (data['revisi_aktif_id'] ?? '').toString();
         if (existingId.isNotEmpty) {
-          throw StateError('Masih ada revisi aktif. Selesaikan revisi sebelumnya.');
+          throw StateError(
+            'Masih ada revisi aktif. Selesaikan revisi sebelumnya.',
+          );
         }
-        // Status revisi tanpa ID dari proses lama boleh diperbaiki dengan
-        // membuat instruksi baru, tanpa menghapus riwayat yang sudah ada.
         if (status != 'dikumpulkan' && status != 'revisi') {
-          throw StateError('Revisi hanya dapat diminta setelah hasil dikumpulkan.');
+          throw StateError(
+            'Revisi hanya dapat diminta setelah hasil dikumpulkan.',
+          );
         }
         if ((data['kendala_aktif_id'] ?? '').toString().isNotEmpty) {
           throw StateError('Selesaikan kendala aktif terlebih dahulu.');
@@ -1122,12 +1446,19 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         const _LabelForm(label: 'Catatan Revisi'),
 
         Text(data['catatan_revisi'].toString()),
-        if (status == 'revisi') TextButton.icon(onPressed: () => _editCatatanRevisi(id, data['catatan_revisi'].toString()),
-          icon: const Icon(Icons.edit), label: const Text('Edit Keterangan Revisi')),
+        if (status == 'revisi')
+          TextButton.icon(
+            onPressed: () =>
+                _editCatatanRevisi(id, data['catatan_revisi'].toString()),
+            icon: const Icon(Icons.edit),
+            label: const Text('Edit Keterangan Revisi'),
+          ),
         if (status == 'revisi' &&
             (data['revisi_aktif_id'] ?? '').toString().isEmpty)
           OutlinedButton.icon(
-            onPressed: _reviewing.contains(id) ? null : () => _pulihkanRevisiLama(id),
+            onPressed: _reviewing.contains(id)
+                ? null
+                : () => _pulihkanRevisiLama(id),
             icon: const Icon(Icons.link),
             label: const Text('Hubungkan Revisi Lama'),
           ),
@@ -1184,29 +1515,48 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
       ],
 
       StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: _firestore.collection('penugasan').doc(id).collection('riwayat_pengumpulan')
-            .orderBy('created_at', descending: true).snapshots(),
+        stream: _firestore
+            .collection('penugasan')
+            .doc(id)
+            .collection('riwayat_pengumpulan')
+            .orderBy('created_at', descending: true)
+            .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const SizedBox.shrink();
-          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const SizedBox(height: 12),
-            const Text('Riwayat Pengumpulan Staff', style: TextStyle(fontWeight: FontWeight.bold)),
-            ...snapshot.data!.docs.map((doc) {
-              final d = doc.data();
-              return ListTile(
-                dense: true,
-                title: Text('${d['jenis'] ?? 'Pengumpulan'}: ${d['keterangan'] ?? ''}'),
-                subtitle: Text((d['file_nama'] ?? 'Lampiran').toString()),
-                trailing: const Icon(Icons.open_in_new),
-                onTap: () async {
-                  try {
-                    final url = await _storage.ambilLinkRiwayat(id, doc.id);
-                    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-                  } catch (e) { _message('Gagal membuka riwayat: $e', error: true); }
-                },
-              );
-            }),
-          ]);
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return const SizedBox.shrink();
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 12),
+              const Text(
+                'Riwayat Pengumpulan Staff',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              ...snapshot.data!.docs.map((doc) {
+                final d = doc.data();
+                return ListTile(
+                  dense: true,
+                  title: Text(
+                    '${d['jenis'] ?? 'Pengumpulan'}: ${d['keterangan'] ?? ''}',
+                  ),
+                  subtitle: Text((d['file_nama'] ?? 'Lampiran').toString()),
+                  trailing: const Icon(Icons.open_in_new),
+                  onTap: () async {
+                    try {
+                      final url = await _storage.ambilLinkRiwayat(id, doc.id);
+                      await launchUrl(
+                        Uri.parse(url),
+                        mode: LaunchMode.externalApplication,
+                      );
+                    } catch (e) {
+                      _message('Gagal membuka riwayat: $e', error: true);
+                    }
+                  },
+                );
+              }),
+            ],
+          );
         },
       ),
 
@@ -1249,17 +1599,18 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   void _message(String text, {bool error = false}) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(text),
-
-        backgroundColor: error ? Colors.red.shade700 : biruTua,
-
-        behavior: SnackBarBehavior.floating,
-
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text),
+          backgroundColor: error ? Colors.red.shade700 : biruTua,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
   }
 
   String _formatDate(DateTime? date) {
@@ -1589,6 +1940,10 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   }
 
   Widget _kartuJadwal() {
+    final targetDate = _tanggalMulai ?? DateTime.now();
+    final bulanLabel =
+        '${_namaBulanList[targetDate.month - 1]} ${targetDate.year}';
+
     return _kartu(
       judul: 'Jadwal & Prioritas',
       icon: Icons.calendar_month_rounded,
@@ -1642,9 +1997,18 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           value: _prioritas,
           decoration: _dekorasi(hint: 'Pilih prioritas'),
           items: const [
-            DropdownMenuItem(value: 'rendah', child: Text('Rendah')),
-            DropdownMenuItem(value: 'sedang', child: Text('Sedang')),
-            DropdownMenuItem(value: 'tinggi', child: Text('Tinggi')),
+            DropdownMenuItem(
+              value: 'rendah',
+              child: Text('Rendah (Maks. 5/bulan per staf)'),
+            ),
+            DropdownMenuItem(
+              value: 'sedang',
+              child: Text('Sedang (Maks. 5/bulan per staf)'),
+            ),
+            DropdownMenuItem(
+              value: 'tinggi',
+              child: Text('Tinggi (Maks. 5/bulan per staf)'),
+            ),
           ],
           onChanged: widget.modeLihat
               ? null
@@ -1656,6 +2020,34 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                   }
                 },
         ),
+        if (!widget.modeLihat) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEAF3FC),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline, size: 16, color: biruSedang),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Aturan kuota staf ($bulanLabel): maksimal $_maxActiveTugas tugas aktif dalam satu waktu. '
+                    'Total kuota $_maxTotalBulanan tugas/bulan (Rendah $_maxPerPrioritasBulanan, Sedang $_maxPerPrioritasBulanan, Tinggi $_maxPerPrioritasBulanan).',
+                    style: const TextStyle(
+                      fontSize: AppTypography.caption,
+                      color: biruTua,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -1683,15 +2075,23 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
             spacing: 8,
             runSpacing: 8,
             children: _stafDipilih.map((uid) {
+              final err = widget.modeLihat ? null : _cekBatasKuotaStaff(uid);
+              final stats = _hitungKuotaStaff(uid);
+              final active = stats['active'] ?? 0;
+              final monthly = stats['monthlyTotal'] ?? 0;
               return Chip(
-                backgroundColor: const Color(0xFFEAF3FC),
-                side: BorderSide.none,
+                backgroundColor: err != null
+                    ? const Color(0xFFFFEBEE)
+                    : const Color(0xFFEAF3FC),
+                side: err != null
+                    ? BorderSide(color: Colors.red.shade300)
+                    : BorderSide.none,
                 label: Text(
-                  _staffName(uid),
-                  style: const TextStyle(
+                  '${_staffName(uid)} (Aktif $active/$_maxActiveTugas • Bulan $monthly/$_maxTotalBulanan)',
+                  style: TextStyle(
                     fontSize: AppTypography.small,
                     fontWeight: FontWeight.w600,
-                    color: biruTua,
+                    color: err != null ? Colors.red.shade800 : biruTua,
                   ),
                 ),
                 deleteIcon: widget.modeLihat
@@ -1730,32 +2130,109 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
             )
           else
             ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 280),
+              constraints: const BoxConstraints(maxHeight: 320),
               child: ListView(
                 shrinkWrap: true,
                 children: tersedia.map((staff) {
+                  final staffId = staff['id'].toString();
+                  final stats = _hitungKuotaStaff(staffId);
+                  final int active = stats['active'] ?? 0;
+                  final int rendah = stats['rendah'] ?? 0;
+                  final int sedang = stats['sedang'] ?? 0;
+                  final int tinggi = stats['tinggi'] ?? 0;
+                  final int monthlyTotal = stats['monthlyTotal'] ?? 0;
+                  final String? alasanPenuh = _cekBatasKuotaStaff(staffId);
+                  final bool isFull = alasanPenuh != null;
+
+                  String badgeText = 'Tersedia';
+                  Color badgeColor = Colors.green.shade700;
+                  if (active >= _maxActiveTugas) {
+                    badgeText = 'Penuh (5 Aktif)';
+                    badgeColor = Colors.red.shade700;
+                  } else if (monthlyTotal >= _maxTotalBulanan) {
+                    badgeText = 'Penuh (15/15)';
+                    badgeColor = Colors.red.shade700;
+                  } else if (isFull) {
+                    badgeText = '${_labelPrioritas(_prioritas)} Penuh (5/5)';
+                    badgeColor = Colors.orange.shade800;
+                  }
+
                   return ListTile(
                     dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    leading: const CircleAvatar(
-                      backgroundColor: Color(0xFFE2EFFB),
-                      child: Icon(Icons.person, color: biruSedang),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 2,
                     ),
-                    title: Text(
-                      (staff['nama'] ?? '-').toString(),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: AppTypography.body,
+                    leading: CircleAvatar(
+                      backgroundColor: isFull
+                          ? Colors.grey.shade200
+                          : const Color(0xFFE2EFFB),
+                      child: Icon(
+                        Icons.person,
+                        color: isFull ? Colors.grey : biruSedang,
                       ),
                     ),
-                    subtitle: Text((staff['jabatan'] ?? '').toString()),
-                    trailing: const Icon(
-                      Icons.add_circle_outline,
-                      color: biruSedang,
+                    title: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            (staff['nama'] ?? '-').toString(),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: AppTypography.body,
+                              color: isFull ? Colors.grey.shade600 : biruTua,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: badgeColor.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            badgeText,
+                            style: TextStyle(
+                              fontSize: AppTypography.caption,
+                              fontWeight: FontWeight.bold,
+                              color: badgeColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if ((staff['jabatan'] ?? '').toString().isNotEmpty)
+                          Text((staff['jabatan'] ?? '').toString()),
+                        Text(
+                          'Aktif: $active/$_maxActiveTugas • Bulan ini: $monthlyTotal/$_maxTotalBulanan '
+                          '(T:$tinggi/5 S:$sedang/5 R:$rendah/5)',
+                          style: TextStyle(
+                            fontSize: AppTypography.caption,
+                            color: isFull
+                                ? Colors.red.shade700
+                                : Colors.grey.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    trailing: Icon(
+                      isFull ? Icons.block_rounded : Icons.add_circle_outline,
+                      color: isFull ? Colors.red.shade400 : biruSedang,
                     ),
                     onTap: () {
+                      if (alasanPenuh != null) {
+                        _message(alasanPenuh, error: true);
+                        return;
+                      }
                       setState(() {
-                        _stafDipilih.add(staff['id'].toString());
+                        _stafDipilih.add(staffId);
                         _staffSearchController.clear();
                       });
                     },
@@ -1824,12 +2301,20 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                   ),
                   ..._hasilPenugasan(assignment.id, data),
                   if (status != 'dihentikan' && status != 'disetujui')
-                    OutlinedButton.icon(onPressed: () => _hentikanPenugasan(assignment.id),
-                      icon: const Icon(Icons.stop_circle_outlined), label: const Text('Hentikan Tugas')),
+                    OutlinedButton.icon(
+                      onPressed: () => _hentikanPenugasan(assignment.id),
+                      icon: const Icon(Icons.stop_circle_outlined),
+                      label: const Text('Hentikan Tugas'),
+                    ),
                   if (status == 'dihentikan') ...[
-                    Text('Alasan penghentian: ${data['alasan_penghentian'] ?? '-'}'),
-                    TextButton.icon(onPressed: () => _mulaiUlangPenugasan(assignment.id),
-                      icon: const Icon(Icons.restart_alt), label: const Text('Mulai Ulang Tugas')),
+                    Text(
+                      'Alasan penghentian: ${data['alasan_penghentian'] ?? '-'}',
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _mulaiUlangPenugasan(assignment.id),
+                      icon: const Icon(Icons.restart_alt),
+                      label: const Text('Mulai Ulang Tugas'),
+                    ),
                   ],
                 ],
               ),
@@ -2009,67 +2494,53 @@ class _RevisionDialogState extends State<_RevisionDialog> {
     super.dispose();
   }
 
+  Future<void> _pilihFile() async {
+    final result = await FilePicker.pickFile(
+      type: FileType.custom,
+
+      allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png', 'docx'],
+    );
+
+    if (result != null) {
+      setState(() => _file = result);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.isEdit ? 'Edit Revisi Aktif' : 'Minta Revisi'),
+      title: Text(widget.isEdit ? 'Edit Catatan Revisi' : 'Catatan Revisi'),
 
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
 
-          children: [
-            TextField(
-              controller: _controller,
+        crossAxisAlignment: CrossAxisAlignment.start,
 
-              maxLines: 4,
+        children: [
+          TextField(
+            controller: _controller,
 
-              onChanged: (_) => setState(() {}),
+            maxLines: 3,
 
-              decoration: const InputDecoration(
-                hintText: 'Tuliskan catatan revisi...',
-
-                border: OutlineInputBorder(),
-              ),
+            decoration: const InputDecoration(
+              hintText: 'Tuliskan bagian yang perlu diperbaiki...',
             ),
+          ),
 
-            const SizedBox(height: 12),
+          const SizedBox(height: 12),
 
-            OutlinedButton.icon(
-              onPressed: () async {
-                final selected = await FilePicker.pickFile(
-                  type: FileType.custom,
+          OutlinedButton.icon(
+            onPressed: _pilihFile,
 
-                  allowedExtensions: const [
-                    'pdf',
+            icon: const Icon(Icons.upload_file),
 
-                    'jpg',
+            label: Text(
+              _file?.name ?? 'Upload file pendukung (opsional)',
 
-                    'jpeg',
-
-                    'png',
-
-                    'docx',
-                  ],
-                );
-
-                if (selected != null && mounted)
-                  setState(() => _file = selected);
-              },
-
-              icon: const Icon(Icons.attach_file),
-
-              label: Text(_file?.name ?? 'File pendukung revisi (opsional)'),
+              overflow: TextOverflow.ellipsis,
             ),
-
-            if (_file != null)
-              TextButton(
-                onPressed: () => setState(() => _file = null),
-
-                child: const Text('Hapus lampiran'),
-              ),
-          ],
-        ),
+          ),
+        ],
       ),
 
       actions: [
@@ -2080,15 +2551,17 @@ class _RevisionDialogState extends State<_RevisionDialog> {
         ),
 
         ElevatedButton(
-          onPressed: _controller.text.trim().isEmpty
-              ? null
-              : () => Navigator.pop(context, {
-                  'catatan': _controller.text.trim(),
+          onPressed: () {
+            if (_controller.text.trim().isEmpty) return;
 
-                  'file': _file,
-                }),
+            Navigator.pop(context, {
+              'catatan': _controller.text.trim(),
 
-          child: Text(widget.isEdit ? 'Simpan Perubahan' : 'Kirim Revisi'),
+              'file': _file,
+            });
+          },
+
+          child: const Text('Kirim Revisi'),
         ),
       ],
     );

@@ -405,6 +405,9 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
           : FloatingActionButton.extended(
               onPressed: _bukaTambahTugas,
               backgroundColor: AppPalette.blue,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               icon: const Icon(Icons.add_rounded, color: Colors.white),
               label: const Text(
                 'Tambah Tugas',
@@ -575,7 +578,6 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    // Label boleh turun ke baris kedua, tidak dipotong.
                     Text(
                       items[i][0] as String,
                       maxLines: 2,
@@ -597,22 +599,206 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     );
   }
 
-  // ───────────────────────────── Toolbar ─────────────────────────────
+  // ───────────────────────────── Toolbar (Gaya Dropdown Riwayat Tugas Staff) ─────────────────────────────
+
+  BoxDecoration _toolbarBoxDecoration({bool active = false}) {
+    return BoxDecoration(
+      color: active ? const Color(0xFFEAF3FC) : Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: active
+          ? Border.all(color: AppColors.biruSedang.withOpacity(0.45))
+          : null,
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.05),
+          blurRadius: 10,
+          offset: const Offset(0, 3),
+        ),
+      ],
+    );
+  }
+
+  Widget _statusDropdown({bool expanded = false}) {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: _toolbarBoxDecoration(
+        active: _filterStatus != FilterStatus.semua,
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<FilterStatus>(
+          value: _filterStatus,
+          isExpanded: expanded,
+          borderRadius: BorderRadius.circular(16),
+          dropdownColor: Colors.white,
+          icon: const Icon(Icons.arrow_drop_down, color: AppColors.biruSedang),
+          style: const TextStyle(
+            fontSize: AppTypography.body,
+            fontWeight: FontWeight.w600,
+            color: AppColors.biruTua,
+          ),
+          items: FilterStatus.values.map((status) {
+            return DropdownMenuItem<FilterStatus>(
+              value: status,
+              child: Text(
+                status == FilterStatus.semua
+                    ? 'Semua Status'
+                    : _filterStatusName(status),
+              ),
+            );
+          }).toList(),
+          onChanged: (value) async {
+            if (value == null) return;
+            if (value == FilterStatus.disetujui) {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const RiwayatTugasStaffPage(),
+                ),
+              );
+              return;
+            }
+            setState(() {
+              _filterStatus = value;
+              _page = 0;
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _sortDropdown({bool expanded = false}) {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: _toolbarBoxDecoration(active: _sortBy != SortBy.terbaru),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<SortBy>(
+          value: _sortBy,
+          isExpanded: expanded,
+          borderRadius: BorderRadius.circular(16),
+          dropdownColor: Colors.white,
+          icon: const Icon(Icons.arrow_drop_down, color: AppColors.biruSedang),
+          style: const TextStyle(
+            fontSize: AppTypography.body,
+            fontWeight: FontWeight.w600,
+            color: AppColors.biruTua,
+          ),
+          items: SortBy.values.map((sort) {
+            return DropdownMenuItem<SortBy>(
+              value: sort,
+              child: Text(_sortName(sort)),
+            );
+          }).toList(),
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _sortBy = value;
+              _page = 0;
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _dateFilterButton({bool expanded = false}) {
+    final bool hasDate = _selectedDate != null;
+    final String label = hasDate
+        ? '${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}'
+        : 'Tanggal';
+
+    return Container(
+      height: 48,
+      decoration: _toolbarBoxDecoration(active: hasDate),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _pilihTanggal,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Row(
+              mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.calendar_today_rounded,
+                      size: 16,
+                      color: AppColors.biruSedang,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: AppTypography.body,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.biruTua,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 6),
+                if (hasDate)
+                  GestureDetector(
+                    onTap: () => setState(() {
+                      _selectedDate = null;
+                      _page = 0;
+                    }),
+                    child: const Tooltip(
+                      message: 'Hapus filter tanggal',
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: AppColors.biruSedang,
+                      ),
+                    ),
+                  )
+                else
+                  const Icon(
+                    Icons.arrow_drop_down,
+                    color: AppColors.biruSedang,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tambahTugasButton() {
+    return SizedBox(
+      height: 48,
+      child: ElevatedButton.icon(
+        onPressed: _bukaTambahTugas,
+        icon: const Icon(Icons.add_rounded, size: 20),
+        label: const Text('Tambah Tugas'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppPalette.blue,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          textStyle: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: AppTypography.body,
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _toolbar(bool wide) {
     final searchField = Container(
       height: 48,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
+      decoration: _toolbarBoxDecoration(),
       child: TextField(
         controller: _searchController,
         onChanged: (value) => setState(() {
@@ -648,76 +834,40 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
       ),
     );
 
-    final chips = SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _FilterChip(
-            label: _filterLabel(),
-            selected: _filterStatus != FilterStatus.semua,
-            onTap: _bukaFilterStatus,
-          ),
-          const SizedBox(width: 8),
-          _FilterChip(
-            label: _sortLabel(),
-            selected: _sortBy != SortBy.terbaru,
-            onTap: _bukaSort,
-          ),
-          const SizedBox(width: 8),
-          _FilterChip(
-            label: _selectedDate == null
-                ? 'Tanggal'
-                : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
-            selected: _selectedDate != null,
-            onTap: _pilihTanggal,
-          ),
-          if (_selectedDate != null) ...[
-            const SizedBox(width: 4),
-            IconButton(
-              tooltip: 'Hapus filter tanggal',
-              onPressed: () => setState(() {
-                _selectedDate = null;
-                _page = 0;
-              }),
-              icon: const Icon(Icons.close, size: 18),
-            ),
-          ],
-        ],
-      ),
-    );
-
     if (wide) {
       return Row(
         children: [
           Expanded(child: searchField),
-          const SizedBox(width: 12),
-          chips,
-          const SizedBox(width: 12),
-          ElevatedButton.icon(
-            onPressed: _bukaTambahTugas,
-            icon: const Icon(Icons.add_rounded, size: 20),
-            label: const Text('Tambah Tugas'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppPalette.blue,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              textStyle: const TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: AppTypography.small,
-              ),
-            ),
-          ),
+          const SizedBox(width: 10),
+          SizedBox(width: 165, child: _statusDropdown(expanded: true)),
+          const SizedBox(width: 10),
+          SizedBox(width: 155, child: _sortDropdown(expanded: true)),
+          const SizedBox(width: 10),
+          _dateFilterButton(),
+          const SizedBox(width: 10),
+          _tambahTugasButton(),
         ],
       );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [searchField, const SizedBox(height: 10), chips],
+      children: [
+        searchField,
+        const SizedBox(height: 10),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _statusDropdown(),
+              const SizedBox(width: 8),
+              _sortDropdown(),
+              const SizedBox(width: 8),
+              _dateFilterButton(),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1073,103 +1223,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     );
   }
 
-  // ───────────────────────────── Filter & Sort ─────────────────────────────
-
-  String _filterLabel() {
-    switch (_filterStatus) {
-      case FilterStatus.pending:
-        return 'Pending';
-      case FilterStatus.berlangsung:
-        return 'Berlangsung';
-      case FilterStatus.terkendala:
-        return 'Terkendala';
-      case FilterStatus.dikumpulkan:
-        return 'Dikumpulkan';
-      case FilterStatus.revisi:
-        return 'Revisi';
-      case FilterStatus.disetujui:
-        return 'Disetujui';
-      case FilterStatus.semua:
-        return 'Status';
-    }
-  }
-
-  String _sortLabel() {
-    switch (_sortBy) {
-      case SortBy.terbaru:
-        return 'Terbaru';
-      case SortBy.namaAZ:
-        return 'Nama A-Z';
-      case SortBy.tanggal:
-        return 'Tanggal';
-    }
-  }
-
-  Future<void> _bukaFilterStatus() async {
-    final value = await showModalBottomSheet<FilterStatus>(
-      context: context,
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: FilterStatus.values.map((status) {
-              return ListTile(
-                title: Text(_filterStatusName(status)),
-                trailing: _filterStatus == status
-                    ? const Icon(Icons.check, color: AppColors.biruTua)
-                    : null,
-                onTap: () => Navigator.pop(context, status),
-              );
-            }).toList(),
-          ),
-        );
-      },
-    );
-
-    if (!mounted) return;
-    if (value == FilterStatus.disetujui) {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const RiwayatTugasStaffPage()),
-      );
-      return;
-    }
-    if (value != null) {
-      setState(() {
-        _filterStatus = value;
-        _page = 0;
-      });
-    }
-  }
-
-  Future<void> _bukaSort() async {
-    final value = await showModalBottomSheet<SortBy>(
-      context: context,
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: SortBy.values.map((sort) {
-              return ListTile(
-                title: Text(_sortName(sort)),
-                trailing: _sortBy == sort
-                    ? const Icon(Icons.check, color: AppColors.biruTua)
-                    : null,
-                onTap: () => Navigator.pop(context, sort),
-              );
-            }).toList(),
-          ),
-        );
-      },
-    );
-
-    if (value != null) {
-      setState(() {
-        _sortBy = value;
-        _page = 0;
-      });
-    }
-  }
+  // ───────────────────────────── Label Filter & Sort ─────────────────────────────
 
   String _filterStatusName(FilterStatus value) {
     switch (value) {
@@ -1228,53 +1282,6 @@ class _InfoRow extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _FilterChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _FilterChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(30),
-      child: Container(
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.biruSedang : Colors.white,
-          borderRadius: BorderRadius.circular(30),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? Colors.white : AppColors.biruTua,
-                fontSize: AppTypography.small,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Icon(
-              Icons.keyboard_arrow_down,
-              size: 18,
-              color: selected ? Colors.white : AppColors.biruTua,
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

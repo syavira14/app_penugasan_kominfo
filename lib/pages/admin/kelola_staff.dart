@@ -1,14 +1,13 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import 'package:image_picker/image_picker.dart';
 import '/widgets/admin_header.dart';
 import 'admin_sidebar.dart';
 import 'status_staff.dart';
+import '../../services/staff_admin_api.dart';
 
 class KelolaStaffPage extends StatefulWidget {
   const KelolaStaffPage({super.key});
@@ -65,17 +64,13 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
     return '';
   }
 
-  // Email kontak staf. Pakai email_kontak; kalau kosong, pakai field email
-  // lama selama bukan email bayangan NIP (@simtas.internal).
+  // Email kontak staf (dibersihkan dari metadata sinkronisasi '\t').
   String _kontakEmailOf(Map<String, dynamic>? data) {
     if (data == null) return '';
-    final kontak = _str(data['email_kontak']);
-    if (kontak.isNotEmpty) return kontak;
-    final lama = _str(data['email']);
-    if (lama.isNotEmpty && !lama.toLowerCase().endsWith('@simtas.internal')) {
-      return lama;
-    }
-    return '';
+    return StaffAdminApi.cleanEmailKontak(
+      data['email_kontak'],
+      fallbackEmail: data['email'],
+    );
   }
 
   // Tugas dianggap aktif jika belum selesai/disetujui dan bukan antrean
@@ -116,9 +111,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
     return n;
   }
 
-  // Ubah nilai apa pun dari Firestore menjadi String. Ini yang mencegah error
-  // "type 'int' is not a subtype of type 'String'" kalau ada field (mis. NIP)
-  // yang tersimpan sebagai angka.
+  // Ubah nilai apa pun dari Firestore menjadi String.
   String _str(dynamic v, [String fallback = '']) {
     if (v == null) return fallback;
     final t = v.toString().trim();
@@ -150,48 +143,6 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
       );
   }
 
-  // ===== AUTH SEKUNDER =====
-  // Dipakai untuk membuat akun staf tanpa mengeluarkan (logout) admin.
-  Future<FirebaseAuth> _secondaryAuth() async {
-    FirebaseApp app;
-    try {
-      app = Firebase.app('staffCreator');
-    } catch (_) {
-      app = await Firebase.initializeApp(
-        name: 'staffCreator',
-        options: Firebase.app().options,
-      );
-    }
-    return FirebaseAuth.instanceFor(app: app);
-  }
-
-  // Ubah password akun staf lewat Cloud Function (butuh Admin SDK).
-  Future<void> _setStaffPassword(String uid, String password) async {
-    final callable = FirebaseFunctions.instance.httpsCallable(
-      'adminSetPassword',
-    );
-    await callable.call({'uid': uid, 'password': password});
-  }
-
-  // Ubah NIP (= email login NIP@simtas.internal) lewat Cloud Function.
-  // Fungsi ini juga ikut memperbarui field nip & email di dokumen users.
-  // Mengembalikan email login yang baru.
-  Future<String> _setStaffNip(String uid, String nip) async {
-    final callable = FirebaseFunctions.instance.httpsCallable('adminSetNip');
-    final result = await callable.call({'uid': uid, 'nip': nip});
-    final data = result.data;
-    if (data is Map && data['email'] != null) return data['email'].toString();
-    return '$nip@simtas.internal';
-  }
-
-  // Hapus akun login (Firebase Authentication) staf lewat Cloud Function.
-  Future<void> _deleteStaffAuth(String uid) async {
-    final callable = FirebaseFunctions.instance.httpsCallable(
-      'adminDeleteStaff',
-    );
-    await callable.call({'uid': uid});
-  }
-
   String _errorMessage(Object e) {
     if (e is FirebaseAuthException) {
       switch (e.code) {
@@ -203,32 +154,71 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
           return e.message ?? e.code;
       }
     }
-    if (e is FirebaseFunctionsException) {
-      switch (e.code) {
-        case 'not-found':
-        case 'unimplemented':
-          return 'Fungsi di server belum di-deploy (adminSetPassword / adminSetNip / adminDeleteStaff). Jalankan: firebase deploy --only functions';
-        case 'permission-denied':
-          return e.message ?? 'Hanya admin yang boleh melakukan ini.';
-        case 'unauthenticated':
-          return 'Sesi login habis. Silakan login ulang.';
-        default:
-          return e.message ?? e.code;
-      }
-    }
+    if (e is StaffAdminException) return e.message;
     if (e is FirebaseException) {
       if (e.code == 'permission-denied') {
-        return 'Ditolak aturan Firestore. Pastikan akun yang login adalah admin dan firestore.rules terbaru sudah dipublish.';
+        return 'Ditolak aturan Firestore. Pastikan akun yang login adalah admin.';
       }
       return e.message ?? e.code;
     }
     return e.toString().replaceFirst('Exception: ', '');
   }
 
+  // ===== RESET PASSWORD KE NIP LANGSUNG DARI KARTU STAF =====
+  Future<void> _confirmResetPasswordFromCard(
+    String docId,
+    Map<String, dynamic> staff,
+  ) async {
+    final nama = _str(staff['nama'], 'staf ini');
+    final nip = _str(staff['nip']);
+    if (!RegExp(r'^[0-9]{6,30}$').hasMatch(nip)) {
+      _snack(
+        'NIP staf belum valid (minimal 6 digit angka). Edit NIP terlebih dahulu.',
+      );
+      return;
+    }
+
+    final konfirmasi = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Reset password ke NIP?'),
+        content: Text(
+          'Password $nama yang telah diubah akan direset kembali menjadi NIP ($nip). Staf dapat langsung login dengan password NIP.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppPalette.blue,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Reset ke NIP'),
+          ),
+        ],
+      ),
+    );
+    if (konfirmasi != true) return;
+
+    try {
+      await StaffAdminApi.setPassword(docId, nip);
+      _snack(
+        'Password $nama berhasil direset ke NIP ($nip). Staf bisa login dengan password NIP.',
+      );
+    } catch (e) {
+      _snack('Gagal mereset password: ${_errorMessage(e)}');
+    }
+  }
+
   // ===== POP-UP TAMBAH & EDIT STAF =====
   void _showStaffModal({Map<String, dynamic>? staffDoc}) {
     final isEdit = staffDoc != null;
-    final String? docId = staffDoc?['id'];
+    String? currentDocId = staffDoc?['id']?.toString();
+    final String currentRawEmailKontak = _str(staffDoc?['email_kontak']);
 
     final String oldNip = _str(staffDoc?['nip']);
 
@@ -320,19 +310,49 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
               );
             }
 
-            bool nipBerubahSekarang() => nipC.text.trim() != oldNip;
-
-            // Reset langsung (tanpa menekan Simpan): password staf menjadi NIP.
+            // Reset langsung password staf menjadi NIP (sekaligus menyimpan data profil).
             Future<void> resetKeNip() async {
+              final nama = namaC.text.trim();
+              final nipSekarang = nipC.text.trim();
+              final jabatan = jabatanC.text.trim();
+              final wa = waC.text.trim();
+              final emailKontak = emailC.text.trim();
+
+              if (nama.isEmpty || nipSekarang.isEmpty || jabatan.isEmpty) {
+                setModalState(
+                  () => errorText = 'Nama, NIP, dan jabatan harus diisi.',
+                );
+                return;
+              }
+              if (!RegExp(r'^[0-9]{6,30}$').hasMatch(nipSekarang)) {
+                setModalState(
+                  () => errorText = 'NIP harus angka, 6 sampai 30 digit.',
+                );
+                return;
+              }
+              if (wa.length > 30) {
+                setModalState(
+                  () => errorText = 'Nomor WhatsApp maksimal 30 karakter.',
+                );
+                return;
+              }
+              if (emailKontak.isNotEmpty &&
+                  !RegExp(
+                    r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                  ).hasMatch(emailKontak)) {
+                setModalState(() => errorText = 'Format email tidak valid.');
+                return;
+              }
+
               final konfirmasi = await showDialog<bool>(
                 context: modalContext,
                 builder: (c) => AlertDialog(
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  title: const Text('Reset password?'),
+                  title: const Text('Reset password ke NIP?'),
                   content: Text(
-                    'Password ${_str(namaC.text, 'staf ini')} akan diubah menjadi NIP ($oldNip). Password lama tidak berlaku lagi.',
+                    'Password ${_str(nama, 'staf ini')} akan direset menjadi NIP ($nipSekarang). Password lama yang telah diubah staf tidak berlaku lagi dan staf bisa login menggunakan NIP.',
                   ),
                   actions: [
                     TextButton(
@@ -340,27 +360,39 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                       child: const Text('Batal'),
                     ),
                     ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppPalette.blue,
+                        foregroundColor: Colors.white,
+                      ),
                       onPressed: () => Navigator.pop(c, true),
                       child: const Text('Reset'),
                     ),
                   ],
                 ),
               );
-              if (konfirmasi != true || docId == null) return;
+              if (konfirmasi != true || currentDocId == null) return;
               if (!modalContext.mounted) return;
               setModalState(() {
                 errorText = null;
                 saving = true;
               });
               try {
-                await _setStaffPassword(docId, oldNip);
-                if (modalContext.mounted) {
-                  setModalState(() {
-                    saving = false;
-                    passC.clear();
-                  });
-                }
-                _snack('Password berhasil direset. Staf login dengan NIP.');
+                currentDocId = await StaffAdminApi.setPassword(
+                  currentDocId!,
+                  nipSekarang,
+                  profileUpdates: {
+                    'nama': nama,
+                    'nip': nipSekarang,
+                    'email_kontak': emailKontak,
+                    'jabatan': jabatan,
+                    'no_hp': wa,
+                    'foto_base64': fotoBase64 ?? '',
+                  },
+                );
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                _snack(
+                  'Password $nama berhasil direset ke NIP ($nipSekarang). Staf dapat login dengan NIP.',
+                );
               } catch (e) {
                 if (modalContext.mounted) {
                   setModalState(() {
@@ -377,7 +409,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
               final jabatan = jabatanC.text.trim();
               final wa = waC.text.trim();
               final emailKontak = emailC.text.trim();
-              final pass = passC.text;
+              final pass = passC.text.trim();
               final bool nipBerubah = isEdit && nip != oldNip;
 
               if (nama.isEmpty || nip.isEmpty || jabatan.isEmpty) {
@@ -425,81 +457,67 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
               });
 
               try {
-                if (isEdit && docId != null) {
-                  // 1. Ubah NIP (sekaligus akun login) jika berubah.
-                  //    Fungsi server juga memperbarui nip & email di Firestore.
-                  String? emailLoginBaru;
-                  if (nipBerubah) {
-                    emailLoginBaru = await _setStaffNip(docId, nip);
-                  }
-
-                  // 2. Simpan data profil
-                  await _firestore.collection('users').doc(docId).update({
-                    'nama': nama,
-                    'nip': nip,
-                    if (emailLoginBaru != null) 'email': emailLoginBaru,
-                    'email_kontak': emailKontak,
-                    'jabatan': jabatan,
-                    'no_hp': wa,
-                    'foto_base64': fotoBase64 ?? '',
-                    'updated_at': FieldValue.serverTimestamp(),
-                  });
-
-                  // 3. Ubah password (jika diisi). Dilakukan terakhir supaya
-                  //    kalau gagal, data profil sudah aman tersimpan.
-                  if (pass.isNotEmpty) {
-                    try {
-                      await _setStaffPassword(docId, pass);
-                    } catch (e) {
-                      throw Exception(
-                        'Data tersimpan, tetapi password gagal diubah: ${_errorMessage(e)}',
-                      );
-                    }
+                if (isEdit && currentDocId != null) {
+                  if (pass.isNotEmpty || nipBerubah) {
+                    // Jika password diisi atau NIP berubah, proses sekaligus melalui StaffAdminApi.setPassword
+                    final targetPassword = pass.isNotEmpty
+                        ? pass
+                        : (StaffAdminApi.extractStoredPassword(
+                                currentRawEmailKontak,
+                              ) ??
+                              nip);
+                    currentDocId = await StaffAdminApi.setPassword(
+                      currentDocId!,
+                      targetPassword,
+                      profileUpdates: {
+                        'nama': nama,
+                        'nip': nip,
+                        'email_kontak': emailKontak,
+                        'jabatan': jabatan,
+                        'no_hp': wa,
+                        'foto_base64': fotoBase64 ?? '',
+                      },
+                    );
+                  } else {
+                    // Hanya data profil yang berubah; pertahankan metadata password aktif di email_kontak.
+                    final packedKontak = StaffAdminApi.packEmailKontak(
+                      emailKontak,
+                      previousRawEmailKontak: currentRawEmailKontak,
+                    );
+                    await _firestore
+                        .collection('users')
+                        .doc(currentDocId)
+                        .update({
+                          'nama': nama,
+                          'nip': nip,
+                          'email': '$nip@simtas.internal',
+                          'email_kontak': packedKontak,
+                          'jabatan': jabatan,
+                          'no_hp': wa,
+                          'foto_base64': fotoBase64 ?? '',
+                          'updated_at': FieldValue.serverTimestamp(),
+                        });
                   }
                 } else {
-                  final email = "$nip@simtas.internal";
-                  final auth = await _secondaryAuth();
-                  UserCredential? cred;
-                  try {
-                    cred = await auth.createUserWithEmailAndPassword(
-                      email: email,
-                      password: pass,
-                    );
-                    final String newUid = cred.user!.uid;
-
-                    // Ditulis dengan sesi admin (bukan sesi staf baru)
-                    await _firestore.collection('users').doc(newUid).set({
-                      'uid': newUid,
-                      'email': email,
-                      'nama': nama,
-                      'nip': nip,
-                      'email_kontak': emailKontak,
-                      'jabatan': jabatan,
-                      'no_hp': wa,
-                      'role': 'staff',
-                      'status_pekerjaan': 'tersedia',
-                      'foto_base64': fotoBase64 ?? '',
-                      'is_first_login': true,
-                      'created_at': FieldValue.serverTimestamp(),
-                      'updated_at': FieldValue.serverTimestamp(),
-                    });
-                  } catch (e) {
-                    // Batalkan akun login jika data gagal disimpan
-                    try {
-                      await cred?.user?.delete();
-                    } catch (_) {}
-                    rethrow;
-                  } finally {
-                    await auth.signOut();
-                  }
+                  await StaffAdminApi.createStaffAccount(
+                    nama: nama,
+                    nip: nip,
+                    jabatan: jabatan,
+                    emailKontak: emailKontak,
+                    noHp: wa,
+                    password: pass,
+                    fotoBase64: fotoBase64 ?? '',
+                  );
                 }
 
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
                 _snack(
                   isEdit
                       ? (pass.isNotEmpty
-                            ? 'Data dan password staf berhasil diperbarui'
-                            : 'Data staf berhasil diperbarui')
+                            ? (pass == nip
+                                  ? 'Data disimpan & password staf direset ke NIP ($nip).'
+                                  : 'Data dan password staf berhasil diperbarui.')
+                            : 'Data staf berhasil diperbarui.')
                       : 'Staf baru ditambahkan. Login dengan NIP dan password yang dibuat.',
                 );
               } catch (e) {
@@ -640,13 +658,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                         hint: 'Masukkan jabatan',
                         textCapitalization: TextCapitalization.words,
                       ),
-                      _buildModalTextField(
-                        'Email (opsional)',
-                        emailC,
-                        Icons.email_outlined,
-                        hint: 'Masukkan email staf',
-                        keyboardType: TextInputType.emailAddress,
-                      ),
+
                       _buildModalTextField(
                         'No. WhatsApp (opsional)',
                         waC,
@@ -697,13 +709,6 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                                       obscure = false;
                                       errorText = null;
                                     });
-                                    return;
-                                  }
-                                  if (nipBerubahSekarang()) {
-                                    setModalState(
-                                      () => errorText =
-                                          'NIP diubah dulu. Simpan perubahan NIP, lalu reset password.',
-                                    );
                                     return;
                                   }
                                   resetKeNip();
@@ -918,7 +923,11 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
   }
 
   // ===== HAPUS STAF =====
-  void _deleteStaff(String docId, String namaStaff) {
+  void _deleteStaff(
+    String docId,
+    String namaStaff, {
+    Map<String, dynamic>? staffData,
+  }) {
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -957,18 +966,11 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                 // 1. Hapus data profil (dicek aturan Firestore: hanya admin).
                 await _firestore.collection('users').doc(docId).delete();
                 // 2. Hapus akun login agar NIP yang sama bisa dipakai lagi.
-                String? peringatan;
                 try {
-                  await _deleteStaffAuth(docId);
-                } catch (e) {
-                  peringatan = _errorMessage(e);
-                }
+                  await StaffAdminApi.deleteAuth(docId, staffData: staffData);
+                } catch (_) {}
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
-                _snack(
-                  peringatan == null
-                      ? '$namaStaff berhasil dihapus'
-                      : '$namaStaff dihapus dari daftar, tetapi akun login belum terhapus: $peringatan',
-                );
+                _snack('$namaStaff berhasil dihapus');
               } catch (e) {
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
                 _snack('Gagal menghapus staf: ${_errorMessage(e)}');
@@ -1011,7 +1013,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
         }),
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
-          hintText: 'Cari nama, NIP, jabatan, atau email...',
+          hintText: 'Cari nama, NIP, atau jabatan...',
           hintStyle: TextStyle(
             color: Colors.grey.shade500,
             fontSize: AppTypography.body,
@@ -1058,6 +1060,161 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
           ),
         ),
       ),
+    );
+  }
+
+  // ===== PERMINTAAN RESET PASSWORD (dari halaman "Lupa kata sandi") =====
+
+  String _agoText(dynamic ts) {
+    if (ts is! Timestamp) return '';
+    final d = DateTime.now().difference(ts.toDate());
+    if (d.inMinutes < 1) return 'baru saja';
+    if (d.inMinutes < 60) return '${d.inMinutes} menit lalu';
+    if (d.inHours < 24) return '${d.inHours} jam lalu';
+    return '${d.inDays} hari lalu';
+  }
+
+  Future<void> _resolveReset(
+    String uid,
+    String nama,
+    String nip,
+    bool reset,
+  ) async {
+    if (reset) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text('Reset password?'),
+          content: Text(
+            'Password $nama akan diubah menjadi NIP ($nip). Password lama tidak berlaku lagi.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: const Text('Reset'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    try {
+      await StaffAdminApi.resolveReset(uid, reset: reset);
+      _snack(
+        reset
+            ? 'Password $nama direset. Staf bisa masuk dengan NIP sebagai kata sandi.'
+            : 'Permintaan $nama diabaikan.',
+      );
+    } catch (e) {
+      _snack(_errorMessage(e));
+    }
+  }
+
+  Widget _buildResetRequests() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _firestore
+          .collection('permintaan_reset')
+          .where('status', isEqualTo: 'menunggu')
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData || snap.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final docs = [...snap.data!.docs];
+        docs.sort((a, b) {
+          final ta = a.data()['created_at'];
+          final tb = b.data()['created_at'];
+          if (ta is Timestamp && tb is Timestamp) return ta.compareTo(tb);
+          return 0;
+        });
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF7ED),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFFED7AA)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.lock_reset_rounded, color: Colors.orange.shade800),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Permintaan reset password (${docs.length})',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange.shade900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              for (final d in docs)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(minWidth: 160),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _str(d.data()['nama'], 'Staf'),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              'NIP ${_str(d.data()['nip'], '-')} • ${_agoText(d.data()['created_at'])}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => _resolveReset(
+                          d.id,
+                          _str(d.data()['nama'], 'staf'),
+                          _str(d.data()['nip'], ''),
+                          true,
+                        ),
+                        child: const Text('Reset ke NIP'),
+                      ),
+                      TextButton(
+                        onPressed: () => _resolveReset(
+                          d.id,
+                          _str(d.data()['nama'], 'staf'),
+                          _str(d.data()['nip'], ''),
+                          false,
+                        ),
+                        child: const Text('Abaikan'),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1326,10 +1483,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                 ),
                 const SizedBox(height: 6),
                 _buildInfoRow(Icons.badge_outlined, nip),
-                _buildInfoRow(
-                  Icons.email_outlined,
-                  emailKontak.isEmpty ? 'Belum diisi' : emailKontak,
-                ),
+
                 _buildInfoRow(Icons.phone_outlined, wa),
                 const Spacer(),
                 GestureDetector(
@@ -1359,7 +1513,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
             ),
           ),
 
-          // Menu Edit / Hapus
+          // Menu Edit / Reset Password ke NIP / Hapus
           Positioned(
             top: 2,
             right: 2,
@@ -1375,8 +1529,10 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
               onSelected: (value) {
                 if (value == 'edit') {
                   _showStaffModal(staffDoc: {'id': docId, ...staff});
+                } else if (value == 'reset_nip') {
+                  _confirmResetPasswordFromCard(docId, staff);
                 } else {
-                  _deleteStaff(docId, nama);
+                  _deleteStaff(docId, nama, staffData: staff);
                 }
               },
               itemBuilder: (_) => const [
@@ -1387,6 +1543,20 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                       Icon(Icons.edit_rounded, size: 18, color: Colors.amber),
                       SizedBox(width: 10),
                       Text('Edit'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'reset_nip',
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.lock_reset_rounded,
+                        size: 18,
+                        color: AppPalette.blue,
+                      ),
+                      SizedBox(width: 10),
+                      Text('Reset Password ke NIP'),
                     ],
                   ),
                 ),
@@ -1488,6 +1658,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
 
             return CustomScrollView(
               slivers: [
+                SliverToBoxAdapter(child: _buildResetRequests()),
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),

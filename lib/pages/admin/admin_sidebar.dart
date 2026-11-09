@@ -66,7 +66,7 @@ class AdminSidebar extends StatelessWidget {
       () => const LaporanKendalaAdminPage(),
     ),
     _SidebarItem(
-      'Profil Admin',
+      'Profil Atasan',
       Icons.manage_accounts_rounded,
       () => const ProfilAdminPage(),
     ),

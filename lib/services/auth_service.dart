@@ -1,61 +1,213 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
+import 'staff_admin_api.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // Domain email "bayangan" untuk akun yang dibuat atasan.
-  // Harus sama dengan yang dipakai di Kelola Staff: "$nip@simtas.internal".
-  static const String _nipDomain = '@simtas.internal';
-
-  /// Mengubah isi kolom login menjadi email untuk Firebase Auth.
-  String _toAuthEmail(String identifier) {
-    final value = identifier.trim();
-
-    // ===== [HAPUS NANTI] mulai: login pakai email asli =====
-    // Jika diisi email (ada tanda @), pakai apa adanya.
-    // Hapus blok ini kalau login sudah murni memakai NIP.
-    if (value.contains('@')) {
-      return value;
-    }
-    // ===== [HAPUS NANTI] selesai =====
-
-    // Login dengan NIP -> NIP@simtas.internal
-    return '$value$_nipDomain';
-  }
-
-  /// Memproses login via Firebase Auth dan mengambil role dari Firestore.
-  /// Parameter [email] berisi NIP (atau email, selama masa transisi).
+  /// Memproses login via Firebase Auth menggunakan NIP dan mengambil role dari Firestore.
+  /// Input berupa alamat email (seperti @gmail.com) ditolak secara tegas.
   Future<Map<String, dynamic>?> loginWithEmail({
     required String email,
     required String password,
   }) async {
-    try {
-      // 1. Authenticate akun ke Firebase Auth
-      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
-        email: _toAuthEmail(email),
-        password: password,
+    final input = email.trim();
+
+    // Tolak login menggunakan email (@gmail.com, dll.) — wajib menggunakan NIP (angka).
+    if (input.contains('@') || !RegExp(r'^[0-9]+$').hasMatch(input)) {
+      throw Exception(
+        'Masuk hanya dapat menggunakan NIP (angka), bukan alamat email.',
       );
+    }
 
-      String uid = userCredential.user!.uid;
+    // Coba password apa adanya terlebih dahulu, lalu versi trim() jika ada spasi tak sengaja.
+    final passwordCandidates = <String>[
+      password,
+      if (password.trim() != password && password.trim().isNotEmpty)
+        password.trim(),
+    ];
 
-      // 2. Ambil dokumen detail pengguna & role dari Cloud Firestore
-      DocumentSnapshot userDoc = await _firestore
-          .collection('users')
-          .doc(uid)
-          .get();
+    // Login menggunakan NIP:
+    // Coba email utama (NIP@simtas.internal), lalu alias hasil reset/mutasi (NIP.r1@simtas.internal, dst.)
+    final aliasList = <String>[
+      '',
+      'r1',
+      'r2',
+      'r3',
+      'r4',
+      'r5',
+      'r6',
+      'r7',
+      'r8',
+      'r9',
+    ];
+    FirebaseAuthException? firstAuthError;
+    bool foundReplacedAuth = false;
 
-      if (userDoc.exists) {
-        return userDoc.data() as Map<String, dynamic>;
-      } else {
-        await _auth.signOut();
-        throw Exception('Data profil pengguna tidak ditemukan di Firestore.');
+    for (int i = 0; i < aliasList.length; i++) {
+      final tag = aliasList[i];
+      final authEmail = StaffAdminApi.authEmailForNip(input, tag);
+
+      for (final pass in passwordCandidates) {
+        try {
+          final userCredential = await _auth.signInWithEmailAndPassword(
+            email: authEmail,
+            password: pass,
+          );
+          final loggedInUser = userCredential.user!;
+          final uid = loggedInUser.uid;
+          final userDoc = await _firestore.collection('users').doc(uid).get();
+
+          if (userDoc.exists) {
+            final data = Map<String, dynamic>.from(
+              userDoc.data() as Map<String, dynamic>,
+            );
+            await StaffAdminApi.syncOwnPasswordIfNeeded(
+              uid: uid,
+              userData: data,
+              password: pass,
+              authEmail: authEmail,
+            );
+            if ((data['role'] ?? '').toString().toLowerCase() == 'admin') {
+              unawaited(StaffAdminApi.syncKendalaCacheForAllTasks());
+            }
+            return data;
+          }
+
+          // Cek apakah akun Auth ini adalah jembatan redirect mutasi NIP Admin:
+          final displayName = (loggedInUser.displayName ?? '').trim();
+          if (displayName.startsWith(StaffAdminApi.adminRedirectPrefix)) {
+            final rest = displayName.substring(
+              StaffAdminApi.adminRedirectPrefix.length,
+            );
+            final parts = rest.split('::');
+            final primaryAdminEmail = parts.first.trim();
+            await _auth.signOut();
+            if (primaryAdminEmail.isNotEmpty) {
+              final adminCred = await _auth.signInWithEmailAndPassword(
+                email: primaryAdminEmail,
+                password: pass,
+              );
+              final adminUid = adminCred.user!.uid;
+              final adminDoc = await _firestore
+                  .collection('users')
+                  .doc(adminUid)
+                  .get();
+              if (adminDoc.exists) {
+                final adminData = Map<String, dynamic>.from(
+                  adminDoc.data() as Map<String, dynamic>,
+                );
+                await StaffAdminApi.syncOwnPasswordIfNeeded(
+                  uid: adminUid,
+                  userData: adminData,
+                  password: pass,
+                  authEmail: primaryAdminEmail,
+                );
+                unawaited(StaffAdminApi.syncKendalaCacheForAllTasks());
+                return adminData;
+              }
+            }
+          }
+
+          // Jika bukan redirect langsung di displayName, cek di koleksi users
+          // selagi sesi autentikasi masih terbuka (apakah NIP ini milik Admin
+          // yang dimutasi atau Staf yang direset ke alias baru).
+          foundReplacedAuth = true;
+          try {
+            final allUsers = await _firestore.collection('users').get();
+            for (final doc in allUsers.docs) {
+              final d = doc.data();
+              final effNip = StaffAdminApi.effectiveNipFromData(d);
+              if (effNip == input) {
+                final role = (d['role'] ?? '').toString().toLowerCase();
+                final primaryEmail = (d['email'] ?? '').toString().trim();
+                final activeAlias = StaffAdminApi.extractStoredAliasTag(
+                  d['email_kontak'],
+                );
+                if (role == 'admin' &&
+                    primaryEmail.isNotEmpty &&
+                    primaryEmail.toLowerCase() != authEmail.toLowerCase()) {
+                  await _auth.signOut();
+                  final adminCred = await _auth.signInWithEmailAndPassword(
+                    email: primaryEmail,
+                    password: pass,
+                  );
+                  final adminUid = adminCred.user!.uid;
+                  final adminDoc = await _firestore
+                      .collection('users')
+                      .doc(adminUid)
+                      .get();
+                  if (adminDoc.exists) {
+                    final adminData = Map<String, dynamic>.from(
+                      adminDoc.data() as Map<String, dynamic>,
+                    );
+                    await StaffAdminApi.syncOwnPasswordIfNeeded(
+                      uid: adminUid,
+                      userData: adminData,
+                      password: pass,
+                      authEmail: primaryEmail,
+                    );
+                    unawaited(StaffAdminApi.syncKendalaCacheForAllTasks());
+                    return adminData;
+                  }
+                }
+                if (activeAlias.isNotEmpty &&
+                    !aliasList.contains(activeAlias)) {
+                  aliasList.add(activeAlias);
+                }
+                break;
+              }
+            }
+          } catch (_) {}
+          await _auth.signOut();
+        } on FirebaseAuthException catch (e) {
+          firstAuthError ??= e;
+          if (e.code == 'user-disabled' ||
+              e.code == 'too-many-requests' ||
+              e.code == 'network-request-failed') {
+            throw Exception(_handleAuthError(e.code));
+          }
+          if (e.code == 'user-not-found') {
+            break;
+          }
+        }
       }
-    } on FirebaseAuthException catch (e) {
-      throw Exception(_handleAuthError(e.code));
-    } catch (e) {
-      rethrow;
+    }
+
+    if (foundReplacedAuth) {
+      throw Exception(
+        'Password akun ini telah direset oleh Atasan/Admin. Silakan login menggunakan NIP sebagai kata sandi.',
+      );
+    }
+
+    if (firstAuthError != null) {
+      if (firstAuthError.code == 'invalid-credential' ||
+          firstAuthError.code == 'user-not-found' ||
+          firstAuthError.code == 'wrong-password') {
+        throw Exception(await _pesanLoginNip(input));
+      }
+      throw Exception(_handleAuthError(firstAuthError.code));
+    }
+
+    throw Exception('NIP atau kata sandi salah.');
+  }
+
+  /// Menentukan pesan yang tepat setelah login NIP gagal.
+  Future<String> _pesanLoginNip(String nip) async {
+    try {
+      final r = await StaffAdminApi.checkNip(nip);
+      if (r['exists'] == false) return 'NIP tidak terdaftar.';
+      if (r['legacy'] == true) {
+        return 'Akun ini belum diaktifkan untuk masuk dengan NIP. '
+            'Minta admin menekan "Reset password" di Kelola Staff.';
+      }
+      return 'Kata sandi salah.';
+    } catch (_) {
+      return 'NIP atau kata sandi salah.';
     }
   }
 
@@ -64,14 +216,15 @@ class AuthService {
     await _auth.signOut();
   }
 
-  /// Pemetaan pesan kesalahan Firebase Auth
+  /// Pemetaan pesan kesalahan Firebase Auth.
   String _handleAuthError(String code) {
     switch (code) {
       case 'user-not-found':
         return 'NIP tidak terdaftar.';
       case 'wrong-password':
+        return 'Kata sandi salah.';
       case 'invalid-credential':
-        return 'NIP atau kata sandi salah.';
+        return 'Kata sandi salah.';
       case 'invalid-email':
         return 'Format NIP tidak valid.';
       case 'user-disabled':

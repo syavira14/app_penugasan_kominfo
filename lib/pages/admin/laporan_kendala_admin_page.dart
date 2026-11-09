@@ -38,6 +38,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
 
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _assignmentStream;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _reportStream;
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _usersStream;
 
   Timer? _timer;
 
@@ -46,6 +47,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
   String _jenis = 'semua';
   String _prioritas = 'semua';
   String _urut = 'terbaru';
+  String _selectedStaffId = 'semua';
 
   @override
   void initState() {
@@ -54,6 +56,8 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
     _assignmentStream = _db.collection('penugasan').snapshots();
 
     _reportStream = _service.streamSemuaLaporan();
+
+    _usersStream = _db.collection('users').snapshots();
 
     _timer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
@@ -140,13 +144,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
     }
 
     if (_terminal(status)) {
-      final processed = _processedAt(data);
-      if (processed == null) return false;
-
-      final now = DateTime.now();
-
-      return !processed.isAfter(now) &&
-          now.isBefore(processed.add(_masaTampil));
+      return true;
     }
 
     return false;
@@ -226,10 +224,16 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
       _jenis = 'semua';
       _prioritas = 'semua';
       _urut = 'terbaru';
+      _selectedStaffId = 'semua';
     });
   }
 
   bool _matches(Map<String, dynamic> data, String id) {
+    if (_selectedStaffId != 'semua' &&
+        _value(data, 'pelapor_id', '') != _selectedStaffId) {
+      return false;
+    }
+
     if (_status != 'semua' && _value(data, 'status', '') != _status) {
       return false;
     }
@@ -478,7 +482,11 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
     );
   }
 
-  Widget _reportCard(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+  Widget _reportCard(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc, {
+    required int staffTotalKendala,
+    required int taskTotalKendala,
+  }) {
     final data = doc.data();
     final status = _value(data, 'status', StatusLaporanKendala.menungguReview);
 
@@ -579,13 +587,37 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                         'Prioritas: ${_value(data, 'prioritas')}',
                         const Color(0xFFCA6D00),
                       ),
+                      _pill(
+                        'Staff mengalami ${staffTotalKendala}× kendala',
+                        const Color(0xFFB42318),
+                      ),
+                      _pill('Tugas ini: ${taskTotalKendala}× kendala', _navy),
                       if (_value(data, 'bukti_path', '').isNotEmpty ||
                           _value(data, 'bukti_url', '').isNotEmpty)
                         _pill('Ada Lampiran', const Color(0xFF0C7C82)),
-                      if (_terminal(status))
-                        _pill('Riwayat 3 Hari', Colors.blueGrey),
                     ],
                   ),
+                  if (status == StatusLaporanKendala.ditolak &&
+                      _value(data, 'alasan_penolakan', '').isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3F2),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFFECDCA)),
+                      ),
+                      child: Text(
+                        'Alasan Penolakan: ${_value(data, 'alasan_penolakan')}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFFB42318),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   const Row(
                     mainAxisAlignment: MainAxisAlignment.end,
@@ -609,32 +641,266 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
     );
   }
 
+  Widget _buildStaffFrequencySection(List<Map<String, dynamic>> staffSummary) {
+    if (staffSummary.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3F2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.analytics_outlined,
+                  color: Color(0xFFB42318),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Frekuensi Kendala Staff (Berapa Banyak Mengalami Kendala)',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: _navy,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Klik kartu staff untuk menyaring daftar laporan kendala milik staff tersebut.',
+                      style: TextStyle(fontSize: 11.5, color: Colors.blueGrey),
+                    ),
+                  ],
+                ),
+              ),
+              if (_selectedStaffId != 'semua')
+                TextButton.icon(
+                  onPressed: () => setState(() => _selectedStaffId = 'semua'),
+                  icon: const Icon(Icons.close, size: 16),
+                  label: const Text('Semua Staff'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: staffSummary.map((item) {
+              final String staffId = item['id'] as String;
+              final String nama = item['nama'] as String;
+              final String jabatan = item['jabatan'] as String;
+              final int total = item['total'] as int;
+              final int aktif = item['aktif'] as int;
+              final int selesai = item['selesai'] as int;
+              final int ditolak = item['ditolak'] as int;
+              final bool selected = _selectedStaffId == staffId;
+
+              return InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () {
+                  setState(() {
+                    _selectedStaffId = selected ? 'semua' : staffId;
+                  });
+                },
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minWidth: 230,
+                    maxWidth: 320,
+                  ),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? const Color(0xFFEAF3FC)
+                        : const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: selected ? _blue : const Color(0xFFE2E8F0),
+                      width: selected ? 1.5 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 16,
+                            backgroundColor: _blue.withOpacity(0.12),
+                            child: const Icon(
+                              Icons.person,
+                              size: 18,
+                              color: _blue,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  nama,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: _navy,
+                                  ),
+                                ),
+                                if (jabatan.isNotEmpty && jabatan != '-')
+                                  Text(
+                                    jabatan,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.blueGrey,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFB42318).withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              '$total× Kendala',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFFB42318),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          _pill('Aktif: $aktif', const Color(0xFFB96B00)),
+                          _pill('Selesai: $selesai', const Color(0xFF15803D)),
+                          _pill('Ditolak: $ditolak', const Color(0xFFB42318)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _content(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> reports,
     Map<String, Map<String, dynamic>> assignments,
+    Map<String, Map<String, dynamic>> users,
   ) {
     final visible = reports.where((doc) => _visible(doc, assignments)).toList();
 
-    final pending = visible
+    final totalAll = reports.length;
+
+    final pending = reports
         .where((d) => d.data()['status'] == StatusLaporanKendala.menungguReview)
         .length;
 
-    final handling = visible
+    final handling = reports
         .where(
           (d) => d.data()['status'] == StatusLaporanKendala.dalamPenanganan,
         )
         .length;
 
-    final confirming = visible
+    final confirming = reports
         .where(
           (d) => d.data()['status'] == StatusLaporanKendala.menungguKonfirmasi,
         )
         .length;
 
-    // Statistik selesai dihitung dari seluruh laporan.
     final completed = reports
         .where((d) => d.data()['status'] == StatusLaporanKendala.selesai)
         .length;
+
+    final rejected = reports
+        .where((d) => d.data()['status'] == StatusLaporanKendala.ditolak)
+        .length;
+
+    // Hitung seberapa banyak setiap staff & tugas mengalami kendala.
+    final Map<String, int> staffKendalaCount = {};
+    final Map<String, int> taskKendalaCount = {};
+    final Map<String, Map<String, dynamic>> staffStatsMap = {};
+
+    for (final doc in reports) {
+      final d = doc.data();
+      final staffId = _value(d, 'pelapor_id', '');
+      final tugasId = _value(d, 'tugas_id', '');
+      final st = _value(d, 'status', StatusLaporanKendala.menungguReview);
+
+      if (tugasId.isNotEmpty) {
+        taskKendalaCount[tugasId] = (taskKendalaCount[tugasId] ?? 0) + 1;
+      }
+      if (staffId.isNotEmpty) {
+        staffKendalaCount[staffId] = (staffKendalaCount[staffId] ?? 0) + 1;
+        final u = users[staffId];
+        final nama = u != null
+            ? _value(u, 'nama', _value(d, 'nama_staf', 'Staff'))
+            : _value(d, 'nama_staf', 'Staff');
+        final jabatan = u != null ? _value(u, 'jabatan', '-') : '-';
+
+        final entry = staffStatsMap.putIfAbsent(
+          staffId,
+          () => {
+            'id': staffId,
+            'nama': nama,
+            'jabatan': jabatan,
+            'total': 0,
+            'aktif': 0,
+            'selesai': 0,
+            'ditolak': 0,
+          },
+        );
+        entry['total'] = (entry['total'] as int) + 1;
+        if (st == StatusLaporanKendala.selesai) {
+          entry['selesai'] = (entry['selesai'] as int) + 1;
+        } else if (st == StatusLaporanKendala.ditolak) {
+          entry['ditolak'] = (entry['ditolak'] as int) + 1;
+        } else {
+          entry['aktif'] = (entry['aktif'] as int) + 1;
+        }
+      }
+    }
+
+    final staffSummary = staffStatsMap.values.toList()
+      ..sort((a, b) => (b['total'] as int).compareTo(a['total'] as int));
 
     final filtered = visible
         .where((doc) => _matches(doc.data(), doc.id))
@@ -667,19 +933,17 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                   ),
                   const SizedBox(height: 5),
                   const Text(
-                    'Pantau laporan kendala staff dan berikan solusi.',
+                    'Pantau riwayat laporan kendala staff dari awal pelaporan hingga selesai.',
                     style: TextStyle(color: Colors.blueGrey),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    'Laporan selesai atau ditolak tampil selama '
-                    '3 hari. Riwayat tetap tersimpan di Firebase.',
-                    style: TextStyle(fontSize: 12, color: Colors.blueGrey),
                   ),
                   const SizedBox(height: 18),
                   LayoutBuilder(
                     builder: (context, constraints) {
-                      final columns = constraints.maxWidth >= 700 ? 4 : 2;
+                      final columns = constraints.maxWidth >= 900
+                          ? 6
+                          : constraints.maxWidth >= 600
+                          ? 3
+                          : 2;
 
                       final width =
                           (constraints.maxWidth - (columns - 1) * 10) / columns;
@@ -688,6 +952,15 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                         spacing: 10,
                         runSpacing: 10,
                         children: [
+                          SizedBox(
+                            width: width,
+                            child: _statCard(
+                              'Total Kendala',
+                              totalAll,
+                              Icons.report_problem_outlined,
+                              _navy,
+                            ),
+                          ),
                           SizedBox(
                             width: width,
                             child: _statCard(
@@ -724,10 +997,21 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                               const Color(0xFF15803D),
                             ),
                           ),
+                          SizedBox(
+                            width: width,
+                            child: _statCard(
+                              'Ditolak',
+                              rejected,
+                              Icons.cancel_outlined,
+                              const Color(0xFFB42318),
+                            ),
+                          ),
                         ],
                       );
                     },
                   ),
+                  const SizedBox(height: 18),
+                  _buildStaffFrequencySection(staffSummary),
                   const SizedBox(height: 18),
                   _filters(),
                   const SizedBox(height: 20),
@@ -777,7 +1061,26 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                           runSpacing: 14,
                           children: [
                             for (final doc in filtered)
-                              SizedBox(width: width, child: _reportCard(doc)),
+                              SizedBox(
+                                width: width,
+                                child: _reportCard(
+                                  doc,
+                                  staffTotalKendala:
+                                      staffKendalaCount[_value(
+                                        doc.data(),
+                                        'pelapor_id',
+                                        '',
+                                      )] ??
+                                      1,
+                                  taskTotalKendala:
+                                      taskKendalaCount[_value(
+                                        doc.data(),
+                                        'tugas_id',
+                                        '',
+                                      )] ??
+                                      1,
+                                ),
+                              ),
                           ],
                         );
                       },
@@ -828,7 +1131,16 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
               return const Center(child: CircularProgressIndicator());
             }
 
-            return _content(snapshot.data!.docs, assignments);
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: _usersStream,
+              builder: (context, uSnap) {
+                final users = <String, Map<String, dynamic>>{
+                  if (uSnap.hasData)
+                    for (final doc in uSnap.data!.docs) doc.id: doc.data(),
+                };
+                return _content(snapshot.data!.docs, assignments, users);
+              },
+            );
           },
         );
       },

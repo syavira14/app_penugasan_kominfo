@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
@@ -10,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '/widgets/admin_header.dart';
 import '../../models/user_model.dart';
+import '../../services/staff_admin_api.dart';
 import '../auth/login_page.dart';
 import 'admin_sidebar.dart';
 
@@ -160,8 +160,8 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
   }
 
   // ===========================================================
-  // UBAH DATA (nama, NIP, jabatan, no HP, password)
-  // Gaya form disamakan dengan kartu di halaman login.
+  // UBAH DATA PROFIL ADMIN (Nama, Jabatan, NIP, No. HP, Email, Password)
+  // Semua kolom dapat diubah dan disimpan untuk mendukung mutasi atasan.
   // ===========================================================
   static const Color _loginTitle = AppPalette.navy;
   static const Color _loginBlue = AppPalette.blue;
@@ -190,7 +190,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     );
   }
 
-  // Label di atas kolom, seperti di halaman login.
   Widget _labeled(String label, Widget field) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -209,7 +208,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     );
   }
 
-  // Dua kolom berdampingan di layar lebar, satu kolom di layar sempit.
   Widget _twoCols(bool two, Widget a, Widget b) {
     if (two) {
       return Row(
@@ -224,33 +222,22 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     return Column(children: [a, const SizedBox(height: 16), b]);
   }
 
-  Widget _sectionTitle(String text) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontSize: AppTypography.small,
-        fontWeight: FontWeight.w700,
-        color: _abuTeks,
-        letterSpacing: 0.8,
-      ),
-    );
-  }
-
   Future<void> _editProfil() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    final String oldNip = (currentUser?.nip ?? '').trim();
+    final String nipSaatIni = (currentUser?.nip ?? '').trim();
 
     final namaC = TextEditingController(text: currentUser?.nama ?? '');
-    final nipC = TextEditingController(text: oldNip);
+    final nipC = TextEditingController(text: nipSaatIni);
+    final emailC = TextEditingController(text: currentUser?.emailKontak ?? '');
     final jabatanC = TextEditingController(text: currentUser?.jabatan ?? '');
     final noHpC = TextEditingController(text: currentUser?.noHp ?? '');
     final currentPassC = TextEditingController();
     final newPassC = TextEditingController();
     final confirmPassC = TextEditingController();
 
-    bool showPassword = false; // bagian kata sandi dilipat dulu
+    bool showPassword = false;
     bool obscureCurrent = true;
     bool obscureNew = true;
     bool obscureConfirm = true;
@@ -266,34 +253,41 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
             Future<void> save() async {
               final nama = namaC.text.trim();
               final nip = nipC.text.trim();
+              final emailKontak = emailC.text.trim();
               final jabatan = jabatanC.text.trim();
               final noHp = noHpC.text.trim();
               final currentPass = currentPassC.text;
               final newPass = newPassC.text;
               final confirmPass = confirmPassC.text;
 
-              final bool nipChanged = nip != oldNip;
+              final bool nipChanged =
+                  nipSaatIni.isNotEmpty && nip != nipSaatIni;
               final bool changingPassword =
-                  currentPass.isNotEmpty ||
-                  newPass.isNotEmpty ||
-                  confirmPass.isNotEmpty;
+                  newPass.isNotEmpty || confirmPass.isNotEmpty;
 
               String? validate() {
-                if (nama.isEmpty) return 'Nama wajib diisi.';
+                if (nama.isEmpty) return 'Nama lengkap wajib diisi.';
                 if (jabatan.isEmpty) return 'Jabatan wajib diisi.';
+                if (nip.isEmpty) return 'NIP wajib diisi.';
+                if (!RegExp(r'^[0-9]{6,30}$').hasMatch(nip)) {
+                  return 'NIP harus berupa angka 6 sampai 30 digit.';
+                }
                 if (noHp.length > 30) return 'No. HP maksimal 30 karakter.';
-                if (nipChanged && !RegExp(r'^[0-9]{6,30}$').hasMatch(nip)) {
-                  return 'NIP harus angka, 6 sampai 30 digit.';
+                if (emailKontak.isNotEmpty &&
+                    !RegExp(
+                      r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                    ).hasMatch(emailKontak)) {
+                  return 'Format email tidak valid.';
+                }
+                if ((nipChanged || changingPassword) && currentPass.isEmpty) {
+                  return 'Masukkan kata sandi saat ini untuk mengubah NIP atau kata sandi.';
                 }
                 if (changingPassword) {
-                  if (currentPass.isEmpty) {
-                    return 'Masukkan kata sandi saat ini.';
-                  }
                   if (newPass.length < 6) {
                     return 'Kata sandi baru minimal 6 karakter.';
                   }
                   if (newPass != confirmPass) {
-                    return 'Konfirmasi kata sandi tidak cocok.';
+                    return 'Konfirmasi kata sandi baru tidak cocok.';
                   }
                 }
                 return null;
@@ -310,70 +304,34 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                 saving = true;
               });
 
-              final messenger = ScaffoldMessenger.of(context);
-
               try {
-                // 1. Kata sandi (butuh verifikasi sandi lama)
-                if (changingPassword) {
-                  final credential = EmailAuthProvider.credential(
-                    email: user.email!,
-                    password: currentPass,
-                  );
-                  await user.reauthenticateWithCredential(credential);
-                  await user.updatePassword(newPass);
-                }
-
-                // 2. Nama, jabatan, no HP
-                await FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(user.uid)
-                    .update({
-                      'nama': nama,
-                      'jabatan': jabatan,
-                      'no_hp': noHp,
-                      'updated_at': FieldValue.serverTimestamp(),
-                    });
-
-                // 3. NIP = username login, jadi email login ikut diganti
-                //    lewat Cloud Function (butuh Admin SDK).
-                if (nipChanged) {
-                  await FirebaseFunctions.instance
-                      .httpsCallable('changeOwnNip')
-                      .call({'nip': nip});
-                }
+                await StaffAdminApi.updateAdminProfileAndCredentials(
+                  nama: nama,
+                  jabatan: jabatan,
+                  newNip: nip,
+                  noHp: noHp,
+                  emailKontak: emailKontak,
+                  currentPassword: currentPass,
+                  newPassword: changingPassword ? newPass : '',
+                );
 
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
 
-                if (nipChanged) {
-                  // Sesi lama tidak berlaku lagi setelah login berubah.
-                  await FirebaseAuth.instance.signOut();
-                  messenger
-                    ..hideCurrentSnackBar()
-                    ..showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'NIP diperbarui. Silakan masuk dengan NIP baru.',
-                        ),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  if (mounted) {
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(builder: (_) => const LoginPage()),
-                      (_) => false,
-                    );
-                  }
-                } else {
-                  await _fetchUserData();
-                  _snack(
-                    changingPassword
-                        ? 'Data dan kata sandi berhasil diperbarui'
-                        : 'Data berhasil diperbarui',
-                  );
+                await _fetchUserData();
+                _snack(
+                  (nipChanged || changingPassword)
+                      ? 'Data profil dan akun login berhasil diperbarui'
+                      : 'Data profil berhasil diperbarui',
+                );
+              } on StaffAdminException catch (e) {
+                if (ctx.mounted) {
+                  setS(() {
+                    saving = false;
+                    errorText = e.message;
+                  });
                 }
               } on FirebaseAuthException catch (e) {
-                String message = 'Gagal memperbarui kata sandi.';
+                String message = 'Gagal memperbarui kredensial akun.';
                 if (e.code == 'wrong-password' ||
                     e.code == 'invalid-credential') {
                   message = 'Kata sandi saat ini salah.';
@@ -390,26 +348,11 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                     errorText = message;
                   });
                 }
-              } on FirebaseFunctionsException catch (e) {
-                final message = (e.code == 'not-found')
-                    ? 'Fungsi changeOwnNip belum di-deploy.'
-                    : (e.message ?? e.code);
-                if (ctx.mounted) {
-                  setS(() {
-                    saving = false;
-                    errorText =
-                        'Data lain tersimpan, tetapi NIP gagal diubah: $message';
-                  });
-                }
-                await _fetchUserData();
               } on FirebaseException catch (e) {
-                final message = e.code == 'permission-denied'
-                    ? 'Ditolak aturan Firestore. Pastikan firestore.rules terbaru sudah dipublish.'
-                    : (e.message ?? e.code);
                 if (ctx.mounted) {
                   setS(() {
                     saving = false;
-                    errorText = message;
+                    errorText = e.message ?? e.code;
                   });
                 }
               } catch (e) {
@@ -459,7 +402,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Ubah Data Profil',
+                                  'Ubah Data Profil Admin',
                                   style: TextStyle(
                                     color: _loginTitle,
                                     fontSize: AppTypography.heading,
@@ -468,7 +411,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                 ),
                                 SizedBox(height: 6),
                                 Text(
-                                  'Perbarui informasi akun Anda.',
+                                  'Perbarui data diri atau lengkapi data atasan baru.',
                                   style: TextStyle(
                                     color: _abuTeks,
                                     fontSize: AppTypography.body,
@@ -497,8 +440,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  _sectionTitle('DATA DIRI'),
-                                  const SizedBox(height: 12),
                                   _twoCols(
                                     two,
                                     _labeled(
@@ -540,7 +481,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                   _twoCols(
                                     two,
                                     _labeled(
-                                      'NIP (username login)',
+                                      'NIP (Username Login)',
                                       TextField(
                                         controller: nipC,
                                         keyboardType: TextInputType.number,
@@ -549,10 +490,15 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                           fontSize: AppTypography.body,
                                           color: _loginTitle,
                                         ),
-                                        decoration: _dec(
-                                          'Masukkan NIP',
-                                          Icons.badge_outlined,
-                                        ),
+                                        decoration:
+                                            _dec(
+                                              'Masukkan NIP',
+                                              Icons.badge_outlined,
+                                            ).copyWith(
+                                              helperText:
+                                                  'Ubah jika jabatan atasan diserahkan ke atasan baru',
+                                              helperMaxLines: 2,
+                                            ),
                                       ),
                                     ),
                                     _labeled(
@@ -560,6 +506,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                       TextField(
                                         controller: noHpC,
                                         keyboardType: TextInputType.phone,
+                                        textInputAction: TextInputAction.next,
                                         style: const TextStyle(
                                           fontSize: AppTypography.body,
                                           color: _loginTitle,
@@ -574,9 +521,34 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
 
                                   const SizedBox(height: 20),
                                   Divider(height: 1, color: _abuBorder),
-                                  const SizedBox(height: 6),
+                                  const SizedBox(height: 14),
 
-                                  // Kata sandi (dilipat)
+                                  _labeled(
+                                    'Kata Sandi Saat Ini (Wajib diisi jika NIP atau Sandi diubah)',
+                                    TextField(
+                                      controller: currentPassC,
+                                      obscureText: obscureCurrent,
+                                      textInputAction: TextInputAction.next,
+                                      style: const TextStyle(
+                                        fontSize: AppTypography.body,
+                                        color: _loginTitle,
+                                      ),
+                                      decoration: _dec(
+                                        'Masukkan kata sandi saat ini',
+                                        Icons.lock_outline_rounded,
+                                        suffix: eye(
+                                          obscureCurrent,
+                                          () => setS(
+                                            () => obscureCurrent =
+                                                !obscureCurrent,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+
+                                  // Kata sandi baru (dilipat)
                                   InkWell(
                                     borderRadius: BorderRadius.circular(10),
                                     onTap: saving
@@ -584,7 +556,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                         : () => setS(() {
                                             showPassword = !showPassword;
                                             if (!showPassword) {
-                                              currentPassC.clear();
                                               newPassC.clear();
                                               confirmPassC.clear();
                                             }
@@ -596,14 +567,14 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                       child: Row(
                                         children: [
                                           const Icon(
-                                            Icons.lock_outline_rounded,
+                                            Icons.lock_reset_rounded,
                                             color: _loginBlue,
                                             size: 20,
                                           ),
                                           const SizedBox(width: 10),
                                           const Expanded(
                                             child: Text(
-                                              'Ubah kata sandi',
+                                              'Ubah Kata Sandi Baru (Opsional)',
                                               style: TextStyle(
                                                 color: _loginBlue,
                                                 fontSize: AppTypography.body,
@@ -624,30 +595,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
 
                                   if (showPassword) ...[
                                     const SizedBox(height: 8),
-                                    _labeled(
-                                      'Kata Sandi Saat Ini',
-                                      TextField(
-                                        controller: currentPassC,
-                                        obscureText: obscureCurrent,
-                                        textInputAction: TextInputAction.next,
-                                        style: const TextStyle(
-                                          fontSize: AppTypography.body,
-                                          color: _loginTitle,
-                                        ),
-                                        decoration: _dec(
-                                          'Masukkan kata sandi saat ini',
-                                          Icons.lock_outline_rounded,
-                                          suffix: eye(
-                                            obscureCurrent,
-                                            () => setS(
-                                              () => obscureCurrent =
-                                                  !obscureCurrent,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 16),
                                     _twoCols(
                                       two,
                                       _labeled(
@@ -673,7 +620,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                         ),
                                       ),
                                       _labeled(
-                                        'Konfirmasi Kata Sandi',
+                                        'Konfirmasi Kata Sandi Baru',
                                         TextField(
                                           controller: confirmPassC,
                                           obscureText: obscureConfirm,
@@ -698,38 +645,6 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                   ],
 
                                   const SizedBox(height: 16),
-
-                                  // Kotak info, gaya sama dengan halaman login
-                                  Container(
-                                    padding: const EdgeInsets.all(14),
-                                    decoration: BoxDecoration(
-                                      color: _latar,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(color: _abuBorder),
-                                    ),
-                                    child: const Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Icon(
-                                          Icons.verified_user_outlined,
-                                          color: _loginBlue,
-                                          size: 20,
-                                        ),
-                                        SizedBox(width: 12),
-                                        Expanded(
-                                          child: Text(
-                                            'Jika NIP diubah, Anda akan keluar dan harus masuk ulang dengan NIP baru.',
-                                            style: TextStyle(
-                                              color: _abuTeks,
-                                              fontSize: AppTypography.small,
-                                              height: 1.4,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
 
                                   if (errorText != null)
                                     Padding(
@@ -1057,6 +972,7 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                       title: 'Jabatan',
                       value: _valueOrDash(user?.jabatan),
                     ),
+
                     _divider(),
                     _buildProfileItem(
                       icon: Icons.phone_outlined,

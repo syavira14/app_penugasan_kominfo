@@ -262,6 +262,7 @@ class _Ev {
 
 String _evLabel(String raw) {
   final r = raw.toLowerCase();
+  if (r.contains('tolak')) return 'Kendala Ditolak';
   if (r.contains('revisi')) return 'Revisi';
   if (r.contains('kendala')) return 'Terkendala';
   if (r.contains('kumpul')) return 'Dikumpulkan';
@@ -281,7 +282,10 @@ String _evLabel(String raw) {
 }
 
 bool _byAtasan(String label) =>
-    label == 'Diberikan' || label == 'Revisi' || label == 'Disetujui';
+    label == 'Diberikan' ||
+    label == 'Revisi' ||
+    label == 'Disetujui' ||
+    label == 'Kendala Ditolak';
 
 Color _evColor(String label) {
   switch (label) {
@@ -291,6 +295,8 @@ Color _evColor(String label) {
       return Colors.orange.shade800;
     case 'Terkendala':
       return Colors.red.shade700;
+    case 'Kendala Ditolak':
+      return const Color(0xFFB42318);
     case 'Revisi':
       return Colors.deepOrange.shade600;
     case 'Dikumpulkan':
@@ -310,6 +316,8 @@ IconData _evIcon(String label) {
       return Icons.play_circle_fill_rounded;
     case 'Terkendala':
       return Icons.report_problem_rounded;
+    case 'Kendala Ditolak':
+      return Icons.cancel_rounded;
     case 'Revisi':
       return Icons.edit_note_rounded;
     case 'Dikumpulkan':
@@ -318,6 +326,23 @@ IconData _evIcon(String label) {
       return Icons.check_circle;
     default:
       return Icons.circle;
+  }
+}
+
+String _statusKendalaLabel(String raw) {
+  switch (raw.toLowerCase()) {
+    case 'menunggu_review':
+      return 'Menunggu Review';
+    case 'dalam_penanganan':
+      return 'Dalam Penanganan';
+    case 'menunggu_konfirmasi':
+      return 'Menunggu Konfirmasi';
+    case 'selesai':
+      return 'Selesai';
+    case 'ditolak':
+      return 'Ditolak';
+    default:
+      return raw.isEmpty ? '-' : raw;
   }
 }
 
@@ -504,7 +529,10 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     for (final item in assignments) {
       final aData = item.data();
       final status = (aData['status'] ?? '').toString().toLowerCase();
-      if (status != 'disetujui' && status != 'selesai' && status != 'dihentikan') continue;
+      if (status != 'disetujui' &&
+          status != 'selesai' &&
+          status != 'dihentikan')
+        continue;
 
       final tid = (aData['tugas_id'] ?? '').toString();
       final tData = tugas[tid] ?? <String, dynamic>{};
@@ -633,43 +661,87 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
               (kUid.isEmpty && kNama.isEmpty) ||
               (kUid.isNotEmpty && kUid == staffUid) ||
               (kNama.isNotEmpty && kNama == staffNama);
-          if (_s(k['penugasan_id']) == id || sameStaff) kendala.add({'_id': d.id, ...k});
+          if (_s(k['penugasan_id']) == id || sameStaff)
+            kendala.add({'_id': d.id, ...k});
         }
       }
     } catch (_) {}
 
     // Riwayat pengerjaan dan revisi dipasangkan menggunakan revisi_id.
     try {
-      final snap = await _firestore.collection('penugasan').doc(id)
-          .collection('riwayat_pengumpulan').get();
+      final snap = await _firestore
+          .collection('penugasan')
+          .doc(id)
+          .collection('riwayat_pengumpulan')
+          .get();
       for (final doc in snap.docs) {
         pengumpulan.add({'_id': doc.id, ...doc.data()});
       }
-      pengumpulan.sort((a,b) => (_parseDate(a['created_at']) ?? DateTime(1970))
-          .compareTo(_parseDate(b['created_at']) ?? DateTime(1970)));
-    } catch (e) { pengumpulan.add({'_error': e.toString()}); }
+      pengumpulan.sort(
+        (a, b) => (_parseDate(a['created_at']) ?? DateTime(1970)).compareTo(
+          _parseDate(b['created_at']) ?? DateTime(1970),
+        ),
+      );
+    } catch (e) {
+      pengumpulan.add({'_error': e.toString()});
+    }
     try {
-      final snap = await _firestore.collection('penugasan').doc(id)
-          .collection('riwayat_revisi').get();
+      final snap = await _firestore
+          .collection('penugasan')
+          .doc(id)
+          .collection('riwayat_revisi')
+          .get();
       for (final doc in snap.docs) {
         revisi.add({'_id': doc.id, ...doc.data()});
       }
-      revisi.sort((a,b) => (_parseDate(a['created_at']) ?? DateTime(1970))
-          .compareTo(_parseDate(b['created_at']) ?? DateTime(1970)));
-    } catch (e) { revisi.add({'_error': e.toString()}); }
+      revisi.sort(
+        (a, b) => (_parseDate(a['created_at']) ?? DateTime(1970)).compareTo(
+          _parseDate(b['created_at']) ?? DateTime(1970),
+        ),
+      );
+    } catch (e) {
+      revisi.add({'_error': e.toString()});
+    }
     // Hanya laporan milik penugasan yang sedang dibuka.
     kendala.removeWhere((k) => _s(k['penugasan_id']) != id);
     for (final k in kendala) {
       try {
         final laporanId = _s(k['_id']);
         if (laporanId.isEmpty) continue;
-        final snap = await _firestore.collection('laporan_kendala').doc(laporanId)
-            .collection('riwayat').get();
-        k['_riwayat'] = snap.docs.map((d) => {'_id': d.id, ...d.data()}).toList();
-      } catch (e) { k['_riwayat_error'] = e.toString(); }
+        final snap = await _firestore
+            .collection('laporan_kendala')
+            .doc(laporanId)
+            .collection('riwayat')
+            .get();
+        final riw = snap.docs.map((d) => {'_id': d.id, ...d.data()}).toList()
+          ..sort(
+            (a, b) => (_parseDate(a['created_at']) ?? DateTime(1970)).compareTo(
+              _parseDate(b['created_at']) ?? DateTime(1970),
+            ),
+          );
+        k['_riwayat'] = riw;
+      } catch (e) {
+        k['_riwayat_error'] = e.toString();
+      }
     }
-    return {'sub': sub, 'kendala': kendala,
-      'pengumpulan': pengumpulan, 'revisi': revisi};
+    kendala.sort(
+      (a, b) => (_parseDate(a['created_at']) ?? DateTime(1970)).compareTo(
+        _parseDate(b['created_at']) ?? DateTime(1970),
+      ),
+    );
+    if (tid.isNotEmpty && kendala.isNotEmpty) {
+      try {
+        await _firestore.collection('tugas').doc(tid).update({
+          'riwayat_kendala_cache.$id': kendala,
+        });
+      } catch (_) {}
+    }
+    return {
+      'sub': sub,
+      'kendala': kendala,
+      'pengumpulan': pengumpulan,
+      'revisi': revisi,
+    };
   }
 
   /// Susun alur status lengkap: diberikan → dikerjakan → kendala/revisi → ACC.
@@ -769,52 +841,114 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
       ev.add(disetujui());
     }
 
-    // Catatan revisi tunggal (bila belum ada event Revisi), sisipkan sebelum ACC.
-    if (revisiNote.isNotEmpty && !ev.any((e) => e.label == 'Revisi')) {
+    // Sisipkan riwayat revisi dari sub-koleksi `riwayat_revisi` atau field `catatan_revisi`.
+    if (!ev.any((e) => e.label == 'Revisi')) {
+      final revList = (extra['revisi'] ?? const <Map<String, dynamic>>[])
+          .where((e) => !e.containsKey('_error'))
+          .toList();
       final idx = ev.lastIndexWhere((e) => e.label == 'Disetujui');
-      ev.insert(
-        idx < 0 ? ev.length : idx,
-        _Ev(
-          'Revisi',
-          _parseDate(_first(a, ['tanggal_revisi', 'revisi_at'])),
-          atasan,
-          revisiNote,
-        ),
-      );
+      var pos = idx < 0 ? ev.length : idx;
+      if (revList.isNotEmpty) {
+        for (final r in revList) {
+          ev.insert(
+            pos++,
+            _Ev(
+              'Revisi',
+              _parseDate(_first(r, ['created_at', 'updated_at', 'tanggal'])),
+              atasan,
+              _s(_first(r, ['catatan_atasan', 'catatan', 'keterangan'])),
+            ),
+          );
+        }
+      } else if (revisiNote.isNotEmpty) {
+        ev.insert(
+          pos,
+          _Ev(
+            'Revisi',
+            _parseDate(_first(a, ['tanggal_revisi', 'revisi_at'])),
+            atasan,
+            revisiNote,
+          ),
+        );
+      }
     }
 
-    // Laporan kendala dari koleksi laporan_kendala.
+    // Laporan kendala dari koleksi laporan_kendala (termasuk kendala berulang & Kendala Ditolak).
     if (!ev.any((e) => e.label == 'Terkendala')) {
       final idx = ev.lastIndexWhere((e) => e.label == 'Disetujui');
       var pos = idx < 0 ? ev.length : idx;
       for (final k in extra['kendala'] ?? const <Map<String, dynamic>>[]) {
-        ev.insert(
-          pos++,
-          _Ev(
-            'Terkendala',
-            _parseDate(
-              _first(k, [
-                'created_at',
-                'tanggal',
-                'waktu',
-                'timestamp',
-                'dibuat_at',
-              ]),
-            ),
-            staff,
-            _s(
-              _first(k, [
-                'deskripsi',
-                'alasan',
-                'keterangan',
-                'isi',
-                'kendala',
-                'catatan',
-                'judul',
-              ]),
-            ),
-          ),
+        final riwayatLama = k['_riwayat'];
+        if (riwayatLama is List) {
+          for (final h in riwayatLama) {
+            if (h is Map) {
+              ev.insert(
+                pos++,
+                _Ev(
+                  'Terkendala',
+                  _parseDate(
+                    _first(Map<String, dynamic>.from(h), [
+                      'created_at',
+                      'tanggal',
+                      'waktu',
+                    ]),
+                  ),
+                  staff,
+                  _s(h['deskripsi_sebelumnya']).isNotEmpty
+                      ? _s(h['deskripsi_sebelumnya'])
+                      : _s(h['feedback']),
+                ),
+              );
+            }
+          }
+        }
+
+        final kTime = _parseDate(
+          _first(k, [
+            'created_at',
+            'tanggal_laporan',
+            'tanggal',
+            'waktu',
+            'timestamp',
+            'dibuat_at',
+          ]),
         );
+        final kDesc = _s(
+          _first(k, [
+            'deskripsi',
+            'alasan',
+            'keterangan',
+            'isi',
+            'kendala',
+            'catatan',
+            'judul',
+          ]),
+        );
+        ev.insert(pos++, _Ev('Terkendala', kTime, staff, kDesc));
+
+        // Jika laporan kendala ditolak oleh atasan, tambahkan step "Kendala Ditolak".
+        final kStatus = _s(k['status']).toLowerCase();
+        final alasanTolak = _s(k['alasan_penolakan']);
+        if (kStatus == 'ditolak' || alasanTolak.isNotEmpty) {
+          final rejectTime =
+              _parseDate(
+                _first(k, ['rejected_at', 'ditolak_at', 'updated_at']),
+              ) ??
+              kTime;
+          final penolak =
+              _personFromRaw(k['ditangani_oleh'], _usersById) ?? atasan;
+          ev.insert(
+            pos++,
+            _Ev(
+              'Kendala Ditolak',
+              rejectTime,
+              penolak,
+              alasanTolak.isNotEmpty
+                  ? 'Alasan penolakan: $alasanTolak'
+                  : 'Laporan kendala ditolak oleh atasan.',
+            ),
+          );
+        }
       }
     }
 
@@ -825,8 +959,17 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
       last = e.time ?? last;
       keys.add(last ?? DateTime.fromMillisecondsSinceEpoch(0));
     }
+    int stageRank(String label) {
+      if (label == 'Diberikan') return 0;
+      if (label == 'Disetujui') return 2;
+      return 1;
+    }
+
     final idx = List<int>.generate(ev.length, (i) => i)
       ..sort((x, y) {
+        final rx = stageRank(ev[x].label);
+        final ry = stageRank(ev[y].label);
+        if (rx != ry) return rx.compareTo(ry);
         final c = keys[x].compareTo(keys[y]);
         return c != 0 ? c : x.compareTo(y);
       });
@@ -1633,7 +1776,11 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
               flex: 11,
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: _donePill(_s(t['status_akhir']) == 'dihentikan' ? 'Dihentikan' : 'Selesai'),
+                child: _donePill(
+                  _s(t['status_akhir']) == 'dihentikan'
+                      ? 'Dihentikan'
+                      : 'Selesai',
+                ),
               ),
             ),
           ],
@@ -1713,7 +1860,11 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                         ),
                       ),
                       const SizedBox(width: 8),
-                      _donePill(_s(t['status_akhir']) == 'dihentikan' ? 'Dihentikan' : 'Selesai'),
+                      _donePill(
+                        _s(t['status_akhir']) == 'dihentikan'
+                            ? 'Dihentikan'
+                            : 'Selesai',
+                      ),
                     ],
                   ),
                 ),
@@ -1813,7 +1964,12 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     final files = List<Map<String, dynamic>>.from(t['files'] as List);
     final events = _buildTimeline(t, extra);
     final rekap = events
-        .where((e) => e.label == 'Revisi' || e.label == 'Terkendala')
+        .where(
+          (e) =>
+              e.label == 'Revisi' ||
+              e.label == 'Terkendala' ||
+              e.label == 'Kendala Ditolak',
+        )
         .toList();
 
     return Column(
@@ -1899,7 +2055,14 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [_sectionTitle('Status'), _donePill(_s(t['status_akhir']) == 'dihentikan' ? 'Dihentikan' : 'Selesai')],
+                children: [
+                  _sectionTitle('Status'),
+                  _donePill(
+                    _s(t['status_akhir']) == 'dihentikan'
+                        ? 'Dihentikan'
+                        : 'Selesai',
+                  ),
+                ],
               ),
             ),
           ],
@@ -1952,29 +2115,40 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     );
   }
 
-  Widget _historyFile(String label, String name, {Future<String> Function()? getUrl}) {
+  Widget _historyFile(
+    String label,
+    String name, {
+    Future<String> Function()? getUrl,
+  }) {
     if (name.trim().isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 6),
-      child: Row(children: [
-        const Icon(Icons.attach_file, size: 17, color: blue),
-        const SizedBox(width: 6),
-        Expanded(child: Text('$label: $name', style: const TextStyle(fontSize: 12))),
-        if (getUrl != null) IconButton(
-          tooltip: 'Buka lampiran',
-          icon: const Icon(Icons.visibility_outlined, color: blue),
-          onPressed: () async {
-            try {
-              final url = await getUrl();
-              if (!mounted) return;
-              await _previewFile(context, {'url': url}, name);
-            } catch (e) {
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Gagal membuka lampiran: $e')));
-            }
-          },
-        ),
-      ]),
+      child: Row(
+        children: [
+          const Icon(Icons.attach_file, size: 17, color: blue),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text('$label: $name', style: const TextStyle(fontSize: 12)),
+          ),
+          if (getUrl != null)
+            IconButton(
+              tooltip: 'Buka lampiran',
+              icon: const Icon(Icons.visibility_outlined, color: blue),
+              onPressed: () async {
+                try {
+                  final url = await getUrl();
+                  if (!mounted) return;
+                  await _previewFile(context, {'url': url}, name);
+                } catch (e) {
+                  if (mounted)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Gagal membuka lampiran: $e')),
+                    );
+                }
+              },
+            ),
+        ],
+      ),
     );
   }
 
@@ -1987,92 +2161,211 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
       borderRadius: BorderRadius.circular(12),
       border: Border.all(color: const Color(0xFFD8E7F5)),
     ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(title, style: const TextStyle(fontWeight: FontWeight.bold, color: navy)),
-      const SizedBox(height: 8),
-      ...children,
-    ]),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.bold, color: navy),
+        ),
+        const SizedBox(height: 8),
+        ...children,
+      ],
+    ),
   );
 
-  Widget _pairedHistory(BuildContext ctx, Map<String, dynamic> task,
-      Map<String, List<Map<String, dynamic>>> extra) {
-    final submissions = (extra['pengumpulan'] ?? []).where((e) => !e.containsKey('_error')).toList();
-    final revisions = (extra['revisi'] ?? []).where((e) => !e.containsKey('_error')).toList();
+  Widget _pairedHistory(
+    BuildContext ctx,
+    Map<String, dynamic> task,
+    Map<String, List<Map<String, dynamic>>> extra,
+  ) {
+    final submissions = (extra['pengumpulan'] ?? [])
+        .where((e) => !e.containsKey('_error'))
+        .toList();
+    final revisions = (extra['revisi'] ?? [])
+        .where((e) => !e.containsKey('_error'))
+        .toList();
     final assignmentId = _s(task['id']);
     if (submissions.isEmpty && revisions.isEmpty) {
       final errors = [...?extra['pengumpulan'], ...?extra['revisi']]
-          .where((e) => e.containsKey('_error')).map((e) => _s(e['_error'])).toList();
-      return Text(errors.isNotEmpty ? 'Riwayat tidak dapat dimuat: ${errors.join('; ')}'
-          : 'Belum ada data riwayat pengumpulan dan revisi.');
+          .where((e) => e.containsKey('_error'))
+          .map((e) => _s(e['_error']))
+          .toList();
+      return Text(
+        errors.isNotEmpty
+            ? 'Riwayat tidak dapat dimuat: ${errors.join('; ')}'
+            : 'Belum ada data riwayat pengumpulan dan revisi.',
+      );
     }
     final first = submissions.where((s) => _s(s['revisi_id']).isEmpty).toList();
     final used = <String>{};
     final widgets = <Widget>[];
     for (final s in first) {
       used.add(_s(s['_id']));
-      widgets.add(_historyCard('Pengumpulan Awal', [
-        Text(_s(s['keterangan']), style: const TextStyle(fontSize: 12)),
-        _historyFile('Hasil Staff', _s(s['file_nama']), getUrl:
-          _s(s['file_path']).isNotEmpty ? () => _storage.ambilLinkRiwayat(assignmentId, _s(s['_id'])) : null),
-      ]));
+      widgets.add(
+        _historyCard('Pengumpulan Awal', [
+          Text(_s(s['keterangan']), style: const TextStyle(fontSize: 12)),
+          _historyFile(
+            'Hasil Staff',
+            _s(s['file_nama']),
+            getUrl: _s(s['file_path']).isNotEmpty
+                ? () => _storage.ambilLinkRiwayat(assignmentId, _s(s['_id']))
+                : null,
+          ),
+        ]),
+      );
     }
     for (var i = 0; i < revisions.length; i++) {
       final r = revisions[i];
       final rid = _s(r['_id']);
-      final linked = submissions.where((s) => _s(s['revisi_id']) == rid ||
-          (_s(r['hasil_pengumpulan_id']).isNotEmpty &&
-           _s(s['_id']) == _s(r['hasil_pengumpulan_id']))).toList();
+      final linked = submissions
+          .where(
+            (s) =>
+                _s(s['revisi_id']) == rid ||
+                (_s(r['hasil_pengumpulan_id']).isNotEmpty &&
+                    _s(s['_id']) == _s(r['hasil_pengumpulan_id'])),
+          )
+          .toList();
       used.addAll(linked.map((s) => _s(s['_id'])));
-      widgets.add(_historyCard('Revisi ke-${i+1}', [
-        const Text('Instruksi Atasan', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-        Text(_s(r['catatan_atasan']).isEmpty ? '-' : _s(r['catatan_atasan']),
-          style: const TextStyle(fontSize: 12)),
-        // URL historis membutuhkan dukungan Edge Function untuk revisionId.
-        _historyFile('Lampiran Atasan', _s(r['file_revisi_nama'])),
-        const Divider(height: 18),
-        const Text('Hasil Perbaikan Staff', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-        if (linked.isEmpty) const Text('Belum ada hasil perbaikan.', style: TextStyle(fontSize: 12)),
-        for (final s in linked) ...[
-          Text(_s(s['keterangan']), style: const TextStyle(fontSize: 12)),
-          _historyFile('File Perbaikan', _s(s['file_nama']), getUrl:
-            _s(s['file_path']).isNotEmpty ? () => _storage.ambilLinkRiwayat(assignmentId, _s(s['_id'])) : null),
-        ],
-      ]));
+      widgets.add(
+        _historyCard('Revisi ke-${i + 1}', [
+          const Text(
+            'Instruksi Atasan',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+          ),
+          Text(
+            _s(r['catatan_atasan']).isEmpty ? '-' : _s(r['catatan_atasan']),
+            style: const TextStyle(fontSize: 12),
+          ),
+          // URL historis membutuhkan dukungan Edge Function untuk revisionId.
+          _historyFile('Lampiran Atasan', _s(r['file_revisi_nama'])),
+          const Divider(height: 18),
+          const Text(
+            'Hasil Perbaikan Staff',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+          ),
+          if (linked.isEmpty)
+            const Text(
+              'Belum ada hasil perbaikan.',
+              style: TextStyle(fontSize: 12),
+            ),
+          for (final s in linked) ...[
+            Text(_s(s['keterangan']), style: const TextStyle(fontSize: 12)),
+            _historyFile(
+              'File Perbaikan',
+              _s(s['file_nama']),
+              getUrl: _s(s['file_path']).isNotEmpty
+                  ? () => _storage.ambilLinkRiwayat(assignmentId, _s(s['_id']))
+                  : null,
+            ),
+          ],
+        ]),
+      );
     }
-    final orphan = submissions.where((s) => !used.contains(_s(s['_id']))).toList();
+    final orphan = submissions
+        .where((s) => !used.contains(_s(s['_id'])))
+        .toList();
     for (final s in orphan) {
-      widgets.add(_historyCard('Pengumpulan Lama (belum terhubung ke revisi)', [
-        Text(_s(s['keterangan']), style: const TextStyle(fontSize: 12)),
-        _historyFile('File Staff', _s(s['file_nama']), getUrl:
-          _s(s['file_path']).isNotEmpty ? () => _storage.ambilLinkRiwayat(assignmentId, _s(s['_id'])) : null),
-      ]));
+      widgets.add(
+        _historyCard('Pengumpulan Lama (belum terhubung ke revisi)', [
+          Text(_s(s['keterangan']), style: const TextStyle(fontSize: 12)),
+          _historyFile(
+            'File Staff',
+            _s(s['file_nama']),
+            getUrl: _s(s['file_path']).isNotEmpty
+                ? () => _storage.ambilLinkRiwayat(assignmentId, _s(s['_id']))
+                : null,
+          ),
+        ]),
+      );
     }
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: widgets);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: widgets,
+    );
   }
 
   Widget _issueHistory(Map<String, List<Map<String, dynamic>>> extra) {
     final issues = extra['kendala'] ?? [];
     if (issues.isEmpty) return const Text('Tidak ada laporan kendala.');
-    return Column(children: [
-      for (var i=0; i<issues.length; i++)
-        _historyCard('Laporan Kendala ${i+1}', [
-          Text('Kendala: ${_s(issues[i]['deskripsi'])}', style: const TextStyle(fontSize: 12)),
-          Text('Dampak: ${_s(issues[i]['dampak'])}', style: const TextStyle(fontSize: 12)),
-          Text('Solusi Atasan: ${_s(issues[i]['solusi'])}', style: const TextStyle(fontSize: 12)),
-          _historyFile('Bukti Kendala', _s(issues[i]['bukti_path']).split('/').last),
-          _historyFile('Lampiran Solusi', _s(issues[i]['solusi_file_path']).split('/').last,
-            getUrl: _s(issues[i]['solusi_file_path']).isNotEmpty
-              ? () => _storage.ambilLinkSolusi(_s(issues[i]['_id'])) : null),
-          for (final h in (issues[i]['_riwayat'] is List ? issues[i]['_riwayat'] as List : const []))
-            if (h is Map) ...[
-              const Divider(height: 18),
-              Text('Kendala sebelumnya: ${_s(h['deskripsi_sebelumnya'])}', style: const TextStyle(fontSize: 12)),
-              Text('Solusi sebelumnya: ${_s(h['solusi_sebelumnya'])}', style: const TextStyle(fontSize: 12)),
-              Text('Tanggapan Staff: ${_s(h['feedback'])}', style: const TextStyle(fontSize: 12)),
-              _historyFile('Lampiran solusi sebelumnya', _s(h['solusi_file_path']).split('/').last),
-            ],
-        ]),
-    ]);
+    return Column(
+      children: [
+        for (var i = 0; i < issues.length; i++)
+          Builder(
+            builder: (context) {
+              final k = issues[i];
+              final statusRaw = _s(k['status']);
+              final isDitolak =
+                  statusRaw.toLowerCase() == 'ditolak' ||
+                  _s(k['alasan_penolakan']).isNotEmpty;
+              return _historyCard(
+                'Laporan Kendala ${i + 1} (${_statusKendalaLabel(statusRaw)})',
+                [
+                  Text(
+                    'Kendala: ${_s(k['deskripsi'])}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  Text(
+                    'Dampak: ${_s(k['dampak'])}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  if (isDitolak)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Alasan Penolakan Atasan: ${_s(k['alasan_penolakan']).isEmpty ? '-' : _s(k['alasan_penolakan'])}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFB42318),
+                        ),
+                      ),
+                    )
+                  else
+                    Text(
+                      'Solusi Atasan: ${_s(k['solusi']).isEmpty ? '-' : _s(k['solusi'])}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  _historyFile(
+                    'Bukti Kendala',
+                    _s(k['bukti_path']).split('/').last,
+                  ),
+                  _historyFile(
+                    'Lampiran Solusi',
+                    _s(k['solusi_file_path']).split('/').last,
+                    getUrl: _s(k['solusi_file_path']).isNotEmpty
+                        ? () => _storage.ambilLinkSolusi(_s(k['_id']))
+                        : null,
+                  ),
+                  for (final h
+                      in (k['_riwayat'] is List
+                          ? k['_riwayat'] as List
+                          : const []))
+                    if (h is Map) ...[
+                      const Divider(height: 18),
+                      Text(
+                        'Kendala sebelumnya: ${_s(h['deskripsi_sebelumnya'])}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      Text(
+                        'Solusi sebelumnya: ${_s(h['solusi_sebelumnya'])}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      Text(
+                        'Tanggapan Staff: ${_s(h['feedback'])}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      _historyFile(
+                        'Lampiran solusi sebelumnya',
+                        _s(h['solusi_file_path']).split('/').last,
+                      ),
+                    ],
+                ],
+              );
+            },
+          ),
+      ],
+    );
   }
 
   Widget _fileCard(
@@ -2150,6 +2443,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
   Widget _rekapSection(List<_Ev> rekap) {
     final jmlRevisi = rekap.where((e) => e.label == 'Revisi').length;
     final jmlKendala = rekap.where((e) => e.label == 'Terkendala').length;
+    final jmlDitolak = rekap.where((e) => e.label == 'Kendala Ditolak').length;
 
     if (rekap.isEmpty) {
       return Container(
@@ -2198,6 +2492,12 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
               _evColor('Terkendala'),
               _evIcon('Terkendala'),
             ),
+            if (jmlDitolak > 0)
+              _pill(
+                'Ditolak: $jmlDitolak kali',
+                _evColor('Kendala Ditolak'),
+                _evIcon('Kendala Ditolak'),
+              ),
           ],
         ),
         const SizedBox(height: 10),
@@ -2242,6 +2542,8 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
                 Text(
                   e.label == 'Revisi'
                       ? 'Diminta oleh: ${e.actor}'
+                      : e.label == 'Kendala Ditolak'
+                      ? 'Ditolak oleh: ${e.actor}'
                       : 'Dilaporkan oleh: ${e.actor}',
                   style: TextStyle(
                     fontSize: AppTypography.caption,

@@ -80,6 +80,48 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
     }
   }
 
+  DateTime? _parseDate(dynamic rawDate) {
+    if (rawDate is Timestamp) return rawDate.toDate();
+    if (rawDate is DateTime) return rawDate;
+    if (rawDate is String && rawDate.trim().isNotEmpty) {
+      return DateTime.tryParse(rawDate.trim());
+    }
+    return null;
+  }
+
+  bool _hasKendalaHistoryInDoc(Map<String, dynamic> data) {
+    final status = (data['status'] ?? '').toString().toLowerCase();
+    if (status == 'terkendala') return true;
+    if ((data['kendala_aktif_id'] ?? '').toString().trim().isNotEmpty) {
+      return true;
+    }
+    if ((data['alasan_kendala'] ?? '').toString().trim().isNotEmpty) {
+      return true;
+    }
+    if (data['tanggal_kendala'] != null) return true;
+    for (final k in const [
+      'riwayat_status',
+      'riwayat',
+      'log_status',
+      'timeline',
+      'history',
+      'status_history',
+    ]) {
+      final list = data[k];
+      if (list is List) {
+        for (final item in list) {
+          if (item is Map) {
+            final s = (item['status'] ?? item['aksi'] ?? item['label'] ?? '')
+                .toString()
+                .toLowerCase();
+            if (s.contains('kendala')) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -114,126 +156,189 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
     final Widget content = StreamBuilder<QuerySnapshot>(
       stream: _firestore.collection('penugasan').snapshots(),
       builder: (context, snapshot) {
-        int totalTugas = 0;
-        int belumSelesai = 0;
-        int dikerjakan = 0;
-        int selesai = 0;
+        return StreamBuilder<QuerySnapshot>(
+          stream: _firestore.collection('laporan_kendala').snapshots(),
+          builder: (context, kendalaSnapshot) {
+            int totalTugas = 0;
+            int belumSelesai = 0;
+            int dikerjakan = 0;
+            int selesai = 0;
+            int totalRiwayatKendala = 0;
 
-        // Array 12 Bulan untuk grafik
-        List<int> tugasBulanan = List.filled(12, 0);
+            // Array 12 Bulan untuk grafik
+            final List<int> tugasBulanan = List.filled(12, 0);
+            final Map<String, DateTime?> penugasanDateById = {};
+            final Set<String> penugasanIdsWithReport = {};
 
-        if (snapshot.hasData) {
-          final docs = snapshot.data!.docs;
-          totalTugas = docs.length;
+            if (snapshot.hasData) {
+              final docs = snapshot.data!.docs;
+              totalTugas = docs.length;
 
-          for (final doc in docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final status = (data['status'] ?? 'pending')
-                .toString()
-                .toLowerCase();
+              for (final doc in docs) {
+                final data = doc.data() as Map<String, dynamic>;
+                final status = (data['status'] ?? 'pending')
+                    .toString()
+                    .toLowerCase();
 
-            switch (status) {
-              case 'disetujui':
-              case 'selesai':
-                selesai++;
-                break;
-              case 'berlangsung':
-              case 'dikumpulkan':
-              case 'revisi':
-                dikerjakan++;
-                break;
-              case 'pending':
-              case 'terkendala':
-              default:
-                belumSelesai++;
-                break;
-            }
+                switch (status) {
+                  case 'disetujui':
+                  case 'selesai':
+                    selesai++;
+                    break;
+                  case 'berlangsung':
+                  case 'dikumpulkan':
+                  case 'revisi':
+                    dikerjakan++;
+                    break;
+                  case 'pending':
+                  case 'terkendala':
+                  default:
+                    belumSelesai++;
+                    break;
+                }
 
-            // Hitung data untuk Grafik 12 Bulan berdasarkan tahun yang dipilih
-            final dynamic rawDate =
-                data['tanggal_tugas'] ??
-                data['created_at'] ??
-                data['tanggal_selesai'];
-            DateTime? docDate;
+                final DateTime? docDate = _parseDate(
+                  data['tanggal_tugas'] ??
+                      data['created_at'] ??
+                      data['tanggal_selesai'],
+                );
+                penugasanDateById[doc.id] = docDate;
 
-            if (rawDate is Timestamp) {
-              docDate = rawDate.toDate();
-            } else if (rawDate is String) {
-              docDate = DateTime.tryParse(rawDate);
-            }
-
-            if (docDate != null &&
-                docDate.year == _selectedYear &&
-                _cocokFilter(status)) {
-              if (docDate.month >= 1 && docDate.month <= 12) {
-                tugasBulanan[docDate.month - 1]++;
+                // Untuk filter 'semua' dan 'berlangsung', hitung dari penugasan.
+                if (_filterGrafik != 'terkendala') {
+                  if (docDate != null &&
+                      docDate.year == _selectedYear &&
+                      _cocokFilter(status)) {
+                    if (docDate.month >= 1 && docDate.month <= 12) {
+                      tugasBulanan[docDate.month - 1]++;
+                    }
+                  }
+                }
               }
             }
-          }
-        }
 
-        return Stack(
-          children: [
-            // LAYER 1: BACKGROUND GRADIENT
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: _buildHeaderBackground(scale, bgHeight),
-            ),
+            // Hitung riwayat kendala dari awal pelaporan hingga kendala/tugas selesai:
+            // Semua dokumen di koleksi `laporan_kendala` (baik statusnya masih
+            // menunggu_review, dalam_penanganan, menunggu_konfirmasi, maupun
+            // sudah selesai / ditolak) tetap tercatat di diagram kendala.
+            if (kendalaSnapshot.hasData) {
+              final kDocs = kendalaSnapshot.data!.docs;
+              totalRiwayatKendala = kDocs.length;
 
-            // LAYER 2: KONTEN
-            SafeArea(
-              child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                padding: EdgeInsets.only(bottom: 30 * scale),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: maxContent),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: sidePad),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildGreeting(scale),
-                          SizedBox(height: 22 * scale),
-                          _buildStatsCard(
-                            scale,
-                            totalTugas: totalTugas,
-                            belumSelesai: belumSelesai,
-                            dikerjakan: dikerjakan,
-                            selesai: selesai,
+              for (final kDoc in kDocs) {
+                final kData = kDoc.data() as Map<String, dynamic>;
+                final penId = (kData['penugasan_id'] ?? '').toString().trim();
+                if (penId.isNotEmpty) {
+                  penugasanIdsWithReport.add(penId);
+                }
+                if (_filterGrafik == 'terkendala') {
+                  final DateTime? kDate =
+                      _parseDate(
+                        kData['created_at'] ??
+                            kData['tanggal_laporan'] ??
+                            kData['tanggal'] ??
+                            kData['waktu'] ??
+                            kData['updated_at'],
+                      ) ??
+                      (penId.isNotEmpty ? penugasanDateById[penId] : null);
+                  if (kDate != null &&
+                      kDate.year == _selectedYear &&
+                      kDate.month >= 1 &&
+                      kDate.month <= 12) {
+                    tugasBulanan[kDate.month - 1]++;
+                  }
+                }
+              }
+            }
+
+            // Tambahkan juga penugasan yang punya riwayat/status terkendala
+            // namun belum tercatat di koleksi laporan_kendala.
+            if (snapshot.hasData) {
+              for (final doc in snapshot.data!.docs) {
+                if (penugasanIdsWithReport.contains(doc.id)) continue;
+                final data = doc.data() as Map<String, dynamic>;
+                if (_hasKendalaHistoryInDoc(data)) {
+                  totalRiwayatKendala++;
+                  if (_filterGrafik == 'terkendala') {
+                    final DateTime? kDate =
+                        _parseDate(data['tanggal_kendala']) ??
+                        penugasanDateById[doc.id];
+                    if (kDate != null &&
+                        kDate.year == _selectedYear &&
+                        kDate.month >= 1 &&
+                        kDate.month <= 12) {
+                      tugasBulanan[kDate.month - 1]++;
+                    }
+                  }
+                }
+              }
+            }
+
+            return Stack(
+              children: [
+                // LAYER 1: BACKGROUND GRADIENT
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: _buildHeaderBackground(scale, bgHeight),
+                ),
+
+                // LAYER 2: KONTEN
+                SafeArea(
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    padding: EdgeInsets.only(bottom: 30 * scale),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: maxContent),
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(horizontal: sidePad),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildGreeting(scale),
+                              SizedBox(height: 22 * scale),
+                              _buildStatsCard(
+                                scale,
+                                totalTugas: totalTugas,
+                                belumSelesai: belumSelesai,
+                                dikerjakan: dikerjakan,
+                                selesai: selesai,
+                              ),
+                              SizedBox(height: 28 * scale),
+
+                              // GRAFIK DENGAN FILTER DROPDOWN TAHUN
+                              _buildChartCard(scale, tugasBulanan),
+                              SizedBox(height: 30 * scale),
+
+                              // MENU UTAMA
+                              Text(
+                                'Menu Utama',
+                                style: TextStyle(
+                                  fontSize: AppTypography.section * scale,
+                                  fontWeight: FontWeight.bold,
+                                  color: biruTua,
+                                ),
+                              ),
+                              SizedBox(height: 14 * scale),
+                              _buildMenuGrid(
+                                scale,
+                                menuColumns,
+                                belumSelesai: belumSelesai,
+                                selesai: selesai,
+                                totalRiwayatKendala: totalRiwayatKendala,
+                              ),
+                            ],
                           ),
-                          SizedBox(height: 28 * scale),
-
-                          // GRAFIK DENGAN FILTER DROPDOWN TAHUN
-                          _buildChartCard(scale, tugasBulanan),
-                          SizedBox(height: 30 * scale),
-
-                          // MENU UTAMA
-                          Text(
-                            'Menu Utama',
-                            style: TextStyle(
-                              fontSize: AppTypography.section * scale,
-                              fontWeight: FontWeight.bold,
-                              color: biruTua,
-                            ),
-                          ),
-                          SizedBox(height: 14 * scale),
-                          _buildMenuGrid(
-                            scale,
-                            menuColumns,
-                            belumSelesai: belumSelesai,
-                            selesai: selesai,
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ),
-          ],
+              ],
+            );
+          },
         );
       },
     );
@@ -325,7 +430,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Dashboard Admin',
+                  'Dashboard Atasan',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: AppTypography.heading * scale,
@@ -537,6 +642,10 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
   Widget _buildChartCard(double scale, List<int> dataBulanan) {
     final currentYr = DateTime.now().year;
     final List<int> listTahun = List.generate(5, (i) => currentYr - 2 + i);
+    final int totalTahunIni = dataBulanan.fold<int>(0, (a, b) => a + b);
+    final String keteranganFilter = _filterGrafik == 'terkendala'
+        ? '$totalTahunIni riwayat kendala (awal pelaporan hingga selesai) di $_selectedYear'
+        : '$totalTahunIni tugas (${_labelFilter[_filterGrafik]!.toLowerCase()}) di $_selectedYear';
 
     return Container(
       width: double.infinity,
@@ -615,8 +724,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
           _buildFilterChips(scale),
           SizedBox(height: 10 * scale),
           Text(
-            '${dataBulanan.fold<int>(0, (a, b) => a + b)} tugas '
-            '(${_labelFilter[_filterGrafik]!.toLowerCase()}) di $_selectedYear',
+            keteranganFilter,
             style: TextStyle(
               fontSize: AppTypography.small * scale,
               color: Colors.grey.shade600,
@@ -629,6 +737,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
               data: dataBulanan,
               bulan: namaBulan,
               scale: scale,
+              isKendala: _filterGrafik == 'terkendala',
             ),
           ),
         ],
@@ -675,6 +784,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
     int columns, {
     required int belumSelesai,
     required int selesai,
+    int totalRiwayatKendala = 0,
   }) {
     return GridView(
       shrinkWrap: true,
@@ -740,11 +850,14 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
           icon: Icons.warning_amber_rounded,
           iconColor: merah,
           bgColor: const Color(0xFFFFEBEE),
+          badge: totalRiwayatKendala > 0
+              ? '$totalRiwayatKendala laporan'
+              : null,
           scale: scale,
           onTap: () => _buka(const LaporanKendalaAdminPage()),
         ),
         _buildMenuCard(
-          title: 'Profil Admin',
+          title: 'Profil Atasan',
           subtitle: 'Pengaturan akun',
           icon: Icons.manage_accounts_rounded,
           iconColor: Colors.purple,
@@ -867,11 +980,13 @@ class _GrafikBulanan extends StatelessWidget {
   final List<int> data;
   final List<String> bulan;
   final double scale;
+  final bool isKendala;
 
   const _GrafikBulanan({
     required this.data,
     required this.bulan,
     required this.scale,
+    this.isKendala = false,
   });
 
   static const double labelH = 14;
@@ -957,15 +1072,25 @@ class _GrafikBulanan extends StatelessWidget {
                                             gradient: LinearGradient(
                                               begin: Alignment.topCenter,
                                               end: Alignment.bottomCenter,
-                                              colors: i.isEven
-                                                  ? const [
-                                                      biruMuda,
-                                                      AppPalette.blue,
-                                                    ]
-                                                  : const [
-                                                      AppPalette.blue,
-                                                      biruTua,
-                                                    ],
+                                              colors: isKendala
+                                                  ? (i.isEven
+                                                        ? const [
+                                                            Color(0xFFFF8A80),
+                                                            Color(0xFFE53935),
+                                                          ]
+                                                        : const [
+                                                            Color(0xFFFF5252),
+                                                            Color(0xFFC62828),
+                                                          ])
+                                                  : (i.isEven
+                                                        ? const [
+                                                            biruMuda,
+                                                            AppPalette.blue,
+                                                          ]
+                                                        : const [
+                                                            AppPalette.blue,
+                                                            biruTua,
+                                                          ]),
                                             ),
                                             borderRadius:
                                                 const BorderRadius.vertical(
@@ -986,7 +1111,9 @@ class _GrafikBulanan extends StatelessWidget {
                                               fontSize:
                                                   AppTypography.caption * scale,
                                               fontWeight: FontWeight.bold,
-                                              color: biruTua,
+                                              color: isKendala
+                                                  ? const Color(0xFFC62828)
+                                                  : biruTua,
                                             ),
                                           ),
                                         ),

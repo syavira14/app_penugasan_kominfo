@@ -1,18 +1,19 @@
 import 'dart:async';
-import 'tugas_detail_page.dart';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/material.dart';
-import 'dart:typed_data';
 import 'package:file_saver/file_saver.dart';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/file_preview_service.dart';
 import '../../services/riwayat_file_service.dart';
 import '../../services/riwayat_penugasan_service.dart';
+import '../../services/staff_admin_api.dart';
 import '../../services/supabase_storage_service.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/app_layout.dart';
 import '../../widgets/simtas_file_preview_page.dart';
 
@@ -22,32 +23,169 @@ const Color kBiruSedang = Color(0xFF1D5FA0);
 const Color kBiruMuda = Color(0xFF4FA6DE);
 const Color kBgLight = Color(0xFFF7F9FB);
 
+const _historyKeys = [
+  'riwayat_status',
+  'riwayat',
+  'log_status',
+  'timeline',
+  'history',
+  'status_history',
+];
+
+String _s(dynamic v) => (v ?? '').toString().trim();
+
+dynamic _first(Map<String, dynamic>? m, List<String> keys) {
+  if (m == null) return null;
+  for (final k in keys) {
+    final v = m[k];
+    if (v == null) continue;
+    if (v is List && v.isEmpty) continue;
+    if (v.toString().trim().isEmpty) continue;
+    return v;
+  }
+  return null;
+}
+
+DateTime? _parseDate(dynamic value) {
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  if (value is String && value.isNotEmpty) return DateTime.tryParse(value);
+  return null;
+}
+
+/// Satu kejadian pada alur status sebuah tugas (step-by-step Riwayat Status).
+class _Ev {
+  final String label;
+  final DateTime? time;
+  final String actor;
+  final String note;
+  const _Ev(this.label, this.time, this.actor, this.note);
+}
+
+String _evLabel(String raw) {
+  final r = raw.toLowerCase();
+  if (r.contains('tolak')) return 'Kendala Ditolak';
+  if (r.contains('revisi')) return 'Revisi';
+  if (r.contains('kendala')) return 'Terkendala';
+  if (r.contains('kumpul')) return 'Dikumpulkan';
+  if (r.contains('setuju') || r.contains('acc') || r.contains('selesai')) {
+    return 'Disetujui';
+  }
+  if (r.contains('berlangsung') || r.contains('kerja') || r.contains('mulai')) {
+    return 'Dikerjakan';
+  }
+  if (r.contains('beri') ||
+      r.contains('pending') ||
+      r.contains('antre') ||
+      r.contains('menunggu')) {
+    return 'Diberikan';
+  }
+  return raw.isEmpty ? 'Update' : raw;
+}
+
+bool _byAtasan(String label) =>
+    label == 'Diberikan' ||
+    label == 'Revisi' ||
+    label == 'Disetujui' ||
+    label == 'Kendala Ditolak';
+
+Color _evColor(String label) {
+  switch (label) {
+    case 'Diberikan':
+      return AppPalette.blue;
+    case 'Dikerjakan':
+      return Colors.orange.shade800;
+    case 'Terkendala':
+      return Colors.red.shade700;
+    case 'Kendala Ditolak':
+      return const Color(0xFFB42318);
+    case 'Revisi':
+      return Colors.deepOrange.shade600;
+    case 'Dikumpulkan':
+      return Colors.deepPurple.shade400;
+    case 'Disetujui':
+      return Colors.green.shade700;
+    default:
+      return Colors.blueGrey.shade600;
+  }
+}
+
+IconData _evIcon(String label) {
+  switch (label) {
+    case 'Diberikan':
+      return Icons.assignment_ind_rounded;
+    case 'Dikerjakan':
+      return Icons.play_circle_fill_rounded;
+    case 'Terkendala':
+      return Icons.report_problem_rounded;
+    case 'Kendala Ditolak':
+      return Icons.cancel_rounded;
+    case 'Revisi':
+      return Icons.edit_note_rounded;
+    case 'Dikumpulkan':
+      return Icons.upload_file_rounded;
+    case 'Disetujui':
+      return Icons.check_circle;
+    default:
+      return Icons.circle;
+  }
+}
+
+String _statusKendalaLabel(String raw) {
+  switch (raw.toLowerCase()) {
+    case 'menunggu_review':
+      return 'Menunggu Review';
+    case 'dalam_penanganan':
+      return 'Dalam Penanganan';
+    case 'menunggu_konfirmasi':
+      return 'Menunggu Konfirmasi';
+    case 'selesai':
+      return 'Selesai';
+    case 'ditolak':
+      return 'Ditolak';
+    default:
+      return raw.isEmpty ? '-' : raw;
+  }
+}
+
 // ───────────────────────────────── Model ─────────────────────────────────
 class TugasModel {
   final String id;
+  final String tugasId;
+  final String staffUid;
+  final String namaStaff;
   final String judulTugas;
   final String deskripsiTugas;
   final String namaAtasan;
   final String prioritasTugas; // "Rendah", "Sedang", "Tinggi"
+  final String statusAkhir;
   final DateTime? tanggalMulai;
   final DateTime? batasWaktu;
   final String keteranganHasil;
   final String fileHasil;
   final String fileHasilUrl;
   final String fileHasilPath;
+  final Map<String, dynamic> rawAssignment;
+  final Map<String, dynamic> rawTask;
 
   const TugasModel({
     required this.id,
+    this.tugasId = '',
+    this.staffUid = '',
+    this.namaStaff = 'Staff',
     required this.judulTugas,
     required this.deskripsiTugas,
     required this.namaAtasan,
     required this.prioritasTugas,
+    this.statusAkhir = 'disetujui',
     required this.tanggalMulai,
     required this.batasWaktu,
     this.keteranganHasil = '',
     this.fileHasil = '',
     this.fileHasilUrl = '',
     this.fileHasilPath = '',
+    this.rawAssignment = const {},
+    this.rawTask = const {},
   });
 }
 
@@ -75,6 +213,9 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     'Desember',
   ];
 
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final SupabaseStorageService _storage = SupabaseStorageService();
+
   List<TugasModel> _daftarRiwayat = [];
   StreamSubscription<List<Map<String, dynamic>>>? _subscription;
   bool _loading = true;
@@ -101,12 +242,18 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
             .map(
               (row) => TugasModel(
                 id: row['id'].toString(),
+                tugasId: (row['tugas_id'] ?? '').toString(),
+                staffUid: (row['staff_uid'] ?? uid).toString(),
+                namaStaff: (row['nama_staff'] ?? 'Staff').toString(),
                 judulTugas: (row['judul'] ?? '-').toString(),
                 deskripsiTugas: (row['deskripsi'] ?? '-').toString(),
                 namaAtasan: (row['nama_atasan'] ?? '-').toString(),
                 prioritasTugas: _title(
                   (row['prioritas'] ?? 'sedang').toString(),
                 ),
+                statusAkhir:
+                    (row['status_akhir'] ?? row['status'] ?? 'disetujui')
+                        .toString(),
                 tanggalMulai: _date(
                   row['tanggal_mulai_tugas'] ??
                       row['tanggal_tugas_diberikan'] ??
@@ -121,6 +268,12 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                 fileHasil: (row['file_hasil_nama'] ?? '').toString(),
                 fileHasilUrl: (row['file_hasil_url'] ?? '').toString(),
                 fileHasilPath: (row['file_hasil_path'] ?? '').toString(),
+                rawAssignment: row['raw_assignment'] is Map
+                    ? Map<String, dynamic>.from(row['raw_assignment'] as Map)
+                    : row,
+                rawTask: row['raw_task'] is Map
+                    ? Map<String, dynamic>.from(row['raw_task'] as Map)
+                    : row,
               ),
             )
             .toList();
@@ -154,13 +307,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     super.dispose();
   }
 
-  // Terima Timestamp, DateTime, maupun String tanggal (sama seperti halaman atasan).
-  DateTime? _date(dynamic value) {
-    if (value is Timestamp) return value.toDate();
-    if (value is DateTime) return value;
-    if (value is String && value.isNotEmpty) return DateTime.tryParse(value);
-    return null;
-  }
+  DateTime? _date(dynamic value) => _parseDate(value);
 
   String _title(String value) =>
       value.isEmpty ? '-' : value[0].toUpperCase() + value.substring(1);
@@ -216,8 +363,15 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
   Widget _prioPill(String p, double scale) =>
       _pill(p, _prioColor(p), Icons.flag_rounded, scale);
 
-  Widget _donePill(double scale) =>
-      _pill('Selesai', Colors.green.shade700, Icons.check_circle, scale);
+  Widget _donePill(double scale, [String statusAkhir = 'disetujui']) {
+    final bool stopped = statusAkhir.toLowerCase() == 'dihentikan';
+    return _pill(
+      stopped ? 'Dihentikan' : 'Selesai',
+      stopped ? Colors.red.shade700 : Colors.green.shade700,
+      stopped ? Icons.stop_circle_rounded : Icons.check_circle,
+      scale,
+    );
+  }
 
   String _fmt(DateTime? d, {bool jam = false}) {
     if (d == null) return '-';
@@ -238,7 +392,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     final base =
         '${d.day.toString().padLeft(2, '0')} ${months[d.month - 1]} ${d.year}';
     if (!jam) return base;
-    return '$base, ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')} WIB';
+    return '$base, ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 
   bool get _periodActive => _selectedMonth != 0 || _selectedYear != 0;
@@ -262,13 +416,11 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
 
   Future<String> _urlFile(TugasModel t) async {
     if (t.fileHasilPath.isNotEmpty) {
-      // Jalur utama: klien Supabase (RLS folder milik staff sendiri).
       try {
         return await SupabaseStorageService().buatLinkSementara(
           t.fileHasilPath,
         );
       } catch (_) {
-        // Cadangan: Edge Function.
         return ambilUrlFileHasil(t.id, path: t.fileHasilPath);
       }
     }
@@ -323,7 +475,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
       Uint8List data;
       if (t.fileHasilPath.isNotEmpty) {
         try {
-          // Unduh langsung dari bucket (hanya file milik staff sendiri).
           data = await FilePreviewService().downloadFileStaff(t.fileHasilPath);
         } catch (_) {
           final r = await http.get(Uri.parse(await _urlFile(t)));
@@ -347,7 +498,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
       );
       _pesan('File "$name" berhasil diunduh');
     } catch (e) {
-      // Cadangan: buka tautan agar bisa disimpan manual.
       try {
         await _bukaFile(await _urlFile(t));
       } catch (_) {
@@ -368,6 +518,354 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     }
   }
 
+  // ─────────────────────── Muat Riwayat Status Step-by-Step ───────────────────────
+
+  Future<Map<String, List<Map<String, dynamic>>>> _loadExtra(
+    TugasModel t,
+  ) async {
+    final id = t.id;
+    final tid = t.tugasId;
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? t.staffUid;
+
+    final sub = <Map<String, dynamic>>[];
+    final kendala = <Map<String, dynamic>>[];
+    final pengumpulan = <Map<String, dynamic>>[];
+    final revisi = <Map<String, dynamic>>[];
+
+    try {
+      final s = await _firestore
+          .collection('penugasan')
+          .doc(id)
+          .collection('riwayat_status')
+          .get();
+      for (final d in s.docs) {
+        sub.add(d.data());
+      }
+    } catch (_) {}
+
+    // Ambil seluruh laporan kendala (termasuk kendala berulang di sub-koleksi `riwayat`
+    // maupun kendala yang dilaporkan sebelum akun staf di-reset password-nya)
+    // agar hasilnya sama persis dengan Riwayat Tugas Staff di Role Atasan.
+    try {
+      final fetchedKendala = await StaffAdminApi.fetchKendalaForPenugasan(
+        penugasanId: id,
+        tugasId: tid,
+        currentUid: currentUid,
+        staffUid: t.staffUid,
+        staffNama: t.namaStaff,
+        rawTask: t.rawTask,
+        rawAssignment: t.rawAssignment,
+      );
+      kendala.addAll(fetchedKendala);
+    } catch (_) {}
+
+    try {
+      final snap = await _firestore
+          .collection('penugasan')
+          .doc(id)
+          .collection('riwayat_pengumpulan')
+          .get();
+      for (final doc in snap.docs) {
+        pengumpulan.add({'_id': doc.id, ...doc.data()});
+      }
+      pengumpulan.sort(
+        (a, b) => (_parseDate(a['created_at']) ?? DateTime(1970)).compareTo(
+          _parseDate(b['created_at']) ?? DateTime(1970),
+        ),
+      );
+    } catch (_) {}
+
+    try {
+      final snap = await _firestore
+          .collection('penugasan')
+          .doc(id)
+          .collection('riwayat_revisi')
+          .get();
+      for (final doc in snap.docs) {
+        revisi.add({'_id': doc.id, ...doc.data()});
+      }
+      revisi.sort(
+        (a, b) => (_parseDate(a['created_at']) ?? DateTime(1970)).compareTo(
+          _parseDate(b['created_at']) ?? DateTime(1970),
+        ),
+      );
+    } catch (_) {}
+
+    return {
+      'sub': sub,
+      'kendala': kendala,
+      'pengumpulan': pengumpulan,
+      'revisi': revisi,
+    };
+  }
+
+  _Ev _evFromMap(Map<String, dynamic> m, String staff, String atasan) {
+    final label = _evLabel(
+      _s(_first(m, ['status', 'aksi', 'label', 'judul', 'tipe'])),
+    );
+    final time = _parseDate(
+      _first(m, [
+        'waktu',
+        'tanggal',
+        'timestamp',
+        'created_at',
+        'dibuat_at',
+        'at',
+      ]),
+    );
+    final note = _s(
+      _first(m, [
+        'catatan',
+        'keterangan',
+        'note',
+        'alasan',
+        'pesan',
+        'deskripsi',
+      ]),
+    );
+    final rawOleh = _s(_first(m, ['oleh_nama', 'oleh', 'by', 'actor']));
+    return _Ev(
+      label,
+      time,
+      rawOleh.isNotEmpty ? rawOleh : (_byAtasan(label) ? atasan : staff),
+      note,
+    );
+  }
+
+  List<_Ev> _buildTimeline(
+    TugasModel t,
+    Map<String, List<Map<String, dynamic>>> extra,
+  ) {
+    final a = t.rawAssignment;
+    final tk = t.rawTask;
+    final staff = t.namaStaff;
+    final atasan = t.namaAtasan;
+    final mulai = t.tanggalMulai;
+    final selesai = t.batasWaktu;
+
+    final DateTime? waktuDiberikan =
+        _parseDate(
+          _first(tk, ['tanggal_tugas_diberikan', 'created_at']) ??
+              _first(a, ['created_at', 'tanggal_diberikan', 'assigned_at']),
+        ) ??
+        mulai;
+
+    final DateTime? waktuDisetujui =
+        _parseDate(
+          _first(a, [
+            'tanggal_disetujui',
+            'disetujui_at',
+            'approved_at',
+            'selesai_at',
+            'updated_at',
+          ]),
+        ) ??
+        selesai;
+
+    _Ev diberikan() => _Ev(
+      'Diberikan',
+      waktuDiberikan,
+      atasan,
+      'Tugas diberikan kepada $staff.',
+    );
+
+    _Ev disetujui() => _Ev(
+      'Disetujui',
+      waktuDisetujui,
+      atasan,
+      _s(_first(a, ['catatan_atasan', 'catatan_persetujuan'])),
+    );
+
+    final entries = <_Ev>[];
+    for (final k in _historyKeys) {
+      final v = a[k];
+      if (v is List) {
+        for (final e in v) {
+          if (e is Map) {
+            entries.add(
+              _evFromMap(Map<String, dynamic>.from(e), staff, atasan),
+            );
+          }
+        }
+      }
+    }
+    for (final m in extra['sub'] ?? const <Map<String, dynamic>>[]) {
+      entries.add(_evFromMap(m, staff, atasan));
+    }
+
+    final ev = <_Ev>[];
+
+    if (entries.isNotEmpty) {
+      if (!entries.any((e) => e.label == 'Diberikan')) ev.add(diberikan());
+      ev.addAll(entries);
+      if (!ev.any((e) => e.label == 'Disetujui')) ev.add(disetujui());
+    } else {
+      ev.add(diberikan());
+      ev.add(
+        _Ev(
+          'Dikerjakan',
+          _parseDate(
+                _first(a, ['tanggal_mulai_kerja', 'mulai_at', 'started_at']),
+              ) ??
+              mulai,
+          staff,
+          (mulai != null || selesai != null)
+              ? 'Periode pengerjaan: ${_fmt(mulai)} – ${_fmt(selesai)}'
+              : '',
+        ),
+      );
+      ev.add(
+        _Ev(
+          'Dikumpulkan',
+          _parseDate(
+            _first(a, [
+              'tanggal_dikumpulkan',
+              'dikumpulkan_at',
+              'submitted_at',
+            ]),
+          ),
+          staff,
+          t.keteranganHasil,
+        ),
+      );
+      ev.add(disetujui());
+    }
+
+    // Sisipkan riwayat revisi dari sub-koleksi `riwayat_revisi` atau field `catatan_revisi`.
+    if (!ev.any((e) => e.label == 'Revisi')) {
+      final revList = extra['revisi'] ?? const <Map<String, dynamic>>[];
+      final idx = ev.lastIndexWhere((e) => e.label == 'Disetujui');
+      var pos = idx < 0 ? ev.length : idx;
+      if (revList.isNotEmpty) {
+        for (final r in revList) {
+          ev.insert(
+            pos++,
+            _Ev(
+              'Revisi',
+              _parseDate(_first(r, ['created_at', 'updated_at', 'tanggal'])),
+              atasan,
+              _s(_first(r, ['catatan_atasan', 'catatan', 'keterangan'])),
+            ),
+          );
+        }
+      } else {
+        final revisiNote = _s(a['catatan_revisi']);
+        if (revisiNote.isNotEmpty) {
+          ev.insert(
+            pos,
+            _Ev(
+              'Revisi',
+              _parseDate(_first(a, ['tanggal_revisi', 'revisi_at'])),
+              atasan,
+              revisiNote,
+            ),
+          );
+        }
+      }
+    }
+
+    // Sisipkan seluruh laporan kendala (termasuk kendala berulang di `_riwayat`
+    // serta aksi "Kendala Ditolak" jika laporan kendala ditolak oleh atasan).
+    if (!ev.any((e) => e.label == 'Terkendala')) {
+      final idx = ev.lastIndexWhere((e) => e.label == 'Disetujui');
+      var pos = idx < 0 ? ev.length : idx;
+      for (final k in extra['kendala'] ?? const <Map<String, dynamic>>[]) {
+        final riwayatLama = k['_riwayat'];
+        if (riwayatLama is List) {
+          for (final h in riwayatLama) {
+            if (h is Map) {
+              ev.insert(
+                pos++,
+                _Ev(
+                  'Terkendala',
+                  _parseDate(
+                    _first(Map<String, dynamic>.from(h), [
+                      'created_at',
+                      'tanggal',
+                      'waktu',
+                    ]),
+                  ),
+                  staff,
+                  _s(h['deskripsi_sebelumnya']).isNotEmpty
+                      ? _s(h['deskripsi_sebelumnya'])
+                      : _s(h['feedback']),
+                ),
+              );
+            }
+          }
+        }
+
+        final kTime = _parseDate(
+          _first(k, [
+            'created_at',
+            'tanggal_laporan',
+            'tanggal',
+            'waktu',
+            'timestamp',
+            'dibuat_at',
+          ]),
+        );
+        final kDesc = _s(
+          _first(k, [
+            'deskripsi',
+            'alasan',
+            'keterangan',
+            'isi',
+            'kendala',
+            'catatan',
+            'judul',
+          ]),
+        );
+        ev.insert(pos++, _Ev('Terkendala', kTime, staff, kDesc));
+
+        // Jika laporan kendala ditolak oleh atasan, tambahkan step "Kendala Ditolak".
+        final kStatus = _s(k['status']).toLowerCase();
+        final alasanTolak = _s(k['alasan_penolakan']);
+        if (kStatus == 'ditolak' || alasanTolak.isNotEmpty) {
+          final rejectTime =
+              _parseDate(
+                _first(k, ['rejected_at', 'ditolak_at', 'updated_at']),
+              ) ??
+              kTime;
+          ev.insert(
+            pos++,
+            _Ev(
+              'Kendala Ditolak',
+              rejectTime,
+              atasan,
+              alasanTolak.isNotEmpty
+                  ? 'Alasan penolakan: $alasanTolak'
+                  : 'Laporan kendala ditolak oleh atasan.',
+            ),
+          );
+        }
+      }
+    }
+
+    // Urutkan stabil berdasarkan waktu; pastikan Diberikan di awal dan Disetujui di akhir.
+    DateTime? last;
+    final keys = <DateTime>[];
+    for (final e in ev) {
+      last = e.time ?? last;
+      keys.add(last ?? DateTime.fromMillisecondsSinceEpoch(0));
+    }
+    int stageRank(String label) {
+      if (label == 'Diberikan') return 0;
+      if (label == 'Disetujui') return 2;
+      return 1;
+    }
+
+    final idx = List<int>.generate(ev.length, (i) => i)
+      ..sort((x, y) {
+        final rx = stageRank(ev[x].label);
+        final ry = stageRank(ev[y].label);
+        if (rx != ry) return rx.compareTo(ry);
+        final c = keys[x].compareTo(keys[y]);
+        return c != 0 ? c : x.compareTo(y);
+      });
+    return [for (final i in idx) ev[i]];
+  }
+
   // ─────────────────────────────────── Build ───────────────────────────────────
 
   @override
@@ -380,7 +878,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
       backgroundColor: kBgLight,
       body: Column(
         children: [
-          // HEADER GRADIENT FLAT (sama dengan Kalender Penugasan)
+          // HEADER GRADIENT FLAT
           Container(
             width: double.infinity,
             decoration: const BoxDecoration(
@@ -444,7 +942,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
   Widget _buildBody(double scale, bool isWide) {
     final q = _pencarian.toLowerCase().trim();
 
-    // Daftar tahun dari data.
     final years = <int>{DateTime.now().year};
     for (final t in _daftarRiwayat) {
       if (t.batasWaktu != null) years.add(t.batasWaktu!.year);
@@ -452,7 +949,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     if (_selectedYear != 0) years.add(_selectedYear);
     final yearList = years.toList()..sort((a, b) => b.compareTo(a));
 
-    // 1) Filter periode
     final byPeriod = _daftarRiwayat.where((t) {
       if (!_periodActive) return true;
       final d = t.batasWaktu;
@@ -462,7 +958,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
       return true;
     }).toList();
 
-    // 2) Filter pencarian
     final filtered = byPeriod.where((t) {
       return q.isEmpty ||
           t.judulTugas.toLowerCase().contains(q) ||
@@ -658,21 +1153,30 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
 
   // ─────────────────────────── Pencarian + Filter Periode ───────────────────────────
 
-  Widget _searchBar(double scale) => TextField(
-    onChanged: (v) => setState(() {
-      _pencarian = v;
-      _page = 0;
-    }),
-    decoration: InputDecoration(
-      hintText: 'Cari judul tugas atau atasan...',
-      hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13 * scale),
-      prefixIcon: const Icon(Icons.search, color: kBiruSedang),
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: EdgeInsets.symmetric(vertical: 14 * scale),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(30),
-        borderSide: BorderSide.none,
+  Widget _searchBar(double scale) => Container(
+    height: 48,
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.05),
+          blurRadius: 10,
+          offset: const Offset(0, 3),
+        ),
+      ],
+    ),
+    child: TextField(
+      onChanged: (v) => setState(() {
+        _pencarian = v;
+        _page = 0;
+      }),
+      decoration: InputDecoration(
+        hintText: 'Cari judul tugas atau atasan...',
+        hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13 * scale),
+        prefixIcon: const Icon(Icons.search_rounded, color: kBiruSedang),
+        border: InputBorder.none,
+        contentPadding: const EdgeInsets.symmetric(vertical: 14),
       ),
     ),
   );
@@ -684,15 +1188,24 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     required double scale,
   }) {
     return Container(
+      height: 48,
       padding: EdgeInsets.symmetric(horizontal: 14 * scale),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(30),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<int>(
           value: value,
           isExpanded: true,
+          borderRadius: BorderRadius.circular(16),
           icon: const Icon(Icons.arrow_drop_down, color: kBiruSedang),
           style: TextStyle(
             fontSize: 13 * scale,
@@ -915,7 +1428,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
               flex: 11,
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: _donePill(scale),
+                child: _donePill(scale, t.statusAkhir),
               ),
             ),
           ],
@@ -953,7 +1466,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   _prioPill(t.prioritasTugas, scale),
-                  _donePill(scale),
+                  _donePill(scale, t.statusAkhir),
                 ],
               ),
               SizedBox(height: 10 * scale),
@@ -985,13 +1498,13 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
               SizedBox(height: 4 * scale),
               _infoRow(
                 Icons.play_circle_outline_rounded,
-                'Diberikan: ${_fmt(t.tanggalMulai, jam: true)}',
+                'Diberikan: ${_fmt(t.tanggalMulai, jam: true)} WIB',
                 scale,
               ),
               SizedBox(height: 4 * scale),
               _infoRow(
                 Icons.event_rounded,
-                'Batas waktu: ${_fmt(t.batasWaktu, jam: true)}',
+                'Batas waktu: ${_fmt(t.batasWaktu, jam: true)} WIB',
                 scale,
               ),
               SizedBox(height: 8 * scale),
@@ -1054,21 +1567,118 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     ],
   );
 
-  // ─────────────────────────── Pop-up Dialog Detail ───────────────────────────
+  // ─────────────────────────── Pop-up Dialog Detail + Step-by-Step Riwayat Status ───────────────────────────
 
   Widget _sectionTitle(String s) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: Text(
       s,
       style: const TextStyle(
-        fontSize: 13,
+        fontSize: AppTypography.body,
         fontWeight: FontWeight.bold,
         color: kBiruTua,
       ),
     ),
   );
 
+  Widget _historyCard(String title, List<Widget> children) => Container(
+    width: double.infinity,
+    margin: const EdgeInsets.only(bottom: 10),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF1F6FC),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFFD8E7F5)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.bold, color: kBiruTua),
+        ),
+        const SizedBox(height: 8),
+        ...children,
+      ],
+    ),
+  );
+
+  Widget _issueHistory(Map<String, List<Map<String, dynamic>>> extra) {
+    final issues = extra['kendala'] ?? [];
+    if (issues.isEmpty) {
+      return const Text(
+        'Tidak ada laporan kendala.',
+        style: TextStyle(fontSize: 12),
+      );
+    }
+    return Column(
+      children: [
+        for (var i = 0; i < issues.length; i++) ...[
+          Builder(
+            builder: (context) {
+              final k = issues[i];
+              final statusRaw = _s(k['status']);
+              final isDitolak =
+                  statusRaw.toLowerCase() == 'ditolak' ||
+                  _s(k['alasan_penolakan']).isNotEmpty;
+              return _historyCard(
+                'Laporan Kendala ${i + 1} (${_statusKendalaLabel(statusRaw)})',
+                [
+                  Text(
+                    'Kendala: ${_s(k['deskripsi']).isEmpty ? '-' : _s(k['deskripsi'])}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  Text(
+                    'Dampak: ${_s(k['dampak']).isEmpty ? '-' : _s(k['dampak'])}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  if (isDitolak)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Alasan Penolakan Atasan: ${_s(k['alasan_penolakan']).isEmpty ? '-' : _s(k['alasan_penolakan'])}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFB42318),
+                        ),
+                      ),
+                    )
+                  else
+                    Text(
+                      'Solusi Atasan: ${_s(k['solusi']).isEmpty ? '-' : _s(k['solusi'])}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  for (final h
+                      in (k['_riwayat'] is List
+                          ? k['_riwayat'] as List
+                          : const []))
+                    if (h is Map) ...[
+                      const Divider(height: 18),
+                      Text(
+                        'Kendala sebelumnya: ${_s(h['deskripsi_sebelumnya'])}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      Text(
+                        'Solusi sebelumnya: ${_s(h['solusi_sebelumnya'])}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      Text(
+                        'Tanggapan Staff: ${_s(h['feedback'])}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ],
+                ],
+              );
+            },
+          ),
+        ],
+      ],
+    );
+  }
+
   void _tampilkanPopUpDetail(TugasModel t) {
+    final future = _loadExtra(t);
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
@@ -1076,55 +1686,86 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
         clipBehavior: Clip.antiAlias,
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: 560,
+            maxWidth: 640,
             maxHeight: MediaQuery.of(ctx).size.height * 0.9,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Detail Riwayat Tugas',
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.bold,
-                          color: kBiruTua,
+          child: FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
+            future: future,
+            builder: (ctx, snap) {
+              final loading = snap.connectionState == ConnectionState.waiting;
+              final extra =
+                  snap.data ??
+                  const {
+                    'sub': <Map<String, dynamic>>[],
+                    'kendala': <Map<String, dynamic>>[],
+                    'pengumpulan': <Map<String, dynamic>>[],
+                    'revisi': <Map<String, dynamic>>[],
+                  };
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Detail Riwayat Tugas',
+                            style: TextStyle(
+                              fontSize: AppTypography.section,
+                              fontWeight: FontWeight.bold,
+                              color: kBiruTua,
+                            ),
+                          ),
                         ),
-                      ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
                     ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      icon: const Icon(Icons.close),
+                  ),
+                  if (loading)
+                    const LinearProgressIndicator(minHeight: 2)
+                  else
+                    const Divider(height: 1),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(20),
+                      child: _detailContent(ctx, t, extra),
                     ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              Flexible(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: _detailContent(ctx, t),
-                ),
-              ),
-            ],
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),
     );
   }
 
-  Widget _detailContent(BuildContext ctx, TugasModel t) {
+  Widget _detailContent(
+    BuildContext ctx,
+    TugasModel t,
+    Map<String, List<Map<String, dynamic>>> extra,
+  ) {
+    final events = _buildTimeline(t, extra);
+    final rekap = events
+        .where(
+          (e) =>
+              e.label == 'Revisi' ||
+              e.label == 'Terkendala' ||
+              e.label == 'Kendala Ditolak',
+        )
+        .toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           t.judulTugas,
           style: const TextStyle(
-            fontSize: 18,
+            fontSize: AppTypography.subtitle,
             fontWeight: FontWeight.bold,
             color: kBiruTua,
           ),
@@ -1137,14 +1778,8 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
         ),
         const SizedBox(height: 6),
         _infoRow(
-          Icons.play_circle_outline_rounded,
-          'Diberikan: ${_fmt(t.tanggalMulai, jam: true)}',
-          1,
-        ),
-        const SizedBox(height: 6),
-        _infoRow(
-          Icons.flag_outlined,
-          'Batas Waktu: ${_fmt(t.batasWaktu, jam: true)}',
+          Icons.calendar_today_rounded,
+          '${_fmt(t.tanggalMulai)} – ${_fmt(t.batasWaktu)}',
           1,
         ),
         const Divider(height: 28),
@@ -1163,7 +1798,10 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [_sectionTitle('Status'), _donePill(1)],
+                children: [
+                  _sectionTitle('Status'),
+                  _donePill(1, t.statusAkhir),
+                ],
               ),
             ),
           ],
@@ -1173,7 +1811,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
         Text(
           t.deskripsiTugas,
           style: TextStyle(
-            fontSize: 12.5,
+            fontSize: AppTypography.small,
             height: 1.4,
             color: Colors.grey.shade700,
           ),
@@ -1192,7 +1830,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
                 ? t.keteranganHasil
                 : 'Tidak ada catatan.',
             style: TextStyle(
-              fontSize: 12,
+              fontSize: AppTypography.small,
               height: 1.4,
               color: Colors.grey.shade800,
             ),
@@ -1212,12 +1850,222 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
             ),
             child: Text(
               'Tidak ada lampiran hasil pekerjaan.',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              style: TextStyle(
+                fontSize: AppTypography.small,
+                color: Colors.grey.shade600,
+              ),
             ),
           )
         else
           _fileCard(ctx, t),
+        const Divider(height: 28),
+        _sectionTitle('Riwayat Kendala & Solusi'),
+        _issueHistory(extra),
+        const Divider(height: 28),
+        _sectionTitle('Rekap Revisi & Kendala'),
+        _rekapSection(rekap),
+        const Divider(height: 28),
+        _sectionTitle('Riwayat Status'),
+        const SizedBox(height: 4),
+        for (var i = 0; i < events.length; i++)
+          _timelineRow(events[i], isLast: i == events.length - 1),
       ],
+    );
+  }
+
+  Widget _rekapSection(List<_Ev> rekap) {
+    final jmlRevisi = rekap.where((e) => e.label == 'Revisi').length;
+    final jmlKendala = rekap.where((e) => e.label == 'Terkendala').length;
+    final jmlDitolak = rekap.where((e) => e.label == 'Kendala Ditolak').length;
+
+    if (rekap.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.green.shade50,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.verified_rounded,
+              size: 18,
+              color: Colors.green.shade700,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Tidak ada revisi maupun kendala selama pengerjaan.',
+                style: TextStyle(
+                  fontSize: AppTypography.small,
+                  color: Colors.green.shade800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            _pill(
+              'Revisi: $jmlRevisi kali',
+              _evColor('Revisi'),
+              _evIcon('Revisi'),
+              1,
+            ),
+            _pill(
+              'Kendala: $jmlKendala kali',
+              _evColor('Terkendala'),
+              _evIcon('Terkendala'),
+              1,
+            ),
+            if (jmlDitolak > 0)
+              _pill(
+                'Ditolak: $jmlDitolak kali',
+                _evColor('Kendala Ditolak'),
+                _evIcon('Kendala Ditolak'),
+                1,
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        for (final e in rekap)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _evColor(e.label).withOpacity(.07),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _evColor(e.label).withOpacity(.25)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _pill(e.label, _evColor(e.label), _evIcon(e.label), 1),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _fmt(e.time, jam: true),
+                        style: TextStyle(
+                          fontSize: AppTypography.caption,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  e.note.isEmpty ? 'Tanpa catatan.' : e.note,
+                  style: TextStyle(
+                    fontSize: AppTypography.small,
+                    height: 1.4,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  e.label == 'Revisi'
+                      ? 'Diminta oleh: ${e.actor}'
+                      : e.label == 'Kendala Ditolak'
+                      ? 'Ditolak oleh: ${e.actor}'
+                      : 'Dilaporkan oleh: ${e.actor}',
+                  style: TextStyle(
+                    fontSize: AppTypography.caption,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _timelineRow(_Ev e, {required bool isLast}) {
+    final color = _evColor(e.label);
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Column(
+            children: [
+              Icon(_evIcon(e.label), size: 20, color: color),
+              if (!isLast)
+                Expanded(
+                  child: Container(
+                    width: 2,
+                    margin: const EdgeInsets.symmetric(vertical: 2),
+                    color: color.withOpacity(.25),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    e.label == 'Disetujui' ? 'Disetujui (Di-ACC)' : e.label,
+                    style: TextStyle(
+                      fontSize: AppTypography.small,
+                      fontWeight: FontWeight.w700,
+                      color: color,
+                    ),
+                  ),
+                  Text(
+                    _fmt(e.time, jam: true),
+                    style: TextStyle(
+                      fontSize: AppTypography.caption,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  Text(
+                    'Oleh: ${e.actor}',
+                    style: TextStyle(
+                      fontSize: AppTypography.caption,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+                  if (e.note.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(.07),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        e.note,
+                        style: TextStyle(
+                          fontSize: AppTypography.small,
+                          height: 1.35,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

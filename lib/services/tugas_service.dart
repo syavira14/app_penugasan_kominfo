@@ -1,3 +1,4 @@
+import 'staff_admin_api.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class TugasService {
@@ -16,10 +17,7 @@ class TugasService {
           .get();
 
       return snapshot.docs.map((doc) {
-        return {
-          'id': doc.id,
-          ...doc.data(),
-        };
+        return {'id': doc.id, ...doc.data()};
       }).toList();
     } catch (e) {
       throw Exception('Gagal mengambil data tugas: $e');
@@ -29,23 +27,15 @@ class TugasService {
   /// ============================================================
   /// MENGAMBIL TUGAS BERDASARKAN ID
   /// ============================================================
-  Future<Map<String, dynamic>?> getTugasById(
-    String tugasId,
-  ) async {
+  Future<Map<String, dynamic>?> getTugasById(String tugasId) async {
     try {
-      final doc = await _firestore
-          .collection(_collection)
-          .doc(tugasId)
-          .get();
+      final doc = await _firestore.collection(_collection).doc(tugasId).get();
 
       if (!doc.exists) {
         return null;
       }
 
-      return {
-        'id': doc.id,
-        ...doc.data()!,
-      };
+      return {'id': doc.id, ...doc.data()!};
     } catch (e) {
       throw Exception('Gagal mengambil detail tugas: $e');
     }
@@ -66,9 +56,7 @@ class TugasService {
     required String prioritas,
   }) async {
     try {
-      final docRef = await _firestore
-          .collection(_collection)
-          .add({
+      final docRef = await _firestore.collection(_collection).add({
         'judul': judul,
         'deskripsi': deskripsi,
 
@@ -76,8 +64,7 @@ class TugasService {
         'dibuat_oleh': dibuatOleh,
 
         // Waktu tugas
-        'tanggal_tugas_diberikan':
-            FieldValue.serverTimestamp(),
+        'tanggal_tugas_diberikan': FieldValue.serverTimestamp(),
 
         'tanggal_mulai_tugas': tanggalMulaiTugas,
         'tanggal_selesai_tugas': tanggalSelesaiTugas,
@@ -109,10 +96,7 @@ class TugasService {
     required Map<String, dynamic> data,
   }) async {
     try {
-      await _firestore
-          .collection(_collection)
-          .doc(tugasId)
-          .update({
+      await _firestore.collection(_collection).doc(tugasId).update({
         ...data,
         'updated_at': FieldValue.serverTimestamp(),
       });
@@ -126,10 +110,7 @@ class TugasService {
   /// ============================================================
   Future<void> deleteTugas(String tugasId) async {
     try {
-      await _firestore
-          .collection(_collection)
-          .doc(tugasId)
-          .delete();
+      await StaffAdminApi.deleteTugasCascade(tugasId);
     } catch (e) {
       throw Exception('Gagal menghapus tugas: $e');
     }

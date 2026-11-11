@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import '../services/staff_admin_api.dart';
 import '../services/supabase_storage_service.dart';
 import '../widgets/simtas_file_preview_page.dart';
 import '../services/penugasan_workflow.dart';
@@ -907,52 +908,19 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
 
   Future<void> _previewHasilStaff(String id, Map<String, dynamic> data) async {
     if (_reviewing.contains(id)) return;
-
     setState(() => _reviewing.add(id));
-
     try {
       final path = (data['file_hasil_path'] ?? '').toString().trim();
-
       final oldUrl = (data['file_hasil_url'] ?? '').toString().trim();
-
       final name = (data['file_hasil_nama'] ?? 'Dokumen').toString();
-
-      String url;
-
-      if (path.isNotEmpty) {
-        url = await _ambilUrlFileDariEdgeFunction(id, kind: 'hasil');
-      } else if (oldUrl.isNotEmpty) {
-        url = oldUrl;
-      } else {
-        throw StateError('File hasil pekerjaan belum tersedia.');
-      }
-
-      Uint8List bytes = Uint8List(0);
-
-      if (!kIsWeb || !name.toLowerCase().endsWith('.pdf')) {
-        final response = await http.get(Uri.parse(url));
-
-        if (response.statusCode != 200) {
-          throw StateError('Gagal mengambil file: HTTP ${response.statusCode}');
-        }
-
-        bytes = response.bodyBytes;
-      }
-
-      if (!mounted) return;
-
-      await Navigator.push(
+      await StaffAdminApi.openInAppFilePreview(
         context,
-
-        MaterialPageRoute<void>(
-          builder: (_) => SimtasFilePreviewPage(
-            namaFile: name,
-
-            bytes: bytes,
-
-            externalUrl: url,
-          ),
-        ),
+        namaFile: name,
+        path: path,
+        fallbackUrl: oldUrl,
+        assignmentId: id,
+        tugasId: widget.tugasId,
+        kind: 'hasil',
       );
     } catch (e) {
       _message('Gagal membuka hasil pekerjaan: $e', error: true);
@@ -965,17 +933,13 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     switch (extension?.toLowerCase()) {
       case 'pdf':
         return 'application/pdf';
-
       case 'jpg':
       case 'jpeg':
         return 'image/jpeg';
-
       case 'png':
         return 'image/png';
-
       case 'docx':
         return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-
       default:
         return 'application/octet-stream';
     }
@@ -990,15 +954,22 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     final catatan = (result['catatan'] ?? '').toString().trim();
     if (catatan.isEmpty) return;
     final selected = result['file'] as PlatformFile?;
+    final preBytes = result['bytes'] as Uint8List?;
+    final preName = (result['fileName'] ?? selected?.name ?? '').toString();
+    final preExt = (result['extension'] ?? selected?.extension ?? '')
+        .toString();
     try {
       String? newPath;
       String? newName;
-      if (selected != null) {
+      if (selected != null || (preBytes != null && preBytes.isNotEmpty)) {
+        final bytes = (preBytes != null && preBytes.isNotEmpty)
+            ? preBytes
+            : await selected!.readAsBytes();
         final uploaded = await _storage.uploadHasilTugas(
           tugasId: 'revisi_$id',
-          namaFile: selected.name,
-          bytes: await selected.readAsBytes(),
-          contentType: _contentType(selected.extension),
+          namaFile: preName.isNotEmpty ? preName : 'Lampiran_Revisi.pdf',
+          bytes: bytes,
+          contentType: _contentType(preExt),
         );
         newPath = uploaded.path;
         newName = uploaded.namaFile;
@@ -1040,39 +1011,121 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   Future<void> _hentikanPenugasan(String id) async {
     final controller = TextEditingController();
     PlatformFile? file;
+    Uint8List? fileBytes;
+    String? fileError;
+
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, update) => AlertDialog(
-          title: const Text('Hentikan Penugasan'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: controller,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Alasan penghentian (wajib)',
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: const Text(
+            'Hentikan Penugasan',
+            style: TextStyle(color: biruTua, fontWeight: FontWeight.bold),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: controller,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    labelText: 'Alasan penghentian (wajib)',
+                    hintText: 'Tuliskan alasan tugas dihentikan...',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
                 ),
-              ),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  final picked = await FilePicker.pickFile(
-                    type: FileType.custom,
-                    allowedExtensions: const [
-                      'pdf',
-                      'png',
-                      'jpg',
-                      'jpeg',
-                      'docx',
-                    ],
-                  );
-                  if (picked != null) update(() => file = picked);
-                },
-                icon: const Icon(Icons.attach_file),
-                label: Text(file?.name ?? 'Bukti (opsional)'),
-              ),
-            ],
+                const SizedBox(height: 12),
+                InkWell(
+                  onTap: () async {
+                    try {
+                      final picked = await FilePicker.pickFile(
+                        type: FileType.custom,
+                        allowedExtensions: const [
+                          'pdf',
+                          'png',
+                          'jpg',
+                          'jpeg',
+                          'docx',
+                        ],
+                      );
+                      if (picked != null) {
+                        final b = await picked.readAsBytes();
+                        update(() {
+                          file = picked;
+                          fileBytes = b;
+                          fileError = null;
+                        });
+                      }
+                    } catch (e) {
+                      update(() => fileError = 'Gagal membaca file: $e');
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0F6FF),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: biruSedang.withOpacity(0.35)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.upload_file_rounded,
+                          color: biruSedang,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            file != null
+                                ? file!.name
+                                : 'Lampirkan dokumen / bukti penghentian (opsional)',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: file != null
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                              color: biruTua,
+                            ),
+                          ),
+                        ),
+                        if (file != null)
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: () => update(() {
+                              file = null;
+                              fileBytes = null;
+                            }),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (fileError != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    fileError!,
+                    style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+                  ),
+                ],
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -1080,30 +1133,38 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
               child: const Text('Batal'),
             ),
             FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB42318),
+              ),
               onPressed: () {
                 if (controller.text.trim().isNotEmpty) {
                   Navigator.pop(ctx, {
                     'alasan': controller.text.trim(),
                     'file': file,
+                    'bytes': fileBytes,
                   });
                 }
               },
-              child: const Text('Hentikan'),
+              child: const Text('Hentikan Tugas'),
             ),
           ],
         ),
       ),
     );
-    controller.dispose();
+    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
     if (result == null) return;
     try {
       String path = '';
       final picked = result['file'] as PlatformFile?;
+      final preBytes = result['bytes'] as Uint8List?;
       if (picked != null) {
+        final bytes = (preBytes != null && preBytes.isNotEmpty)
+            ? preBytes
+            : await picked.readAsBytes();
         final uploaded = await _storage.uploadHasilTugas(
           tugasId: 'penghentian_$id',
           namaFile: picked.name,
-          bytes: await picked.readAsBytes(),
+          bytes: bytes,
           contentType: _contentType(picked.extension),
         );
         path = uploaded.path;
@@ -1124,7 +1185,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           'updated_at': FieldValue.serverTimestamp(),
         });
       });
-      _message('Penugasan dipindahkan ke Pending.');
+      _message('Penugasan telah dihentikan.');
       await _loadPage();
     } catch (e) {
       _message('Gagal menghentikan tugas: $e', error: true);
@@ -1299,26 +1360,27 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
 
     try {
       final selected = result['file'] as PlatformFile?;
+      final preBytes = result['bytes'] as Uint8List?;
+      final preName = (result['fileName'] ?? selected?.name ?? '').toString();
+      final preExt = (result['extension'] ?? selected?.extension ?? '')
+          .toString();
 
       String path = '';
-
       String name = '';
 
-      if (selected != null) {
-        final bytes = await selected.readAsBytes();
+      if (selected != null || (preBytes != null && preBytes.isNotEmpty)) {
+        final bytes = (preBytes != null && preBytes.isNotEmpty)
+            ? preBytes
+            : await selected!.readAsBytes();
 
         final uploaded = await _storage.uploadHasilTugas(
           tugasId: 'revisi_$id',
-
-          namaFile: selected.name,
-
+          namaFile: preName.isNotEmpty ? preName : 'Lampiran_Revisi.pdf',
           bytes: bytes,
-
-          contentType: _contentType(selected.extension),
+          contentType: _contentType(preExt),
         );
 
         path = uploaded.path;
-
         name = uploaded.namaFile;
       }
 
@@ -1466,48 +1528,19 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         if (revisionUrl.isNotEmpty || revisionPath.isNotEmpty)
           TextButton.icon(
             onPressed: () async {
-              try {
-                final url = revisionPath.isNotEmpty
-                    ? await _storage.buatLinkSementara(revisionPath)
-                    : revisionUrl;
-
-                final name = (data['file_revisi_nama'] ?? 'Lampiran revisi')
-                    .toString();
-
-                Uint8List bytes = Uint8List(0);
-
-                if (!kIsWeb || !name.toLowerCase().endsWith('.pdf')) {
-                  final response = await http.get(Uri.parse(url));
-
-                  if (response.statusCode != 200) {
-                    throw StateError('HTTP ${response.statusCode}');
-                  }
-
-                  bytes = response.bodyBytes;
-                }
-
-                if (!mounted) return;
-
-                await Navigator.push(
-                  context,
-
-                  MaterialPageRoute<void>(
-                    builder: (_) => SimtasFilePreviewPage(
-                      namaFile: name,
-
-                      bytes: bytes,
-
-                      externalUrl: url,
-                    ),
-                  ),
-                );
-              } catch (e) {
-                _message('Gagal membuka lampiran revisi: $e', error: true);
-              }
+              final name = (data['file_revisi_nama'] ?? 'Lampiran revisi')
+                  .toString();
+              await StaffAdminApi.openInAppFilePreview(
+                context,
+                namaFile: name,
+                path: revisionPath,
+                fallbackUrl: revisionUrl,
+                assignmentId: id,
+                tugasId: widget.tugasId,
+                kind: 'revisi',
+              );
             },
-
             icon: const Icon(Icons.attach_file),
-
             label: Text(
               (data['file_revisi_nama'] ?? 'File pendukung revisi').toString(),
             ),
@@ -2315,9 +2348,40 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                       label: const Text('Hentikan Tugas'),
                     ),
                   if (status == 'dihentikan') ...[
+                    const SizedBox(height: 8),
                     Text(
                       'Alasan penghentian: ${data['alasan_penghentian'] ?? '-'}',
+                      style: const TextStyle(
+                        color: Color(0xFFB42318),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
+                    if ((data['bukti_penghentian_path'] ?? '')
+                        .toString()
+                        .trim()
+                        .isNotEmpty)
+                      TextButton.icon(
+                        onPressed: () {
+                          final p = (data['bukti_penghentian_path'] ?? '')
+                              .toString()
+                              .trim();
+                          final fName = p.split('/').last;
+                          StaffAdminApi.openInAppFilePreview(
+                            context,
+                            namaFile: fName.isNotEmpty
+                                ? fName
+                                : 'Dokumen_Penghentian.pdf',
+                            path: p,
+                            assignmentId: assignment.id,
+                            tugasId: widget.tugasId,
+                            kind: 'penghentian',
+                          );
+                        },
+                        icon: const Icon(Icons.attach_file),
+                        label: Text(
+                          'Lihat Dokumen Penghentian (${(data['bukti_penghentian_path'] ?? '').toString().split('/').last.replaceFirst(RegExp(r'^\d{10,}_'), '')})',
+                        ),
+                      ),
                     TextButton.icon(
                       onPressed: () => _mulaiUlangPenugasan(assignment.id),
                       icon: const Icon(Icons.restart_alt),
@@ -2488,6 +2552,8 @@ class _RevisionDialogState extends State<_RevisionDialog> {
   late final TextEditingController _controller;
 
   PlatformFile? _file;
+  Uint8List? _fileBytes;
+  String? _fileError;
 
   @override
   void initState() {
@@ -2498,78 +2564,137 @@ class _RevisionDialogState extends State<_RevisionDialog> {
   @override
   void dispose() {
     _controller.dispose();
-
     super.dispose();
   }
 
   Future<void> _pilihFile() async {
-    final result = await FilePicker.pickFile(
-      type: FileType.custom,
+    try {
+      final result = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png', 'docx'],
+      );
 
-      allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png', 'docx'],
-    );
-
-    if (result != null) {
-      setState(() => _file = result);
+      if (result != null) {
+        final b = await result.readAsBytes();
+        if (!mounted) return;
+        setState(() {
+          _file = result;
+          _fileBytes = b;
+          _fileError = null;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _fileError = 'Gagal membaca file: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.isEdit ? 'Edit Catatan Revisi' : 'Catatan Revisi'),
-
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-
-        crossAxisAlignment: CrossAxisAlignment.start,
-
-        children: [
-          TextField(
-            controller: _controller,
-
-            maxLines: 3,
-
-            decoration: const InputDecoration(
-              hintText: 'Tuliskan bagian yang perlu diperbaiki...',
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          OutlinedButton.icon(
-            onPressed: _pilihFile,
-
-            icon: const Icon(Icons.upload_file),
-
-            label: Text(
-              _file?.name ?? 'Upload file pendukung (opsional)',
-
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Text(
+        widget.isEdit ? 'Edit Catatan & Dokumen Revisi' : 'Minta Revisi Tugas',
+        style: const TextStyle(
+          color: AppPalette.navy,
+          fontWeight: FontWeight.bold,
+        ),
       ),
-
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _controller,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: 'Catatan revisi (wajib)',
+                hintText: 'Tuliskan bagian yang perlu diperbaiki oleh staff...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            InkWell(
+              onTap: _pilihFile,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0F6FF),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppPalette.blue.withOpacity(0.35)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.upload_file_rounded,
+                      color: AppPalette.blue,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _file?.name ?? 'Lampirkan dokumen revisi (opsional)',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: _file != null
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                          color: AppPalette.navy,
+                        ),
+                      ),
+                    ),
+                    if (_file != null)
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () => setState(() {
+                          _file = null;
+                          _fileBytes = null;
+                        }),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            if (_fileError != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                _fileError!,
+                style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-
           child: const Text('Batal'),
         ),
-
-        ElevatedButton(
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppPalette.blue),
           onPressed: () {
             if (_controller.text.trim().isEmpty) return;
-
             Navigator.pop(context, {
               'catatan': _controller.text.trim(),
-
               'file': _file,
+              'bytes': _fileBytes,
+              'fileName': _file?.name,
+              'extension': _file?.extension,
             });
           },
-
-          child: const Text('Kirim Revisi'),
+          child: Text(widget.isEdit ? 'Simpan Perubahan' : 'Kirim Revisi'),
         ),
       ],
     );

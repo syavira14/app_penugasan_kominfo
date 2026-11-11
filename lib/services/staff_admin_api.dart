@@ -1766,7 +1766,35 @@ class StaffAdminApi {
     }
   }
 
-  /// Simpan cadangan file di dokumen `tugas/{tugasId}.stored_files` lewat sesi Admin
+  static Future<String> _resolveTugasIdFromTag(
+    FirebaseFirestore db,
+    String rawTag,
+  ) async {
+    final tag = rawTag.trim();
+    if (tag.isEmpty) return '';
+    try {
+      if (tag.startsWith('kendala_')) {
+        final penId = tag.substring('kendala_'.length);
+        final pDoc = await db.collection('penugasan').doc(penId).get();
+        return _str(pDoc.data()?['tugas_id']);
+      } else if (tag.startsWith('revisi_')) {
+        final penId = tag.substring('revisi_'.length);
+        final pDoc = await db.collection('penugasan').doc(penId).get();
+        return _str(pDoc.data()?['tugas_id']);
+      } else if (tag.startsWith('penghentian_')) {
+        final penId = tag.substring('penghentian_'.length);
+        final pDoc = await db.collection('penugasan').doc(penId).get();
+        return _str(pDoc.data()?['tugas_id']);
+      } else if (tag.startsWith('solusi_')) {
+        final lapId = tag.substring('solusi_'.length);
+        final lDoc = await db.collection('laporan_kendala').doc(lapId).get();
+        return _str(lDoc.data()?['tugas_id']);
+      }
+    } catch (_) {}
+    return tag;
+  }
+
+  /// Simpan cadangan file di dokumen `tugas/{tugasId}.stored_files`
   /// agar file tetap bisa dibuka dan diunduh walaupun Supabase Storage menolak upload.
   static Future<void> saveBackupFileToFirestore({
     required String filePath,
@@ -1775,47 +1803,43 @@ class StaffAdminApi {
     required Uint8List bytes,
     required String rawTugasOrTag,
   }) async {
-    if (bytes.isEmpty || bytes.length > 650 * 1024) return;
+    if (bytes.isEmpty || bytes.length > 750 * 1024) return;
+    final key = _safeFirestoreFileKey(filePath);
+    final b64 = base64Encode(bytes);
+    final payload = <String, dynamic>{
+      'stored_files.$key': <String, dynamic>{
+        'b64': b64,
+        'name': namaFile,
+        'mime': mime,
+        'path': _cleanStoragePath(filePath),
+      },
+    };
+
+    // 1. Coba simpan langsung memakai sesi aktif (jika Admin yang sedang login).
+    try {
+      final targetTugasId = await _resolveTugasIdFromTag(
+        _firestore,
+        rawTugasOrTag,
+      );
+      if (targetTugasId.isNotEmpty) {
+        await _firestore.collection('tugas').doc(targetTugasId).update(payload);
+        return;
+      }
+    } catch (_) {}
+
+    // 2. Jika sesi aktif adalah Staff, gunakan sesi Admin latar belakang.
     try {
       final adminSession = await _ensureAdminSession();
       if (adminSession == null) return;
-
-      String targetTugasId = rawTugasOrTag.trim();
-      if (targetTugasId.startsWith('kendala_')) {
-        final penId = targetTugasId.substring('kendala_'.length);
-        final pDoc = await adminSession.db
-            .collection('penugasan')
-            .doc(penId)
-            .get();
-        targetTugasId = _str(pDoc.data()?['tugas_id']);
-      } else if (targetTugasId.startsWith('revisi_')) {
-        final penId = targetTugasId.substring('revisi_'.length);
-        final pDoc = await adminSession.db
-            .collection('penugasan')
-            .doc(penId)
-            .get();
-        targetTugasId = _str(pDoc.data()?['tugas_id']);
-      } else if (targetTugasId.startsWith('solusi_')) {
-        final lapId = targetTugasId.substring('solusi_'.length);
-        final lDoc = await adminSession.db
-            .collection('laporan_kendala')
-            .doc(lapId)
-            .get();
-        targetTugasId = _str(lDoc.data()?['tugas_id']);
-      }
-
+      final targetTugasId = await _resolveTugasIdFromTag(
+        adminSession.db,
+        rawTugasOrTag,
+      );
       if (targetTugasId.isEmpty) return;
-
-      final key = _safeFirestoreFileKey(filePath);
-      final b64 = base64Encode(bytes);
-      await adminSession.db.collection('tugas').doc(targetTugasId).update({
-        'stored_files.$key': <String, dynamic>{
-          'b64': b64,
-          'name': namaFile,
-          'mime': mime,
-          'path': _cleanStoragePath(filePath),
-        },
-      });
+      await adminSession.db
+          .collection('tugas')
+          .doc(targetTugasId)
+          .update(payload);
     } catch (_) {}
   }
 
@@ -1871,6 +1895,14 @@ class StaffAdminApi {
           if (bUrl.startsWith('data:')) return bUrl;
         }
       } catch (_) {}
+    }
+
+    // Jika tugasId belum diketahui, ekstrak dari segmen ke-2 pada path (UID/TAG/NAMA_FILE).
+    if (resolvedTugasId.isEmpty && cleanPath.isNotEmpty) {
+      final segs = cleanPath.split('/');
+      if (segs.length >= 2) {
+        resolvedTugasId = await _resolveTugasIdFromTag(_firestore, segs[1]);
+      }
     }
 
     if (resolvedTugasId.isNotEmpty) {
@@ -2291,17 +2323,42 @@ class StaffAdminApi {
     var u = fallbackUrl ?? '';
     final user = FirebaseAuth.instance.currentUser;
 
-    // Path kosong -> baca dari dokumen penugasan.
+    // Path kosong -> baca dari dokumen penugasan atau laporan_kendala sesuai kind.
     if (p.trim().isEmpty && (assignmentId ?? '').trim().isNotEmpty) {
       try {
         final d = await _firestore
             .collection('penugasan')
             .doc(assignmentId!.trim())
             .get();
-        p = _str(d.data()?['file_hasil_path']);
-        if (u.isEmpty) u = _str(d.data()?['file_hasil_url']);
+        final data = d.data();
+        if (kind == 'revisi') {
+          p = _str(data?['file_revisi_path']);
+          if (u.isEmpty) u = _str(data?['file_revisi_url']);
+        } else if (kind == 'penghentian') {
+          p = _str(data?['bukti_penghentian_path']);
+        } else {
+          p = _str(data?['file_hasil_path']);
+          if (u.isEmpty) u = _str(data?['file_hasil_url']);
+        }
       } catch (e) {
         err.add('[baca penugasan] $e');
+      }
+    }
+    if (p.trim().isEmpty && (laporanId ?? '').trim().isNotEmpty) {
+      try {
+        final d = await _firestore
+            .collection('laporan_kendala')
+            .doc(laporanId!.trim())
+            .get();
+        final data = d.data();
+        if (kind == 'solusi') {
+          p = _str(data?['solusi_file_path']);
+        } else {
+          p = _str(data?['bukti_path']);
+          if (u.isEmpty) u = _str(data?['bukti_url']);
+        }
+      } catch (e) {
+        err.add('[baca laporan_kendala] $e');
       }
     }
     final clean = _cleanStoragePath(p);
@@ -2565,5 +2622,225 @@ class StaffAdminApi {
         await _tampilkanGalat(context, 'Gagal mengunduh file', e);
       }
     }
+  }
+
+  // =======================================================================
+  // HAPUS TUGAS BESERTA PENUGASAN & LAPORAN KENDALA (CASCADE DELETE)
+  // =======================================================================
+
+  /// Menghapus satu dokumen penugasan beserta seluruh laporan_kendala dan sub-koleksinya.
+  static Future<void> _deleteSinglePenugasanCascade(
+    DocumentSnapshot<Map<String, dynamic>> penDoc,
+  ) async {
+    final penId = penDoc.id;
+    final pData = penDoc.data() ?? const <String, dynamic>{};
+
+    // 1. Cari semua laporan_kendala yang terkait dengan penugasan ini.
+    final kendalaDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    try {
+      final snap = await _firestore
+          .collection('laporan_kendala')
+          .where('penugasan_id', isEqualTo: penId)
+          .get();
+      kendalaDocs.addAll(snap.docs);
+    } catch (_) {}
+
+    // 2. Jika penugasan sedang terkendala / memiliki kendala_aktif_id,
+    //    lepaskan dulu kendala_aktif_id agar aturan Firestore `noActive(resource.data)`
+    //    mengizinkan penghapusan dokumen penugasan meskipun rules lama masih aktif.
+    final aktifId = _str(pData['kendala_aktif_id']);
+    final status = _str(pData['status']).toLowerCase();
+    if (aktifId.isNotEmpty || status == 'terkendala') {
+      try {
+        await _firestore.runTransaction((tx) async {
+          if (aktifId.isNotEmpty) {
+            final lapRef = _firestore
+                .collection('laporan_kendala')
+                .doc(aktifId);
+            final lapSnap = await tx.get(lapRef);
+            if (lapSnap.exists) {
+              tx.update(lapRef, {
+                'status': 'ditolak',
+                'ditangani_oleh': FirebaseAuth.instance.currentUser?.uid ?? '',
+                'alasan_penolakan': 'Tugas dihapus oleh Atasan.',
+                'rejected_at': FieldValue.serverTimestamp(),
+                'updated_at': FieldValue.serverTimestamp(),
+              });
+            }
+          }
+          tx.update(penDoc.reference, {
+            'status': 'berlangsung',
+            'status_sebelum_kendala': FieldValue.delete(),
+            'kendala_aktif_id': FieldValue.delete(),
+            'updated_at': FieldValue.serverTimestamp(),
+          });
+        });
+      } catch (_) {
+        try {
+          await penDoc.reference.update({
+            'status': 'pending',
+            'kendala_aktif_id': '',
+            'updated_at': FieldValue.serverTimestamp(),
+          });
+        } catch (_) {}
+      }
+    }
+
+    // 3. Hapus sub-koleksi `riwayat` di setiap laporan_kendala, lalu hapus dokumen laporan_kendala.
+    for (final kDoc in kendalaDocs) {
+      try {
+        final riwSnap = await kDoc.reference.collection('riwayat').get();
+        for (final r in riwSnap.docs) {
+          try {
+            await r.reference.delete();
+          } catch (_) {}
+        }
+      } catch (_) {}
+      try {
+        await kDoc.reference.delete();
+      } catch (_) {}
+    }
+
+    // 4. Hapus sub-koleksi pada penugasan (`riwayat_status`, `riwayat_pengumpulan`, `riwayat_revisi`).
+    for (final subName in const [
+      'riwayat_status',
+      'riwayat_pengumpulan',
+      'riwayat_revisi',
+    ]) {
+      try {
+        final subSnap = await penDoc.reference.collection(subName).get();
+        for (final s in subSnap.docs) {
+          try {
+            await s.reference.delete();
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
+    // 5. Hapus dokumen penugasan.
+    try {
+      await penDoc.reference.delete();
+    } catch (_) {}
+  }
+
+  /// Menghapus dokumen `tugas/{tugasId}` beserta seluruh dokumen di `penugasan`
+  /// dan `laporan_kendala` yang terkait dengan tugas tersebut.
+  static Future<void> deleteTugasCascade(String tugasId) async {
+    final cleanId = tugasId.trim();
+    if (cleanId.isEmpty) return;
+
+    // 1. Ambil semua penugasan untuk tugasId ini.
+    final penSnap = await _firestore
+        .collection('penugasan')
+        .where('tugas_id', isEqualTo: cleanId)
+        .get();
+
+    for (final penDoc in penSnap.docs) {
+      await _deleteSinglePenugasanCascade(penDoc);
+    }
+
+    // 2. Hapus laporan_kendala yang merujuk langsung ke tugas_id ini.
+    try {
+      final lapSnap = await _firestore
+          .collection('laporan_kendala')
+          .where('tugas_id', isEqualTo: cleanId)
+          .get();
+      for (final lDoc in lapSnap.docs) {
+        try {
+          final riwSnap = await lDoc.reference.collection('riwayat').get();
+          for (final r in riwSnap.docs) {
+            try {
+              await r.reference.delete();
+            } catch (_) {}
+          }
+        } catch (_) {}
+        try {
+          await lDoc.reference.delete();
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    // 3. Hapus dokumen tugas utama.
+    await _firestore.collection('tugas').doc(cleanId).delete();
+  }
+
+  /// Membersihkan dokumen `penugasan`, `laporan_kendala`, serta seluruh sub-koleksi
+  /// yatim / phantom (dokumen miring di Firebase Console) secara otomatis.
+  static Future<void> cleanupOrphanedTugasData() async {
+    try {
+      final tugasSnap = await _firestore.collection('tugas').get();
+      final validTugasIds = <String>{for (final d in tugasSnap.docs) d.id};
+
+      final penSnap = await _firestore.collection('penugasan').get();
+      final validPenugasanIds = <String>{};
+
+      for (final penDoc in penSnap.docs) {
+        final tId = _str(penDoc.data()['tugas_id']);
+        if (tId.isEmpty || !validTugasIds.contains(tId)) {
+          await _deleteSinglePenugasanCascade(penDoc);
+        } else {
+          validPenugasanIds.add(penDoc.id);
+        }
+      }
+
+      final lapSnap = await _firestore.collection('laporan_kendala').get();
+      final validLaporanIds = <String>{};
+      for (final lapDoc in lapSnap.docs) {
+        final data = lapDoc.data();
+        final tId = _str(data['tugas_id']);
+        final pId = _str(data['penugasan_id']);
+        final orphanByTugas = tId.isNotEmpty && !validTugasIds.contains(tId);
+        final orphanByPenugasan =
+            pId.isNotEmpty && !validPenugasanIds.contains(pId);
+        if (orphanByTugas || orphanByPenugasan) {
+          try {
+            final riwSnap = await lapDoc.reference.collection('riwayat').get();
+            for (final r in riwSnap.docs) {
+              try {
+                await r.reference.delete();
+              } catch (_) {}
+            }
+          } catch (_) {}
+          try {
+            await lapDoc.reference.delete();
+          } catch (_) {}
+        } else {
+          validLaporanIds.add(lapDoc.id);
+        }
+      }
+
+      // Bersihkan sub-koleksi yatim yang membuat dokumen induk tampil miring (phantom)
+      // di Firebase Console menggunakan collectionGroup query.
+      for (final subName in const [
+        'riwayat_pengumpulan',
+        'riwayat_status',
+        'riwayat_revisi',
+      ]) {
+        try {
+          final cgSnap = await _firestore.collectionGroup(subName).get();
+          for (final doc in cgSnap.docs) {
+            final parentPenId = doc.reference.parent.parent?.id ?? '';
+            if (parentPenId.isEmpty ||
+                !validPenugasanIds.contains(parentPenId)) {
+              try {
+                await doc.reference.delete();
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
+      try {
+        final cgRiw = await _firestore.collectionGroup('riwayat').get();
+        for (final doc in cgRiw.docs) {
+          final parentLapId = doc.reference.parent.parent?.id ?? '';
+          if (parentLapId.isEmpty || !validLaporanIds.contains(parentLapId)) {
+            try {
+              await doc.reference.delete();
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    } catch (_) {}
   }
 }

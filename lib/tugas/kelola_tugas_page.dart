@@ -9,6 +9,7 @@ import '../pages/admin/admin_sidebar.dart';
 import '../pages/admin/riwayat_tugas_staff.dart';
 import '../services/backfill_staff_ids.dart';
 import '../services/penugasan_workflow.dart';
+import '../services/staff_admin_api.dart';
 import '../widgets/admin_header.dart';
 import 'detail_tugas_admin_page.dart';
 
@@ -180,6 +181,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     super.initState();
     // Melengkapi staff_ids pada tugas lama agar staff boleh membacanya.
     backfillStaffIds();
+    StaffAdminApi.cleanupOrphanedTugasData();
     _assignmentSubscription = _firestore
         .collection('penugasan')
         .snapshots()
@@ -275,7 +277,7 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
             ),
           ),
           content: Text(
-            'Tugas "$judul" akan dihapus secara permanen beserta penugasannya.',
+            'Tugas "$judul" beserta seluruh data penugasan dan laporan kendala terkait akan dihapus secara permanen.',
           ),
           actions: [
             TextButton(
@@ -302,20 +304,12 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     if (confirm != true) return;
 
     try {
-      final assignments = await _firestore
-          .collection('penugasan')
-          .where('tugas_id', isEqualTo: tugasId)
-          .get();
-
-      final batch = _firestore.batch();
-      for (final doc in assignments.docs) {
-        batch.delete(doc.reference);
-      }
-      batch.delete(_firestore.collection('tugas').doc(tugasId));
-      await batch.commit();
+      await StaffAdminApi.deleteTugasCascade(tugasId);
 
       if (!mounted) return;
-      _tampilkanSnackbar('Tugas "$judul" telah dihapus');
+      _tampilkanSnackbar(
+        'Tugas "$judul" beserta penugasan & laporan kendalanya telah dihapus',
+      );
     } catch (e) {
       if (!mounted) return;
       _tampilkanSnackbar('Gagal menghapus tugas: $e', error: true);

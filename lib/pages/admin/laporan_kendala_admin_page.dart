@@ -1,11 +1,12 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 import '../../services/laporan_kendala_service.dart';
+import '../../services/staff_admin_api.dart';
 import '../../services/supabase_storage_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/admin_header.dart';
@@ -26,9 +27,9 @@ class LaporanKendalaAdminPage extends StatefulWidget {
 class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
   static const Color _navy = AppPalette.navy;
   static const Color _blue = AppPalette.blue;
+  static const Color _sky = AppPalette.sky;
   static const Color _background = AppPalette.background;
   static const int _sidebarIndex = 6;
-  static const Duration _masaTampil = Duration(days: 3);
 
   final _db = FirebaseFirestore.instance;
   final _service = LaporanKendalaService();
@@ -52,11 +53,9 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
   @override
   void initState() {
     super.initState();
-
+    StaffAdminApi.cleanupOrphanedTugasData();
     _assignmentStream = _db.collection('penugasan').snapshots();
-
     _reportStream = _service.streamSemuaLaporan();
-
     _usersStream = _db.collection('users').snapshots();
 
     _timer = Timer.periodic(const Duration(minutes: 1), (_) {
@@ -90,11 +89,22 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
   String _tanggal(dynamic value) {
     final date = _dateOf(value);
     if (date == null) return '-';
-
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'Mei',
+      'Jun',
+      'Jul',
+      'Agu',
+      'Sep',
+      'Okt',
+      'Nov',
+      'Des',
+    ];
     String two(int n) => n.toString().padLeft(2, '0');
-
-    return '${two(date.day)}/${two(date.month)}/'
-        '${date.year} ${two(date.hour)}:${two(date.minute)}';
+    return '${date.day} ${months[date.month - 1]} ${date.year}, ${two(date.hour)}:${two(date.minute)} WIB';
   }
 
   bool _active(String status) {
@@ -106,20 +116,6 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
   bool _terminal(String status) {
     return status == StatusLaporanKendala.selesai ||
         status == StatusLaporanKendala.ditolak;
-  }
-
-  DateTime? _processedAt(Map<String, dynamic> data) {
-    final status = _value(data, 'status', '');
-
-    if (status == StatusLaporanKendala.selesai) {
-      return _dateOf(data['resolved_at'] ?? data['updated_at']);
-    }
-
-    if (status == StatusLaporanKendala.ditolak) {
-      return _dateOf(data['rejected_at'] ?? data['updated_at']);
-    }
-
-    return null;
   }
 
   bool _visible(
@@ -135,11 +131,9 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
 
     if (_active(status)) {
       if (_value(assignment, 'status', '') != 'terkendala') {
-        return false;
+        return true;
       }
-
       final activeId = _value(assignment, 'kendala_aktif_id', '');
-
       return activeId.isEmpty || activeId == report.id;
     }
 
@@ -147,7 +141,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
       return true;
     }
 
-    return false;
+    return true;
   }
 
   Color _statusColor(String status) {
@@ -167,20 +161,47 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
     }
   }
 
-  Widget _pill(String label, Color color) {
+  IconData _statusIcon(String status) {
+    switch (status) {
+      case StatusLaporanKendala.menungguReview:
+        return Icons.hourglass_top_rounded;
+      case StatusLaporanKendala.dalamPenanganan:
+        return Icons.handyman_rounded;
+      case StatusLaporanKendala.menungguKonfirmasi:
+        return Icons.mark_email_read_rounded;
+      case StatusLaporanKendala.selesai:
+        return Icons.check_circle_rounded;
+      case StatusLaporanKendala.ditolak:
+        return Icons.cancel_rounded;
+      default:
+        return Icons.info_outline_rounded;
+    }
+  }
+
+  Widget _pill(String label, Color color, {IconData? icon}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.09),
-        borderRadius: BorderRadius.circular(30),
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.25)),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          color: color,
-          fontWeight: FontWeight.bold,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: color,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -189,23 +210,29 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
     final staffId = _value(data, 'pelapor_id', '');
     final tugasId = _value(data, 'tugas_id', '');
 
-    String nama = _value(data, 'nama_staf', 'Staff');
-    String tugas = _value(data, 'judul_tugas', 'Tugas tidak ditemukan');
+    String nama = _value(
+      data,
+      'pelapor_nama',
+      _value(data, 'nama_staf', 'Staff'),
+    );
+    String tugas = _value(data, 'judul_tugas', 'Tugas Penugasan');
 
     if (staffId.isNotEmpty) {
-      final staff = await _db.collection('users').doc(staffId).get();
-
-      if (staff.exists) {
-        nama = _value(staff.data()!, 'nama', nama);
-      }
+      try {
+        final staff = await _db.collection('users').doc(staffId).get();
+        if (staff.exists) {
+          nama = _value(staff.data()!, 'nama', nama);
+        }
+      } catch (_) {}
     }
 
     if (tugasId.isNotEmpty) {
-      final task = await _db.collection('tugas').doc(tugasId).get();
-
-      if (task.exists) {
-        tugas = _value(task.data()!, 'judul', tugas);
-      }
+      try {
+        final task = await _db.collection('tugas').doc(tugasId).get();
+        if (task.exists) {
+          tugas = _value(task.data()!, 'judul', tugas);
+        }
+      } catch (_) {}
     }
 
     return {'nama': nama, 'tugas': tugas};
@@ -217,7 +244,6 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
 
   void _reset() {
     _searchController.clear();
-
     setState(() {
       _query = '';
       _status = 'semua';
@@ -278,18 +304,15 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
         final comparison = _priority(
           _value(y, 'prioritas'),
         ).compareTo(_priority(_value(x, 'prioritas')));
-
         if (comparison != 0) return comparison;
       }
 
       if (_urut == 'status') {
         final comparison = _value(x, 'status').compareTo(_value(y, 'status'));
-
         if (comparison != 0) return comparison;
       }
 
       final xDate = _dateOf(x['tanggal_laporan'] ?? x['created_at']);
-
       final yDate = _dateOf(y['tanggal_laporan'] ?? y['created_at']);
 
       final comparison = (yDate ?? DateTime.fromMillisecondsSinceEpoch(0))
@@ -301,28 +324,33 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
 
   Widget _statCard(String label, int count, IconData icon, Color color) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8),
+          BoxShadow(
+            color: _navy.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
         ],
       ),
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(9),
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: color, size: 21),
+            child: Icon(icon, color: color, size: 20),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   '$count',
@@ -330,12 +358,19 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: color,
+                    height: 1.1,
                   ),
                 ),
+                const SizedBox(height: 3),
                 Text(
                   label,
                   maxLines: 2,
-                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
                 ),
               ],
             ),
@@ -351,73 +386,116 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
     Map<String, String> options,
     ValueChanged<String?> onChanged,
   ) {
-    return DropdownButtonFormField<String>(
-      value: value,
-      isExpanded: true,
-      decoration: InputDecoration(
-        labelText: label,
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 10,
-        ),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
-      items: options.entries.map((entry) {
-        return DropdownMenuItem(
-          value: entry.key,
-          child: Text(
-            entry.value,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          icon: const Icon(Icons.arrow_drop_down, color: _blue),
+          style: const TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            color: _navy,
           ),
-        );
-      }).toList(),
-      onChanged: onChanged,
+          items: options.entries.map((entry) {
+            return DropdownMenuItem(
+              value: entry.key,
+              child: Text(entry.value, overflow: TextOverflow.ellipsis),
+            );
+          }).toList(),
+          onChanged: onChanged,
+        ),
+      ),
     );
   }
 
   Widget _filters() {
+    final hasActiveFilter =
+        _query.isNotEmpty ||
+        _status != 'semua' ||
+        _jenis != 'semua' ||
+        _prioritas != 'semua' ||
+        _urut != 'terbaru' ||
+        _selectedStaffId != 'semua';
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: _navy.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         children: [
-          TextField(
-            controller: _searchController,
-            onChanged: (value) {
-              setState(() {
-                _query = value.trim().toLowerCase();
-              });
-            },
-            decoration: InputDecoration(
-              hintText: 'Cari laporan, tugas, jenis, atau kendala...',
-              prefixIcon: const Icon(Icons.search_rounded, color: _blue),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() => _query = '');
-                      },
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (value) {
+                      setState(() {
+                        _query = value.trim().toLowerCase();
+                      });
+                    },
+                    decoration: InputDecoration(
+                      hintText:
+                          'Cari judul tugas, nama staff, atau deskripsi kendala...',
+                      hintStyle: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade500,
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.search_rounded,
+                        color: _blue,
+                      ),
+                      suffixIcon: _query.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _query = '');
+                              },
+                            ),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-              filled: true,
-              fillColor: _background,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
+                  ),
+                ),
               ),
-            ),
+              if (hasActiveFilter) ...[
+                const SizedBox(width: 10),
+                TextButton.icon(
+                  onPressed: _reset,
+                  icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                  label: const Text('Reset'),
+                ),
+              ],
+            ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           LayoutBuilder(
             builder: (context, constraints) {
-              final width = constraints.maxWidth >= 700
+              final width = constraints.maxWidth >= 720
                   ? (constraints.maxWidth - 36) / 4
                   : constraints.maxWidth >= 430
                   ? (constraints.maxWidth - 12) / 2
@@ -425,7 +503,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
 
               return Wrap(
                 spacing: 12,
-                runSpacing: 12,
+                runSpacing: 10,
                 children: [
                   SizedBox(
                     width: width,
@@ -443,24 +521,24 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                     width: width,
                     child: _dropdown('Jenis Kendala', _jenis, {
                       'semua': 'Semua Jenis',
-                      'internal': 'Internal',
-                      'eksternal': 'Eksternal',
+                      'internal': 'Kendala Internal',
+                      'eksternal': 'Kendala Eksternal',
                     }, (v) => setState(() => _jenis = v ?? 'semua')),
                   ),
                   SizedBox(
                     width: width,
                     child: _dropdown('Prioritas', _prioritas, {
                       'semua': 'Semua Prioritas',
-                      'tinggi': 'Tinggi',
-                      'sedang': 'Sedang',
-                      'rendah': 'Rendah',
+                      'tinggi': 'Prioritas Tinggi',
+                      'sedang': 'Prioritas Sedang',
+                      'rendah': 'Prioritas Rendah',
                     }, (v) => setState(() => _prioritas = v ?? 'semua')),
                   ),
                   SizedBox(
                     width: width,
                     child: _dropdown('Urutkan', _urut, {
-                      'terbaru': 'Tanggal Terbaru',
-                      'terlama': 'Tanggal Terlama',
+                      'terbaru': 'Terbaru',
+                      'terlama': 'Terlama',
                       'prioritas': 'Prioritas Tertinggi',
                       'status': 'Status A–Z',
                     }, (v) => setState(() => _urut = v ?? 'terbaru')),
@@ -468,14 +546,6 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                 ],
               );
             },
-          ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: _reset,
-              icon: const Icon(Icons.restart_alt),
-              label: const Text('Reset Filter'),
-            ),
           ),
         ],
       ),
@@ -489,150 +559,245 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
   }) {
     final data = doc.data();
     final status = _value(data, 'status', StatusLaporanKendala.menungguReview);
+    final statusCol = _statusColor(status);
+    final hasBukti =
+        _value(data, 'bukti_path', '').isNotEmpty ||
+        _value(data, 'bukti_url', '').isNotEmpty;
+    final hasSolusiFile = _value(data, 'solusi_file_path', '').isNotEmpty;
 
     return FutureBuilder<Map<String, String>>(
       future: _details(doc.id, data),
       builder: (context, snapshot) {
         final info = snapshot.data;
 
-        return Material(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          child: InkWell(
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
             borderRadius: BorderRadius.circular(18),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) =>
-                      DetailLaporanKendalaAdminPage(laporanId: doc.id),
-                ),
-              );
-            },
-            child: Container(
-              padding: const EdgeInsets.all(17),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFE5EAF4)),
+            boxShadow: [
+              BoxShadow(
+                color: _navy.withOpacity(0.05),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          info?['tugas'] ?? 'Memuat nama tugas...',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: _navy,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(18),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        DetailLaporanKendalaAdminPage(laporanId: doc.id),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border(
+                    left: BorderSide(color: statusCol, width: 4.5),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(9),
+                          decoration: BoxDecoration(
+                            color: statusCol.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            _statusIcon(status),
+                            color: statusCol,
+                            size: 20,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      _pill(
-                        StatusLaporanKendala.label(status),
-                        _statusColor(status),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.person_outline,
-                        size: 16,
-                        color: Colors.blueGrey,
-                      ),
-                      const SizedBox(width: 5),
-                      Expanded(
-                        child: Text(
-                          info?['nama'] ?? 'Memuat staff...',
-                          style: const TextStyle(fontSize: 12),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                info?['tugas'] ?? 'Memuat judul tugas...',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _navy,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15.5,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.person_outline_rounded,
+                                    size: 14,
+                                    color: _blue,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      info?['nama'] ?? 'Memuat staff...',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: _blue,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      Text(
-                        _tanggal(data['tanggal_laporan'] ?? data['created_at']),
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Colors.blueGrey,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _value(
-                      data,
-                      'deskripsi',
-                      _value(data, 'deskripsi_kendala'),
+                        const SizedBox(width: 8),
+                        _pill(StatusLaporanKendala.label(status), statusCol),
+                      ],
                     ),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      height: 1.4,
-                      color: Color(0xFF39465E),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 7,
-                    runSpacing: 7,
-                    children: [
-                      _pill('Jenis: ${_value(data, 'jenis_kendala')}', _blue),
-                      _pill(
-                        'Prioritas: ${_value(data, 'prioritas')}',
-                        const Color(0xFFCA6D00),
-                      ),
-                      _pill(
-                        'Staff mengalami ${staffTotalKendala}× kendala',
-                        const Color(0xFFB42318),
-                      ),
-                      _pill('Tugas ini: ${taskTotalKendala}× kendala', _navy),
-                      if (_value(data, 'bukti_path', '').isNotEmpty ||
-                          _value(data, 'bukti_url', '').isNotEmpty)
-                        _pill('Ada Lampiran', const Color(0xFF0C7C82)),
-                    ],
-                  ),
-                  if (status == StatusLaporanKendala.ditolak &&
-                      _value(data, 'alasan_penolakan', '').isNotEmpty) ...[
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.all(10),
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFEF3F2),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFFECDCA)),
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
                       ),
-                      child: Text(
-                        'Alasan Penolakan: ${_value(data, 'alasan_penolakan')}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFFB42318),
-                          fontWeight: FontWeight.w600,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _value(
+                              data,
+                              'deskripsi',
+                              _value(data, 'deskripsi_kendala'),
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              height: 1.4,
+                              fontSize: 13,
+                              color: Color(0xFF334155),
+                            ),
+                          ),
+                          if (_value(data, 'dampak', '').isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Dampak: ${_value(data, 'dampak')}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: Colors.grey.shade600,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
-                  ],
-                  const SizedBox(height: 12),
-                  const Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Lihat Detail',
-                        style: TextStyle(
-                          color: _blue,
-                          fontWeight: FontWeight.bold,
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        _pill(
+                          'Jenis: ${_value(data, 'jenis_kendala')}',
+                          _blue,
+                          icon: Icons.category_outlined,
                         ),
-                      ),
-                      Icon(Icons.chevron_right, color: _blue),
-                    ],
-                  ),
-                ],
+                        _pill(
+                          'Prioritas: ${_value(data, 'prioritas')}',
+                          const Color(0xFFCA6D00),
+                          icon: Icons.flag_rounded,
+                        ),
+                        _pill(
+                          'Staff: ${staffTotalKendala}× kendala',
+                          const Color(0xFFB42318),
+                        ),
+                        if (hasBukti)
+                          _pill(
+                            'Ada Bukti',
+                            const Color(0xFF0C7C82),
+                            icon: Icons.attach_file_rounded,
+                          ),
+                        if (hasSolusiFile)
+                          _pill(
+                            'File Solusi',
+                            const Color(0xFF15803D),
+                            icon: Icons.task_alt_rounded,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.access_time_rounded,
+                              size: 13,
+                              color: Colors.grey.shade500,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _tanggal(
+                                data['tanggal_laporan'] ?? data['created_at'],
+                              ),
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _blue.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Buka Detail',
+                                style: TextStyle(
+                                  color: _blue,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              SizedBox(width: 4),
+                              Icon(
+                                Icons.arrow_forward_rounded,
+                                size: 14,
+                                color: _blue,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -651,7 +816,11 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8),
+          BoxShadow(
+            color: _navy.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
         ],
       ),
       child: Column(
@@ -677,7 +846,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Frekuensi Kendala Staff (Berapa Banyak Mengalami Kendala)',
+                      'Ringkasan Kendala per Staff',
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.bold,
@@ -696,7 +865,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                 TextButton.icon(
                   onPressed: () => setState(() => _selectedStaffId = 'semua'),
                   icon: const Icon(Icons.close, size: 16),
-                  label: const Text('Semua Staff'),
+                  label: const Text('Tampilkan Semua'),
                 ),
             ],
           ),
@@ -711,7 +880,6 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
               final int total = item['total'] as int;
               final int aktif = item['aktif'] as int;
               final int selesai = item['selesai'] as int;
-              final int ditolak = item['ditolak'] as int;
               final bool selected = _selectedStaffId == staffId;
 
               return InkWell(
@@ -723,8 +891,8 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                 },
                 child: Container(
                   constraints: const BoxConstraints(
-                    minWidth: 230,
-                    maxWidth: 320,
+                    minWidth: 220,
+                    maxWidth: 300,
                   ),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -737,78 +905,66 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                       width: selected ? 1.5 : 1,
                     ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 16,
-                            backgroundColor: _blue.withOpacity(0.12),
-                            child: const Icon(
-                              Icons.person,
-                              size: 18,
-                              color: _blue,
-                            ),
+                      CircleAvatar(
+                        radius: 18,
+                        backgroundColor: _blue.withOpacity(0.12),
+                        child: Text(
+                          nama.isNotEmpty ? nama[0].toUpperCase() : 'S',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: _blue,
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  nama,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                    color: _navy,
-                                  ),
-                                ),
-                                if (jabatan.isNotEmpty && jabatan != '-')
-                                  Text(
-                                    jabatan,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.blueGrey,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFB42318).withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              '$total× Kendala',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              nama,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 11,
                                 fontWeight: FontWeight.bold,
-                                color: Color(0xFFB42318),
+                                fontSize: 13,
+                                color: _navy,
                               ),
                             ),
-                          ),
-                        ],
+                            Text(
+                              jabatan != '-'
+                                  ? jabatan
+                                  : 'Aktif: $aktif • Selesai: $selesai',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.blueGrey,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          _pill('Aktif: $aktif', const Color(0xFFB96B00)),
-                          _pill('Selesai: $selesai', const Color(0xFF15803D)),
-                          _pill('Ditolak: $ditolak', const Color(0xFFB42318)),
-                        ],
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFB42318).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          '$total×',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFB42318),
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -829,32 +985,26 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
     final visible = reports.where((doc) => _visible(doc, assignments)).toList();
 
     final totalAll = reports.length;
-
     final pending = reports
         .where((d) => d.data()['status'] == StatusLaporanKendala.menungguReview)
         .length;
-
     final handling = reports
         .where(
           (d) => d.data()['status'] == StatusLaporanKendala.dalamPenanganan,
         )
         .length;
-
     final confirming = reports
         .where(
           (d) => d.data()['status'] == StatusLaporanKendala.menungguKonfirmasi,
         )
         .length;
-
     final completed = reports
         .where((d) => d.data()['status'] == StatusLaporanKendala.selesai)
         .length;
-
     final rejected = reports
         .where((d) => d.data()['status'] == StatusLaporanKendala.ditolak)
         .length;
 
-    // Hitung seberapa banyak setiap staff & tugas mengalami kendala.
     final Map<String, int> staffKendalaCount = {};
     final Map<String, int> taskKendalaCount = {};
     final Map<String, Map<String, dynamic>> staffStatsMap = {};
@@ -915,7 +1065,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
         await Future<void>.delayed(const Duration(milliseconds: 300));
       },
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         children: [
           Center(
             child: ConstrainedBox(
@@ -923,20 +1073,6 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Monitoring & Penanganan',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: _navy,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  const Text(
-                    'Pantau riwayat laporan kendala staff dari awal pelaporan hingga selesai.',
-                    style: TextStyle(color: Colors.blueGrey),
-                  ),
-                  const SizedBox(height: 18),
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final columns = constraints.maxWidth >= 900
@@ -955,9 +1091,9 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                           SizedBox(
                             width: width,
                             child: _statCard(
-                              'Total Kendala',
+                              'Total Laporan',
                               totalAll,
-                              Icons.report_problem_outlined,
+                              Icons.report_problem_rounded,
                               _navy,
                             ),
                           ),
@@ -966,7 +1102,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                             child: _statCard(
                               'Menunggu Review',
                               pending,
-                              Icons.pending_actions,
+                              Icons.hourglass_top_rounded,
                               const Color(0xFFB96B00),
                             ),
                           ),
@@ -975,7 +1111,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                             child: _statCard(
                               'Dalam Penanganan',
                               handling,
-                              Icons.build_circle_outlined,
+                              Icons.handyman_rounded,
                               _blue,
                             ),
                           ),
@@ -984,7 +1120,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                             child: _statCard(
                               'Menunggu Konfirmasi',
                               confirming,
-                              Icons.fact_check_outlined,
+                              Icons.fact_check_rounded,
                               const Color(0xFF7C3AED),
                             ),
                           ),
@@ -993,7 +1129,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                             child: _statCard(
                               'Selesai',
                               completed,
-                              Icons.check_circle_outline,
+                              Icons.check_circle_rounded,
                               const Color(0xFF15803D),
                             ),
                           ),
@@ -1002,7 +1138,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                             child: _statCard(
                               'Ditolak',
                               rejected,
-                              Icons.cancel_outlined,
+                              Icons.cancel_rounded,
                               const Color(0xFFB42318),
                             ),
                           ),
@@ -1010,39 +1146,49 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                       );
                     },
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 16),
                   _buildStaffFrequencySection(staffSummary),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 16),
                   _filters(),
                   const SizedBox(height: 20),
-                  Text(
-                    'Daftar Laporan (${filtered.length})',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: _navy,
-                    ),
+                  Row(
+                    children: [
+                      const Text(
+                        'Daftar Laporan Kendala',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: _navy,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _pill('${filtered.length} Laporan', _blue),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   if (filtered.isEmpty)
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.all(36),
+                      padding: const EdgeInsets.all(40),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(18),
                       ),
-                      child: const Column(
+                      child: Column(
                         children: [
                           Icon(
                             Icons.inbox_outlined,
-                            size: 44,
-                            color: Colors.blueGrey,
+                            size: 48,
+                            color: Colors.grey.shade400,
                           ),
-                          SizedBox(height: 12),
+                          const SizedBox(height: 12),
                           Text(
-                            'Tidak ada laporan yang sesuai filter.',
+                            'Tidak ada laporan kendala yang sesuai filter.',
                             textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade600,
+                            ),
                           ),
                         ],
                       ),
@@ -1051,7 +1197,6 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
                     LayoutBuilder(
                       builder: (context, constraints) {
                         final two = constraints.maxWidth >= 800;
-
                         final width = two
                             ? (constraints.maxWidth - 14) / 2
                             : constraints.maxWidth;
@@ -1100,10 +1245,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
       builder: (context, assignmentSnapshot) {
         if (assignmentSnapshot.hasError) {
           return Center(
-            child: Text(
-              'Gagal memuat penugasan: '
-              '${assignmentSnapshot.error}',
-            ),
+            child: Text('Gagal memuat penugasan: ${assignmentSnapshot.error}'),
           );
         }
 
@@ -1120,10 +1262,7 @@ class _LaporanKendalaAdminPageState extends State<LaporanKendalaAdminPage> {
           builder: (context, snapshot) {
             if (snapshot.hasError) {
               return Center(
-                child: Text(
-                  'Gagal memuat laporan: '
-                  '${snapshot.error}',
-                ),
+                child: Text('Gagal memuat laporan: ${snapshot.error}'),
               );
             }
 
@@ -1196,6 +1335,7 @@ class _DetailLaporanKendalaAdminPageState
     extends State<DetailLaporanKendalaAdminPage> {
   static const Color _navy = AppPalette.navy;
   static const Color _blue = AppPalette.blue;
+  static const Color _sky = AppPalette.sky;
   static const Color _background = AppPalette.background;
 
   final _db = FirebaseFirestore.instance;
@@ -1203,20 +1343,16 @@ class _DetailLaporanKendalaAdminPageState
   final _storageService = SupabaseStorageService();
 
   bool _saving = false;
-  bool _loadingBukti = false;
 
   Future<Map<String, String>>? _identity;
 
   late final Stream<DocumentSnapshot<Map<String, dynamic>>> _detailStream;
-
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _assignmentStream;
 
   @override
   void initState() {
     super.initState();
-
     _detailStream = _service.streamDetail(widget.laporanId);
-
     _assignmentStream = _db.collection('penugasan').snapshots();
   }
 
@@ -1231,13 +1367,40 @@ class _DetailLaporanKendalaAdminPageState
 
   String _tanggal(dynamic value) {
     if (value is! Timestamp) return '-';
-
     final date = value.toDate();
-
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'Mei',
+      'Jun',
+      'Jul',
+      'Agu',
+      'Sep',
+      'Okt',
+      'Nov',
+      'Des',
+    ];
     String two(int n) => n.toString().padLeft(2, '0');
+    return '${date.day} ${months[date.month - 1]} ${date.year}, ${two(date.hour)}:${two(date.minute)} WIB';
+  }
 
-    return '${two(date.day)}/${two(date.month)}/'
-        '${date.year} ${two(date.hour)}:${two(date.minute)}';
+  Color _statusColor(String status) {
+    switch (status) {
+      case StatusLaporanKendala.menungguReview:
+        return const Color(0xFFB96B00);
+      case StatusLaporanKendala.dalamPenanganan:
+        return _blue;
+      case StatusLaporanKendala.menungguKonfirmasi:
+        return const Color(0xFF7C3AED);
+      case StatusLaporanKendala.selesai:
+        return const Color(0xFF15803D);
+      case StatusLaporanKendala.ditolak:
+        return const Color(0xFFB42318);
+      default:
+        return Colors.blueGrey;
+    }
   }
 
   Future<Map<String, String>> _loadIdentity(Map<String, dynamic> data) async {
@@ -1255,44 +1418,69 @@ class _DetailLaporanKendalaAdminPageState
     return {
       'staff':
           staff?.data()?['nama']?.toString() ??
-          _value(data, 'nama_staf', 'Staff'),
+          _value(data, 'pelapor_nama', _value(data, 'nama_staf', 'Staff')),
+      'jabatan': staff?.data()?['jabatan']?.toString() ?? '-',
       'tugas':
           task?.data()?['judul']?.toString() ??
-          _value(data, 'judul_tugas', 'Tugas tidak ditemukan'),
+          _value(data, 'judul_tugas', 'Tugas Penugasan'),
     };
   }
 
-  void _snack(String message) {
+  void _snack(String message, {bool error = false}) {
     if (!mounted) return;
-
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+        SnackBar(
+          content: Text(message),
+          backgroundColor: error ? Colors.red.shade700 : _navy,
+          behavior: SnackBarBehavior.floating,
+        ),
       );
   }
 
-  Widget _line(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Column(
+  Widget _infoTile(IconData icon, String label, String value) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.blueGrey,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: _blue.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(10),
             ),
+            child: Icon(icon, size: 18, color: _blue),
           ),
-          const SizedBox(height: 5),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Color(0xFF23304A),
-              fontSize: 14,
-              height: 1.45,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.blueGrey,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: _navy,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -1300,29 +1488,126 @@ class _DetailLaporanKendalaAdminPageState
     );
   }
 
-  Widget _section(String title, List<Widget> children) {
+  Widget _section(
+    String title,
+    IconData icon,
+    List<Widget> children, {
+    Color iconColor = _blue,
+  }) {
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(18),
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(17),
-        border: Border.all(color: const Color(0xFFE8EDF6)),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: _navy.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: _navy,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: iconColor, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: _navy,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
           ),
           const Divider(height: 24),
           ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _attachmentCard({
+    required String fileName,
+    required String subtitle,
+    required VoidCallback onPreview,
+    required VoidCallback onDownload,
+  }) {
+    final cleanName = fileName.replaceFirst(RegExp(r'^\d{10,}_'), '');
+    final ext = cleanName.contains('.')
+        ? cleanName.split('.').last.toUpperCase()
+        : 'FILE';
+    final isImg = const ['JPG', 'JPEG', 'PNG', 'WEBP'].contains(ext);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F6FC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _blue.withOpacity(0.20)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _sky.withOpacity(0.18),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              isImg ? Icons.image_rounded : Icons.picture_as_pdf_rounded,
+              color: _blue,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  cleanName.isNotEmpty ? cleanName : 'Dokumen Lampiran',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.bold,
+                    color: _navy,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$ext • $subtitle',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Lihat Dokumen di Aplikasi',
+            onPressed: onPreview,
+            icon: const Icon(Icons.visibility_rounded, color: _blue),
+          ),
+          IconButton(
+            tooltip: 'Unduh Dokumen ke Perangkat',
+            onPressed: onDownload,
+            icon: const Icon(Icons.download_rounded, color: _blue),
+          ),
         ],
       ),
     );
@@ -1338,15 +1623,26 @@ class _DetailLaporanKendalaAdminPageState
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            minLines: 3,
-            maxLines: 5,
-            decoration: InputDecoration(
-              hintText: hint,
-              border: const OutlineInputBorder(),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Text(
+            title,
+            style: const TextStyle(color: _navy, fontWeight: FontWeight.bold),
+          ),
+          content: SizedBox(
+            width: 400,
+            child: TextField(
+              controller: controller,
+              autofocus: true,
+              minLines: 3,
+              maxLines: 5,
+              decoration: InputDecoration(
+                hintText: hint,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
             ),
           ),
           actions: [
@@ -1355,40 +1651,36 @@ class _DetailLaporanKendalaAdminPageState
               child: const Text('Batal'),
             ),
             FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB42318),
+              ),
               onPressed: () {
                 final text = controller.text.trim();
                 if (text.isEmpty) return;
-
                 Navigator.pop(dialogContext, text);
               },
-              child: const Text('Kirim'),
+              child: const Text('Tolak Laporan'),
             ),
           ],
         );
       },
     );
 
-    // Hindari dispose sebelum animasi dialog selesai.
     Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
-
     return result;
   }
 
   Future<void> _action(Future<void> Function() work) async {
     if (_saving) return;
-
     setState(() => _saving = true);
 
     try {
       await work();
-
       if (!mounted) return;
-
-      _snack('Laporan berhasil diperbarui.');
+      _snack('Laporan kendala berhasil diperbarui.');
     } catch (e) {
       if (!mounted) return;
-
-      _snack('Gagal memproses laporan: $e');
+      _snack('Gagal memproses laporan: $e', error: true);
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -1411,10 +1703,13 @@ class _DetailLaporanKendalaAdminPageState
         style: OutlinedButton.styleFrom(
           foregroundColor: buttonColor,
           side: BorderSide(color: buttonColor),
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
-        icon: Icon(icon),
-        label: Text(label),
+        icon: Icon(icon, size: 18),
+        label: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
       );
     }
 
@@ -1422,103 +1717,60 @@ class _DetailLaporanKendalaAdminPageState
       onPressed: _saving ? null : onPressed,
       style: FilledButton.styleFrom(
         backgroundColor: buttonColor,
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
-      icon: Icon(icon),
-      label: Text(label),
+      icon: Icon(icon, size: 18),
+      label: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
     );
   }
 
   // ============================================================
-  // RIWAYAT KENDALA
+  // PREVIEW & UNDUH LAMPIRAN IN-APP (BUKTI STAFF & SOLUSI ATASAN)
   // ============================================================
 
-  Widget _riwayatLaporan() {
-    final stream = _db
-        .collection('laporan_kendala')
-        .doc(widget.laporanId)
-        .collection('riwayat')
-        .orderBy('created_at')
-        .snapshots();
+  Future<void> _bukaFileInApp({
+    required String namaFile,
+    required String path,
+    String? fallbackUrl,
+    required String kind,
+    String? assignmentId,
+    String? tugasId,
+  }) async {
+    await StaffAdminApi.openInAppFilePreview(
+      context,
+      namaFile: namaFile,
+      path: path,
+      fallbackUrl: fallbackUrl,
+      assignmentId: assignmentId,
+      laporanId: widget.laporanId,
+      tugasId: tugasId,
+      kind: kind,
+    );
+  }
 
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: stream,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return _section('Riwayat Kendala', [
-            Text(
-              'Gagal memuat riwayat: '
-              '${snapshot.error}',
-            ),
-          ]);
-        }
-
-        if (!snapshot.hasData) {
-          return _section('Riwayat Kendala', [
-            const Center(child: CircularProgressIndicator()),
-          ]);
-        }
-
-        final docs = snapshot.data!.docs;
-
-        if (docs.isEmpty) {
-          return _section('Riwayat Kendala', [
-            const Text(
-              'Belum ada laporan lanjutan. '
-              'Informasi laporan saat ini tersedia '
-              'pada bagian atas.',
-            ),
-          ]);
-        }
-
-        return _section('Riwayat Kendala Sebelumnya', [
-          for (var i = 0; i < docs.length; i++)
-            Builder(
-              builder: (context) {
-                final data = docs[i].data();
-
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Putaran ${i + 1} • '
-                          '${_tanggal(data['created_at'])}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: _navy,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        _line('Kendala', _value(data, 'deskripsi_sebelumnya')),
-                        _line('Dampak', _value(data, 'dampak_sebelumnya')),
-                        _line(
-                          'Solusi Atasan',
-                          _value(data, 'solusi_sebelumnya'),
-                        ),
-                        _line('Tanggapan Staff', _value(data, 'feedback')),
-                        if (_value(data, 'solusi_file_path', '').isNotEmpty)
-                          const Text(
-                            'Lampiran solusi sebelumnya '
-                            'tercatat dalam riwayat.',
-                            style: TextStyle(color: _blue, fontSize: 12),
-                          ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-        ]);
-      },
+  Future<void> _unduhFileInApp({
+    required String namaFile,
+    required String path,
+    String? fallbackUrl,
+    required String kind,
+    String? assignmentId,
+    String? tugasId,
+  }) async {
+    await StaffAdminApi.downloadSupabaseFile(
+      context,
+      namaFile: namaFile,
+      path: path,
+      fallbackUrl: fallbackUrl,
+      assignmentId: assignmentId,
+      laporanId: widget.laporanId,
+      tugasId: tugasId,
+      kind: kind,
     );
   }
 
   // ============================================================
-  // KIRIM DAN EDIT SOLUSI
+  // KIRIM DAN EDIT SOLUSI (DENGAN DUKUNGAN FILE DOKUMEN)
   // ============================================================
 
   Future<void> _formSolusi({required bool edit}) async {
@@ -1532,12 +1784,21 @@ class _DetailLaporanKendalaAdminPageState
     if (!mounted) return;
 
     final data = current.data() ?? {};
+    final existingFileName = _value(
+      data,
+      'solusi_file_nama',
+      _value(data, 'solusi_file_path', '').isNotEmpty
+          ? _value(data, 'solusi_file_path').split('/').last
+          : '',
+    );
 
     final controller = TextEditingController(
       text: edit ? (data['solusi'] ?? '').toString() : '',
     );
 
     PlatformFile? selectedFile;
+    Uint8List? selectedBytes;
+    String? fileError;
 
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -1545,47 +1806,144 @@ class _DetailLaporanKendalaAdminPageState
         return StatefulBuilder(
           builder: (context, setModalState) {
             return AlertDialog(
-              title: Text(edit ? 'Edit Solusi' : 'Kirim Solusi'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: controller,
-                      maxLines: 4,
-                      decoration: const InputDecoration(
-                        labelText: 'Keterangan solusi (wajib)',
-                        border: OutlineInputBorder(),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              title: Text(
+                edit ? 'Edit Solusi & Lampiran' : 'Kirim Solusi ke Staff',
+                style: const TextStyle(
+                  color: _navy,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              content: SizedBox(
+                width: 440,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextField(
+                        controller: controller,
+                        maxLines: 4,
+                        decoration: InputDecoration(
+                          labelText: 'Keterangan solusi / arahan (wajib)',
+                          hintText:
+                              'Tuliskan langkah solusi untuk membantu staff...',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        final picked = await FilePicker.pickFile(
-                          type: FileType.custom,
-                          allowedExtensions: [
-                            'pdf',
-                            'jpg',
-                            'jpeg',
-                            'png',
-                            'docx',
-                          ],
-                        );
+                      const SizedBox(height: 14),
+                      InkWell(
+                        onTap: () async {
+                          try {
+                            final picked = await FilePicker.pickFile(
+                              type: FileType.custom,
+                              allowedExtensions: const [
+                                'pdf',
+                                'jpg',
+                                'jpeg',
+                                'png',
+                                'docx',
+                              ],
+                            );
 
-                        if (picked == null) {
-                          return;
-                        }
+                            if (picked == null) return;
+                            final b = await picked.readAsBytes();
 
-                        setModalState(() {
-                          selectedFile = picked;
-                        });
-                      },
-                      icon: const Icon(Icons.attach_file),
-                      label: Text(
-                        selectedFile?.name ?? 'Lampiran solusi (opsional)',
+                            setModalState(() {
+                              selectedFile = picked;
+                              selectedBytes = b;
+                              fileError = null;
+                            });
+                          } catch (e) {
+                            setModalState(() {
+                              fileError = 'Gagal membaca file: $e';
+                            });
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0F6FF),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: _blue.withOpacity(0.35)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.upload_file_rounded,
+                                color: _blue,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      selectedFile != null
+                                          ? selectedFile!.name
+                                          : (edit && existingFileName.isNotEmpty
+                                                ? 'Ganti file ($existingFileName)'
+                                                : 'Lampirkan file solusi (PDF / Foto / DOCX)'),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: selectedFile != null
+                                            ? FontWeight.bold
+                                            : FontWeight.w500,
+                                        color: _navy,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      selectedFile != null
+                                          ? 'File siap dikirim bersama solusi'
+                                          : 'Opsional — klik untuk memilih dokumen',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (selectedFile != null)
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  onPressed: () {
+                                    setModalState(() {
+                                      selectedFile = null;
+                                      selectedBytes = null;
+                                    });
+                                  },
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                      if (fileError != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          fileError!,
+                          style: TextStyle(
+                            color: Colors.red.shade700,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
               actions: [
@@ -1593,18 +1951,20 @@ class _DetailLaporanKendalaAdminPageState
                   onPressed: () => Navigator.pop(dialogContext),
                   child: const Text('Batal'),
                 ),
-                FilledButton(
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(backgroundColor: _blue),
                   onPressed: () {
                     final solusi = controller.text.trim();
-
                     if (solusi.isEmpty) return;
 
                     Navigator.pop(dialogContext, {
                       'solusi': solusi,
                       'file': selectedFile,
+                      'bytes': selectedBytes,
                     });
                   },
-                  child: const Text('Simpan'),
+                  icon: const Icon(Icons.send_rounded, size: 16),
+                  label: Text(edit ? 'Simpan Perubahan' : 'Kirim Solusi'),
                 ),
               ],
             );
@@ -1622,26 +1982,29 @@ class _DetailLaporanKendalaAdminPageState
       String? nama;
 
       final file = result['file'] as PlatformFile?;
+      final preBytes = result['bytes'] as Uint8List?;
 
-      if (file != null) {
-        final bytes = await file.readAsBytes();
+      if (file != null || (preBytes != null && preBytes.isNotEmpty)) {
+        final bytes = (preBytes != null && preBytes.isNotEmpty)
+            ? preBytes
+            : await file!.readAsBytes();
 
-        if (bytes == null) {
+        if (bytes == null || bytes.isEmpty) {
           throw StateError(
-            'File tidak berhasil dibaca. '
-            'Silakan pilih ulang lampiran.',
+            'File tidak berhasil dibaca. Silakan pilih ulang lampiran.',
           );
         }
 
+        final fName = file?.name ?? 'Lampiran_Solusi.pdf';
         final uploaded = await _storageService.uploadHasilTugas(
           tugasId: 'solusi_${widget.laporanId}',
-          namaFile: file.name,
+          namaFile: fName,
           bytes: bytes,
-          contentType: SupabaseStorageService.mimeTypeDariNama(file.name),
+          contentType: SupabaseStorageService.mimeTypeDariNama(fName),
         );
 
         path = uploaded.path;
-        nama = file.name;
+        nama = fName;
       }
 
       if (edit) {
@@ -1663,6 +2026,102 @@ class _DetailLaporanKendalaAdminPageState
   }
 
   // ============================================================
+  // RIWAYAT KENDALA SEBELUMNYA
+  // ============================================================
+
+  Widget _riwayatLaporan(String assignmentId, String tugasId) {
+    final stream = _db
+        .collection('laporan_kendala')
+        .doc(widget.laporanId)
+        .collection('riwayat')
+        .orderBy('created_at')
+        .snapshots();
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: stream,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        final docs = snapshot.data!.docs;
+
+        return _section(
+          'Riwayat Putaran Kendala Sebelumnya',
+          Icons.history_rounded,
+          [
+            for (var i = 0; i < docs.length; i++)
+              Builder(
+                builder: (context) {
+                  final d = docs[i].data();
+                  final prevPath = _value(d, 'solusi_file_path', '');
+                  final prevName = _value(
+                    d,
+                    'solusi_file_nama',
+                    prevPath.isNotEmpty ? prevPath.split('/').last : 'Lampiran',
+                  );
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Putaran ${i + 1} • ${_tanggal(d['created_at'])}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: _navy,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text('Kendala: ${_value(d, 'deskripsi_sebelumnya')}'),
+                        const SizedBox(height: 4),
+                        Text('Dampak: ${_value(d, 'dampak_sebelumnya')}'),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Solusi Atasan: ${_value(d, 'solusi_sebelumnya')}',
+                        ),
+                        const SizedBox(height: 4),
+                        Text('Tanggapan Staff: ${_value(d, 'feedback')}'),
+                        if (prevPath.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          _attachmentCard(
+                            fileName: prevName,
+                            subtitle: 'Lampiran solusi putaran ${i + 1}',
+                            onPreview: () => _bukaFileInApp(
+                              namaFile: prevName,
+                              path: prevPath,
+                              kind: 'solusi',
+                              assignmentId: assignmentId,
+                              tugasId: tugasId,
+                            ),
+                            onDownload: () => _unduhFileInApp(
+                              namaFile: prevName,
+                              path: prevPath,
+                              kind: 'solusi',
+                              assignmentId: assignmentId,
+                              tugasId: tugasId,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ============================================================
   // TINDAKAN ADMIN
   // ============================================================
 
@@ -1676,23 +2135,53 @@ class _DetailLaporanKendalaAdminPageState
 
     if (!canHandle) {
       if (status == StatusLaporanKendala.selesai) {
-        return const Text(
-          'Laporan telah diselesaikan dan '
-          'dikonfirmasi Staff.',
-          style: TextStyle(
-            color: Color(0xFF15803D),
-            fontWeight: FontWeight.w600,
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0FDF4),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFBBF7D0)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.check_circle_rounded, color: Color(0xFF15803D)),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Laporan kendala ini telah diselesaikan dan dikonfirmasi oleh Staff.',
+                  style: TextStyle(
+                    color: Color(0xFF15803D),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       }
 
       if (status == StatusLaporanKendala.ditolak) {
-        return const Text(
-          'Laporan telah ditolak. '
-          'Data tetap tersimpan sebagai riwayat.',
-          style: TextStyle(
-            color: Color(0xFFB42318),
-            fontWeight: FontWeight.w600,
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFEF3F2),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFFECDCA)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.cancel_rounded, color: Color(0xFFB42318)),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Laporan kendala ini telah ditolak. Data tetap tersimpan sebagai riwayat.',
+                  style: TextStyle(
+                    color: Color(0xFFB42318),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       }
@@ -1702,14 +2191,34 @@ class _DetailLaporanKendalaAdminPageState
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Solusi telah dikirim. '
-              'Menunggu konfirmasi Staff.',
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F3FF),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFDDD6FE)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.mark_email_read_rounded, color: Color(0xFF7C3AED)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Solusi telah dikirim dan sedang menunggu konfirmasi dari Staff. Anda masih dapat memperbarui keterangan atau lampiran file solusi.',
+                      style: TextStyle(
+                        color: Color(0xFF5B21B6),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             _button(
-              'Edit Solusi',
-              Icons.edit_outlined,
+              'Edit Solusi & Lampiran File',
+              Icons.edit_note_rounded,
               () => _formSolusi(edit: true),
             ),
           ],
@@ -1717,28 +2226,26 @@ class _DetailLaporanKendalaAdminPageState
       }
 
       return const Text(
-        'Laporan tidak dapat diproses karena '
-        'penugasan tidak sedang terkendala '
-        'atau laporan bukan kendala aktif.',
+        'Laporan sudah tidak aktif karena penugasan telah berlanjut.',
         style: TextStyle(color: Colors.blueGrey),
       );
     }
 
     if (status == StatusLaporanKendala.menungguReview) {
       return Wrap(
-        spacing: 10,
-        runSpacing: 10,
+        spacing: 12,
+        runSpacing: 12,
         children: [
-          _button('Terima & Tangani', Icons.handyman_outlined, () {
+          _button('Terima & Tangani', Icons.handyman_rounded, () {
             _action(() => _service.mulaiPenanganan(id));
           }),
           _button(
             'Tolak Laporan',
-            Icons.block_outlined,
+            Icons.block_rounded,
             () async {
               final alasan = await _askText(
-                title: 'Alasan Penolakan',
-                hint: 'Masukkan alasan penolakan...',
+                title: 'Alasan Penolakan Laporan',
+                hint: 'Masukkan alasan mengapa laporan kendala ini ditolak...',
               );
 
               if (alasan != null) {
@@ -1756,21 +2263,21 @@ class _DetailLaporanKendalaAdminPageState
 
     if (status == StatusLaporanKendala.dalamPenanganan) {
       return Wrap(
-        spacing: 10,
-        runSpacing: 10,
+        spacing: 12,
+        runSpacing: 12,
         children: [
           _button(
-            'Kirim Solusi',
-            Icons.send_outlined,
+            'Kirim Solusi & File',
+            Icons.send_rounded,
             () => _formSolusi(edit: false),
           ),
           _button(
             'Tolak Laporan',
-            Icons.block_outlined,
+            Icons.block_rounded,
             () async {
               final alasan = await _askText(
-                title: 'Alasan Penolakan',
-                hint: 'Masukkan alasan penolakan...',
+                title: 'Alasan Penolakan Laporan',
+                hint: 'Masukkan alasan mengapa laporan kendala ini ditolak...',
               );
 
               if (alasan != null) {
@@ -1790,137 +2297,6 @@ class _DetailLaporanKendalaAdminPageState
   }
 
   // ============================================================
-  // PREVIEW LAMPIRAN BUKTI
-  // ============================================================
-
-  Future<void> _lihatBukti(Map<String, dynamic> data) async {
-    if (_loadingBukti) return;
-
-    final path = _value(data, 'bukti_path', '');
-
-    if (path.isEmpty) {
-      _snack('Lampiran bukti tidak ditemukan.');
-      return;
-    }
-
-    setState(() => _loadingBukti = true);
-
-    try {
-      final signedUrl = await _storageService.ambilLinkBuktiKendala(
-        widget.laporanId,
-      );
-
-      if (!mounted) return;
-
-      final namaFile = Uri.decodeComponent(path.split('/').last);
-
-      final extension = namaFile.split('.').last.toLowerCase();
-
-      final isPdf = extension == 'pdf';
-
-      final isImage = ['png', 'jpg', 'jpeg'].contains(extension);
-
-      if (!isPdf && !isImage) {
-        throw StateError('Format lampiran tidak mendukung preview.');
-      }
-
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) {
-          final size = MediaQuery.sizeOf(dialogContext);
-
-          return Dialog(
-            insetPadding: const EdgeInsets.all(16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: SizedBox(
-              width: size.width > 900 ? 850 : size.width * 0.95,
-              height: size.height * 0.85,
-              child: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: const BoxDecoration(
-                      color: _navy,
-                      borderRadius: BorderRadius.vertical(
-                        top: Radius.circular(16),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          isPdf ? Icons.picture_as_pdf : Icons.image_outlined,
-                          color: Colors.white,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            namaFile,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(dialogContext),
-                          icon: const Icon(Icons.close, color: Colors.white),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: isPdf
-                        ? SfPdfViewer.network(
-                            signedUrl,
-                            canShowScrollHead: true,
-                            canShowPaginationDialog: true,
-                          )
-                        : InteractiveViewer(
-                            minScale: 0.5,
-                            maxScale: 5,
-                            child: Center(
-                              child: Image.network(
-                                signedUrl,
-                                fit: BoxFit.contain,
-                                loadingBuilder: (context, child, progress) {
-                                  if (progress == null) {
-                                    return child;
-                                  }
-
-                                  return const Center(
-                                    child: CircularProgressIndicator(),
-                                  );
-                                },
-                                errorBuilder: (context, error, stackTrace) {
-                                  return const Center(
-                                    child: Text('Gagal menampilkan gambar.'),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      );
-    } catch (e) {
-      if (mounted) {
-        _snack('Gagal membuka bukti: $e');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _loadingBukti = false);
-      }
-    }
-  }
-
-  // ============================================================
   // KONTEN DETAIL
   // ============================================================
 
@@ -1930,138 +2306,439 @@ class _DetailLaporanKendalaAdminPageState
     bool isActiveAssignment,
   ) {
     final status = _value(data, 'status');
+    final statusCol = _statusColor(status);
+    final assignmentId = _value(data, 'penugasan_id', '');
+    final tugasId = _value(data, 'tugas_id', '');
+    final buktiPath = _value(data, 'bukti_path', '');
+    final buktiUrl = _value(data, 'bukti_url', '');
+    final solusiPath = _value(data, 'solusi_file_path', '');
+    final solusiNama = _value(
+      data,
+      'solusi_file_nama',
+      solusiPath.isNotEmpty ? solusiPath.split('/').last : 'Dokumen_Solusi.pdf',
+    );
 
     _identity ??= _loadIdentity(data);
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       children: [
         Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 850),
+            constraints: const BoxConstraints(maxWidth: 880),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _section('Informasi Laporan', [
-                  _line('Status', StatusLaporanKendala.label(status)),
-                  _line(
-                    'Status Penugasan',
-                    assignmentStatus.isEmpty ? '-' : assignmentStatus,
+                // TOMBOL KEMBALI KE DAFTAR LAPORAN KENDALA
+                TextButton.icon(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                  label: const Text(
+                    'Kembali ke Daftar Laporan Kendala',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                   ),
-                  _line(
-                    'Tanggal Laporan',
-                    _tanggal(data['tanggal_laporan'] ?? data['created_at']),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _blue,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                   ),
-                  FutureBuilder<Map<String, String>>(
+                ),
+                const SizedBox(height: 10),
+
+                // BANNER HEADER STATUS
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [_navy, _blue],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _navy.withOpacity(0.18),
+                        blurRadius: 14,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: FutureBuilder<Map<String, String>>(
                     future: _identity,
                     builder: (context, snapshot) {
+                      final judul =
+                          snapshot.data?['tugas'] ?? 'Memuat Tugas...';
+                      final staff =
+                          snapshot.data?['staff'] ?? 'Memuat Staff...';
+
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _line(
-                            'Staff Pelapor',
-                            snapshot.data?['staff'] ?? 'Memuat...',
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  StatusLaporanKendala.label(status),
+                                  style: TextStyle(
+                                    color: statusCol,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.18),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  'Prioritas ${_value(data, 'prioritas')}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                          _line(
-                            'Tugas',
-                            snapshot.data?['tugas'] ?? 'Memuat...',
+                          const SizedBox(height: 12),
+                          Text(
+                            judul,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.person_outline_rounded,
+                                size: 16,
+                                color: Colors.white70,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Dilaporkan oleh: $staff • ${_tanggal(data['tanggal_laporan'] ?? data['created_at'])}',
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       );
                     },
                   ),
-                  _line('Jenis Kendala', _value(data, 'jenis_kendala')),
-                  _line('Prioritas', _value(data, 'prioritas')),
-                  _line(
-                    'Deskripsi Kendala',
-                    _value(
-                      data,
-                      'deskripsi',
-                      _value(data, 'deskripsi_kendala'),
+                ),
+
+                // SEKSI 1: INFORMASI LAPORAN KENDALA
+                _section(
+                  'Informasi Laporan Kendala',
+                  Icons.report_problem_rounded,
+                  [
+                    FutureBuilder<Map<String, String>>(
+                      future: _identity,
+                      builder: (context, snapshot) {
+                        return LayoutBuilder(
+                          builder: (context, c) {
+                            final twoCol = c.maxWidth >= 560;
+                            final w = twoCol
+                                ? (c.maxWidth - 12) / 2
+                                : c.maxWidth;
+                            return Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: [
+                                SizedBox(
+                                  width: w,
+                                  child: _infoTile(
+                                    Icons.badge_outlined,
+                                    'Staff Pelapor',
+                                    snapshot.data?['staff'] ?? 'Memuat...',
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: w,
+                                  child: _infoTile(
+                                    Icons.assignment_outlined,
+                                    'Judul Tugas',
+                                    snapshot.data?['tugas'] ?? 'Memuat...',
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: w,
+                                  child: _infoTile(
+                                    Icons.category_outlined,
+                                    'Jenis Kendala',
+                                    _value(data, 'jenis_kendala'),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: w,
+                                  child: _infoTile(
+                                    Icons.sync_alt_rounded,
+                                    'Status Penugasan',
+                                    assignmentStatus.isEmpty
+                                        ? '-'
+                                        : assignmentStatus.toUpperCase(),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        );
+                      },
                     ),
-                  ),
-                  _line('Dampak terhadap Tugas', _value(data, 'dampak')),
-                ]),
-                _section('Penanganan', [
-                  _line('Solusi dari Atasan', _value(data, 'solusi')),
-                  if (_value(data, 'alasan_penolakan') != '-')
-                    _line('Alasan Penolakan', _value(data, 'alasan_penolakan')),
-                  FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                    future: _value(data, 'ditangani_oleh', '').isEmpty
-                        ? null
-                        : _db
-                              .collection('users')
-                              .doc(_value(data, 'ditangani_oleh'))
-                              .get(),
-                    builder: (context, snapshot) {
-                      final profile = snapshot.data?.data();
-
-                      final nama = (profile?['nama'] ?? '').toString().trim();
-
-                      final jabatan = (profile?['jabatan'] ?? '')
-                          .toString()
-                          .trim();
-
-                      return _line(
-                        'Atasan Penanganan',
-                        nama.isEmpty
-                            ? 'Belum ada Atasan yang menangani'
-                            : '$nama'
-                                  '${jabatan.isEmpty ? '' : ' — $jabatan'}',
-                      );
-                    },
-                  ),
-                  _line('Pembaruan Terakhir', _tanggal(data['updated_at'])),
-                  if (data['resolved_at'] != null)
-                    _line('Tanggal Selesai', _tanggal(data['resolved_at'])),
-                  if (data['rejected_at'] != null)
-                    _line('Tanggal Ditolak', _tanggal(data['rejected_at'])),
-                ]),
-                _riwayatLaporan(),
-                if (_value(data, 'bukti_path', '').isNotEmpty ||
-                    _value(data, 'bukti_url', '').isNotEmpty)
-                  _section('Lampiran Bukti', [
+                    const SizedBox(height: 16),
                     const Text(
-                      'Lampiran bukti yang dikirim '
-                      'Staff dapat dilihat melalui '
-                      'tombol berikut.',
+                      'Deskripsi Kendala',
+                      style: TextStyle(
+                        color: _navy,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    const SizedBox(height: 12),
-                    _line('Provider', _value(data, 'bukti_provider')),
-                    _line(
-                      'Nama File',
-                      _value(data, 'bukti_path', '').isEmpty
-                          ? '-'
-                          : _value(data, 'bukti_path').split('/').last,
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Text(
+                        _value(
+                          data,
+                          'deskripsi',
+                          _value(data, 'deskripsi_kendala'),
+                        ),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                          color: Color(0xFF1E293B),
+                        ),
+                      ),
                     ),
-                    FilledButton.icon(
-                      onPressed:
-                          _loadingBukti ||
-                              _value(data, 'bukti_path', '').isEmpty
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Dampak terhadap Tugas',
+                      style: TextStyle(
+                        color: _navy,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFDE68A)),
+                      ),
+                      child: Text(
+                        _value(data, 'dampak'),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                          color: Color(0xFF92400E),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                // SEKSI 2: LAMPIRAN BUKTI KENDALA STAFF
+                if (buktiPath.isNotEmpty || buktiUrl.isNotEmpty)
+                  _section(
+                    'Lampiran Bukti Kendala dari Staff',
+                    Icons.attach_file_rounded,
+                    [
+                      _attachmentCard(
+                        fileName: buktiPath.isNotEmpty
+                            ? Uri.decodeComponent(buktiPath.split('/').last)
+                            : 'Bukti_Kendala.pdf',
+                        subtitle:
+                            'Klik ikon mata untuk melihat isi dokumen di aplikasi',
+                        onPreview: () => _bukaFileInApp(
+                          namaFile: buktiPath.isNotEmpty
+                              ? Uri.decodeComponent(buktiPath.split('/').last)
+                              : 'Bukti_Kendala.pdf',
+                          path: buktiPath,
+                          fallbackUrl: buktiUrl,
+                          kind: 'kendala',
+                          assignmentId: assignmentId,
+                          tugasId: tugasId,
+                        ),
+                        onDownload: () => _unduhFileInApp(
+                          namaFile: buktiPath.isNotEmpty
+                              ? Uri.decodeComponent(buktiPath.split('/').last)
+                              : 'Bukti_Kendala.pdf',
+                          path: buktiPath,
+                          fallbackUrl: buktiUrl,
+                          kind: 'kendala',
+                          assignmentId: assignmentId,
+                          tugasId: tugasId,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                // SEKSI 3: PENANGANAN & SOLUSI ATASAN
+                _section(
+                  'Penanganan & Solusi Atasan',
+                  Icons.verified_user_outlined,
+                  [
+                    FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                      future: _value(data, 'ditangani_oleh', '').isEmpty
                           ? null
-                          : () => _lihatBukti(data),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _blue,
-                        padding: const EdgeInsets.all(14),
-                      ),
-                      icon: _loadingBukti
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.visibility_outlined),
-                      label: Text(
-                        _loadingBukti ? 'Memuat Bukti...' : 'Lihat Bukti',
+                          : _db
+                                .collection('users')
+                                .doc(_value(data, 'ditangani_oleh'))
+                                .get(),
+                      builder: (context, snapshot) {
+                        final profile = snapshot.data?.data();
+                        final nama = (profile?['nama'] ?? '').toString().trim();
+                        final jabatan = (profile?['jabatan'] ?? '')
+                            .toString()
+                            .trim();
+
+                        return _infoTile(
+                          Icons.supervisor_account_rounded,
+                          'Ditangani Oleh',
+                          nama.isEmpty
+                              ? 'Belum ada Atasan yang menangani'
+                              : '$nama${jabatan.isEmpty ? '' : ' — $jabatan'}',
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Arahan / Solusi dari Atasan',
+                      style: TextStyle(
+                        color: _navy,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ]),
-                _section('Tindakan Admin', [
-                  if (_saving) const LinearProgressIndicator(),
-                  const SizedBox(height: 8),
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0F9FF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFBAE6FD)),
+                      ),
+                      child: Text(
+                        _value(
+                          data,
+                          'solusi',
+                          'Belum ada solusi yang dikirimkan.',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                          color: _navy,
+                        ),
+                      ),
+                    ),
+                    if (solusiPath.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      const Text(
+                        'Lampiran Dokumen Solusi Atasan',
+                        style: TextStyle(
+                          color: _navy,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      _attachmentCard(
+                        fileName: solusiNama,
+                        subtitle: 'Dokumen panduan solusi dari Atasan',
+                        onPreview: () => _bukaFileInApp(
+                          namaFile: solusiNama,
+                          path: solusiPath,
+                          kind: 'solusi',
+                          assignmentId: assignmentId,
+                          tugasId: tugasId,
+                        ),
+                        onDownload: () => _unduhFileInApp(
+                          namaFile: solusiNama,
+                          path: solusiPath,
+                          kind: 'solusi',
+                          assignmentId: assignmentId,
+                          tugasId: tugasId,
+                        ),
+                      ),
+                    ],
+                    if (_value(data, 'alasan_penolakan', '').isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      const Text(
+                        'Alasan Penolakan',
+                        style: TextStyle(
+                          color: Color(0xFFB42318),
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF3F2),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFECDCA)),
+                        ),
+                        child: Text(
+                          _value(data, 'alasan_penolakan'),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Color(0xFFB42318),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+
+                // SEKSI 4: RIWAYAT PUTARAN SEBELUMNYA
+                _riwayatLaporan(assignmentId, tugasId),
+
+                // SEKSI 5: TINDAKAN ATASAN
+                _section('Tindakan Atasan', Icons.touch_app_rounded, [
+                  if (_saving) ...[
+                    const LinearProgressIndicator(),
+                    const SizedBox(height: 12),
+                  ],
                   _actions(status, isActiveAssignment: isActiveAssignment),
                 ]),
               ],
@@ -2089,7 +2766,6 @@ class _DetailLaporanKendalaAdminPageState
         }
 
         final data = snapshot.data!.data()!;
-
         final assignmentId = _value(data, 'penugasan_id', '');
 
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -2098,8 +2774,7 @@ class _DetailLaporanKendalaAdminPageState
             if (assignmentSnapshot.hasError) {
               return Center(
                 child: Text(
-                  'Gagal memuat penugasan: '
-                  '${assignmentSnapshot.error}',
+                  'Gagal memuat penugasan: ${assignmentSnapshot.error}',
                 ),
               );
             }
@@ -2109,7 +2784,6 @@ class _DetailLaporanKendalaAdminPageState
             }
 
             Map<String, dynamic>? assignment;
-
             for (final doc in assignmentSnapshot.data!.docs) {
               if (doc.id == assignmentId) {
                 assignment = doc.data();
@@ -2118,7 +2792,6 @@ class _DetailLaporanKendalaAdminPageState
             }
 
             final assignmentStatus = (assignment?['status'] ?? '').toString();
-
             final activeId = (assignment?['kendala_aktif_id'] ?? '').toString();
 
             final isActiveAssignment =

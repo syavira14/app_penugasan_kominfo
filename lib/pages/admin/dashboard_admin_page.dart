@@ -5,6 +5,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 
 // Import halaman admin
+import '../../services/staff_admin_api.dart';
 import '../../tugas/kelola_tugas_page.dart';
 import 'admin_kalender.dart';
 import 'admin_sidebar.dart';
@@ -89,6 +90,33 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
     return null;
   }
 
+  DateTime? _resolveTaskDate(
+    Map<String, dynamic> assignmentData,
+    Map<String, dynamic>? tugasData,
+  ) {
+    final candidates = [
+      assignmentData['tanggal_mulai_tugas'],
+      assignmentData['tanggal_tugas_diberikan'],
+      assignmentData['tanggal_tugas'],
+      tugasData?['tanggal_mulai_tugas'],
+      tugasData?['tanggal_tugas_diberikan'],
+      tugasData?['tanggal_tugas'],
+      tugasData?['created_at'],
+      assignmentData['created_at'],
+      tugasData?['tanggal_selesai_tugas'],
+      assignmentData['tanggal_selesai_tugas'],
+      assignmentData['tanggal_selesai'],
+      assignmentData['tanggal_dikumpulkan'],
+      assignmentData['tanggal_disetujui'],
+      assignmentData['updated_at'],
+    ];
+    for (final c in candidates) {
+      final parsed = _parseDate(c);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
   bool _hasKendalaHistoryInDoc(Map<String, dynamic> data) {
     final status = (data['status'] ?? '').toString().toLowerCase();
     if (status == 'terkendala') return true;
@@ -125,6 +153,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
   @override
   void initState() {
     super.initState();
+    StaffAdminApi.cleanupOrphanedTugasData();
     initializeDateFormatting('id_ID', null).then((_) {
       if (mounted) setState(() => _localeReady = true);
     });
@@ -138,6 +167,148 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
 
   void _buka(Widget halaman) {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => halaman));
+  }
+
+  void _showYearPickerDialog(List<int> availableYears) {
+    int tempYear = _selectedYear;
+    int startYear = (tempYear ~/ 12) * 12;
+    if (startYear < 2020) startYear = 2020;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final yearsGrid = List<int>.generate(12, (i) => startYear + i);
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              titlePadding: const EdgeInsets.all(16),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: biruMid),
+                    onPressed: () {
+                      setDialogState(() {
+                        startYear -= 12;
+                      });
+                    },
+                  ),
+                  Text(
+                    '${yearsGrid.first} – ${yearsGrid.last}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 17,
+                      color: biruTua,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, color: biruMid),
+                    onPressed: () {
+                      setDialogState(() {
+                        startYear += 12;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 300,
+                height: 220,
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  itemCount: yearsGrid.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 2.0,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemBuilder: (context, index) {
+                    final yr = yearsGrid[index];
+                    final isSelected = yr == tempYear;
+                    final hasData = availableYears.contains(yr);
+                    return InkWell(
+                      onTap: () {
+                        setDialogState(() {
+                          tempYear = yr;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? biruMid
+                              : (hasData
+                                    ? const Color(0xFFEAF3FC)
+                                    : Colors.grey.shade100),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected
+                                ? biruMid
+                                : (hasData
+                                      ? biruMid.withOpacity(0.35)
+                                      : Colors.transparent),
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '$yr',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13.5,
+                            color: isSelected ? Colors.white : biruTua,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedYear = DateTime.now().year;
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text(
+                    'Tahun Ini',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: biruMid,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _selectedYear = tempYear;
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text(
+                    'Terapkan',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -154,189 +325,282 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
     final bool isWide = width >= _sidebarBreakpoint;
 
     final Widget content = StreamBuilder<QuerySnapshot>(
-      stream: _firestore.collection('penugasan').snapshots(),
-      builder: (context, snapshot) {
+      stream: _firestore.collection('tugas').snapshots(),
+      builder: (context, tugasSnapshot) {
         return StreamBuilder<QuerySnapshot>(
-          stream: _firestore.collection('laporan_kendala').snapshots(),
-          builder: (context, kendalaSnapshot) {
-            int totalTugas = 0;
-            int belumSelesai = 0;
-            int dikerjakan = 0;
-            int selesai = 0;
-            int totalRiwayatKendala = 0;
+          stream: _firestore.collection('penugasan').snapshots(),
+          builder: (context, snapshot) {
+            return StreamBuilder<QuerySnapshot>(
+              stream: _firestore.collection('laporan_kendala').snapshots(),
+              builder: (context, kendalaSnapshot) {
+                int totalTugas = 0;
+                int belumSelesai = 0;
+                int dikerjakan = 0;
+                int selesai = 0;
+                int totalRiwayatKendala = 0;
 
-            // Array 12 Bulan untuk grafik
-            final List<int> tugasBulanan = List.filled(12, 0);
-            final Map<String, DateTime?> penugasanDateById = {};
-            final Set<String> penugasanIdsWithReport = {};
+                // Array 12 Bulan untuk grafik
+                final List<int> tugasBulanan = List.filled(12, 0);
+                final Map<String, DateTime?> penugasanDateById = {};
+                final Set<String> penugasanIdsWithReport = {};
+                final Set<String> tugasIdsWithPenugasan = {};
+                final Set<int> discoveredYears = {
+                  DateTime.now().year,
+                  _selectedYear,
+                };
 
-            if (snapshot.hasData) {
-              final docs = snapshot.data!.docs;
-              totalTugas = docs.length;
-
-              for (final doc in docs) {
-                final data = doc.data() as Map<String, dynamic>;
-                final status = (data['status'] ?? 'pending')
-                    .toString()
-                    .toLowerCase();
-
-                switch (status) {
-                  case 'disetujui':
-                  case 'selesai':
-                    selesai++;
-                    break;
-                  case 'berlangsung':
-                  case 'dikumpulkan':
-                  case 'revisi':
-                    dikerjakan++;
-                    break;
-                  case 'pending':
-                  case 'terkendala':
-                  default:
-                    belumSelesai++;
-                    break;
+                final Map<String, Map<String, dynamic>> tugasById = {};
+                if (tugasSnapshot.hasData) {
+                  for (final tDoc in tugasSnapshot.data!.docs) {
+                    tugasById[tDoc.id] = tDoc.data() as Map<String, dynamic>;
+                  }
                 }
 
-                final DateTime? docDate = _parseDate(
-                  data['tanggal_tugas'] ??
-                      data['created_at'] ??
-                      data['tanggal_selesai'],
-                );
-                penugasanDateById[doc.id] = docDate;
+                if (snapshot.hasData) {
+                  final docs = snapshot.data!.docs;
 
-                // Untuk filter 'semua' dan 'berlangsung', hitung dari penugasan.
-                if (_filterGrafik != 'terkendala') {
-                  if (docDate != null &&
-                      docDate.year == _selectedYear &&
-                      _cocokFilter(status)) {
-                    if (docDate.month >= 1 && docDate.month <= 12) {
-                      tugasBulanan[docDate.month - 1]++;
+                  for (final doc in docs) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    final tugasId = (data['tugas_id'] ?? '').toString().trim();
+                    if (tugasSnapshot.hasData &&
+                        (tugasId.isEmpty || !tugasById.containsKey(tugasId))) {
+                      continue;
+                    }
+                    totalTugas++;
+                    if (tugasId.isNotEmpty) {
+                      tugasIdsWithPenugasan.add(tugasId);
+                    }
+                    final tugasData = tugasId.isNotEmpty
+                        ? tugasById[tugasId]
+                        : null;
+
+                    final status = (data['status'] ?? 'pending')
+                        .toString()
+                        .toLowerCase();
+
+                    switch (status) {
+                      case 'disetujui':
+                      case 'selesai':
+                        selesai++;
+                        break;
+                      case 'berlangsung':
+                      case 'dikumpulkan':
+                      case 'revisi':
+                        dikerjakan++;
+                        break;
+                      case 'pending':
+                      case 'dihentikan':
+                      case 'terkendala':
+                      default:
+                        belumSelesai++;
+                        break;
+                    }
+
+                    final DateTime? docDate = _resolveTaskDate(data, tugasData);
+                    penugasanDateById[doc.id] = docDate;
+                    if (docDate != null) {
+                      discoveredYears.add(docDate.year);
+                    }
+
+                    // Untuk filter 'semua' dan 'berlangsung', hitung dari penugasan.
+                    if (_filterGrafik != 'terkendala') {
+                      if (docDate != null &&
+                          docDate.year == _selectedYear &&
+                          _cocokFilter(status)) {
+                        if (docDate.month >= 1 && docDate.month <= 12) {
+                          tugasBulanan[docDate.month - 1]++;
+                        }
+                      }
                     }
                   }
                 }
-              }
-            }
 
-            // Hitung riwayat kendala dari awal pelaporan hingga kendala/tugas selesai:
-            // Semua dokumen di koleksi `laporan_kendala` (baik statusnya masih
-            // menunggu_review, dalam_penanganan, menunggu_konfirmasi, maupun
-            // sudah selesai / ditolak) tetap tercatat di diagram kendala.
-            if (kendalaSnapshot.hasData) {
-              final kDocs = kendalaSnapshot.data!.docs;
-              totalRiwayatKendala = kDocs.length;
-
-              for (final kDoc in kDocs) {
-                final kData = kDoc.data() as Map<String, dynamic>;
-                final penId = (kData['penugasan_id'] ?? '').toString().trim();
-                if (penId.isNotEmpty) {
-                  penugasanIdsWithReport.add(penId);
-                }
-                if (_filterGrafik == 'terkendala') {
-                  final DateTime? kDate =
-                      _parseDate(
-                        kData['created_at'] ??
-                            kData['tanggal_laporan'] ??
-                            kData['tanggal'] ??
-                            kData['waktu'] ??
-                            kData['updated_at'],
-                      ) ??
-                      (penId.isNotEmpty ? penugasanDateById[penId] : null);
-                  if (kDate != null &&
-                      kDate.year == _selectedYear &&
-                      kDate.month >= 1 &&
-                      kDate.month <= 12) {
-                    tugasBulanan[kDate.month - 1]++;
+                // Sinkronkan juga dokumen di koleksi `tugas` yang belum memiliki dokumen `penugasan`
+                if (tugasSnapshot.hasData) {
+                  for (final tDoc in tugasSnapshot.data!.docs) {
+                    if (tugasIdsWithPenugasan.contains(tDoc.id)) continue;
+                    final tData = tDoc.data() as Map<String, dynamic>;
+                    totalTugas++;
+                    final status = (tData['status'] ?? 'pending')
+                        .toString()
+                        .toLowerCase();
+                    switch (status) {
+                      case 'disetujui':
+                      case 'selesai':
+                        selesai++;
+                        break;
+                      case 'berlangsung':
+                      case 'dikumpulkan':
+                      case 'revisi':
+                        dikerjakan++;
+                        break;
+                      default:
+                        belumSelesai++;
+                        break;
+                    }
+                    final DateTime? tDate = _resolveTaskDate(const {}, tData);
+                    if (tDate != null) {
+                      discoveredYears.add(tDate.year);
+                      if (_filterGrafik != 'terkendala' &&
+                          tDate.year == _selectedYear &&
+                          _cocokFilter(status)) {
+                        if (tDate.month >= 1 && tDate.month <= 12) {
+                          tugasBulanan[tDate.month - 1]++;
+                        }
+                      }
+                    }
                   }
                 }
-              }
-            }
 
-            // Tambahkan juga penugasan yang punya riwayat/status terkendala
-            // namun belum tercatat di koleksi laporan_kendala.
-            if (snapshot.hasData) {
-              for (final doc in snapshot.data!.docs) {
-                if (penugasanIdsWithReport.contains(doc.id)) continue;
-                final data = doc.data() as Map<String, dynamic>;
-                if (_hasKendalaHistoryInDoc(data)) {
-                  totalRiwayatKendala++;
-                  if (_filterGrafik == 'terkendala') {
+                // Hitung riwayat kendala dari awal pelaporan hingga kendala/tugas selesai
+                if (kendalaSnapshot.hasData) {
+                  final kDocs = kendalaSnapshot.data!.docs;
+
+                  for (final kDoc in kDocs) {
+                    final kData = kDoc.data() as Map<String, dynamic>;
+                    final penId = (kData['penugasan_id'] ?? '')
+                        .toString()
+                        .trim();
+                    final tugId = (kData['tugas_id'] ?? '').toString().trim();
+                    if (tugasSnapshot.hasData &&
+                        tugId.isNotEmpty &&
+                        !tugasById.containsKey(tugId)) {
+                      continue;
+                    }
+                    if (snapshot.hasData &&
+                        penId.isNotEmpty &&
+                        !penugasanDateById.containsKey(penId)) {
+                      continue;
+                    }
+                    totalRiwayatKendala++;
+                    if (penId.isNotEmpty) {
+                      penugasanIdsWithReport.add(penId);
+                    }
                     final DateTime? kDate =
-                        _parseDate(data['tanggal_kendala']) ??
-                        penugasanDateById[doc.id];
-                    if (kDate != null &&
-                        kDate.year == _selectedYear &&
-                        kDate.month >= 1 &&
-                        kDate.month <= 12) {
-                      tugasBulanan[kDate.month - 1]++;
+                        _parseDate(
+                          kData['created_at'] ??
+                              kData['tanggal_laporan'] ??
+                              kData['tanggal'] ??
+                              kData['waktu'] ??
+                              kData['updated_at'],
+                        ) ??
+                        (penId.isNotEmpty ? penugasanDateById[penId] : null) ??
+                        (tugId.isNotEmpty
+                            ? _resolveTaskDate(const {}, tugasById[tugId])
+                            : null);
+                    if (kDate != null) {
+                      discoveredYears.add(kDate.year);
+                    }
+                    if (_filterGrafik == 'terkendala') {
+                      if (kDate != null &&
+                          kDate.year == _selectedYear &&
+                          kDate.month >= 1 &&
+                          kDate.month <= 12) {
+                        tugasBulanan[kDate.month - 1]++;
+                      }
                     }
                   }
                 }
-              }
-            }
 
-            return Stack(
-              children: [
-                // LAYER 1: BACKGROUND GRADIENT
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: _buildHeaderBackground(scale, bgHeight),
-                ),
+                // Tambahkan juga penugasan yang punya riwayat/status terkendala
+                // namun belum tercatat di koleksi laporan_kendala.
+                if (snapshot.hasData) {
+                  for (final doc in snapshot.data!.docs) {
+                    if (penugasanIdsWithReport.contains(doc.id)) continue;
+                    final data = doc.data() as Map<String, dynamic>;
+                    if (_hasKendalaHistoryInDoc(data)) {
+                      totalRiwayatKendala++;
+                      final DateTime? kDate =
+                          _parseDate(data['tanggal_kendala']) ??
+                          penugasanDateById[doc.id];
+                      if (kDate != null) {
+                        discoveredYears.add(kDate.year);
+                      }
+                      if (_filterGrafik == 'terkendala') {
+                        if (kDate != null &&
+                            kDate.year == _selectedYear &&
+                            kDate.month >= 1 &&
+                            kDate.month <= 12) {
+                          tugasBulanan[kDate.month - 1]++;
+                        }
+                      }
+                    }
+                  }
+                }
 
-                // LAYER 2: KONTEN
-                SafeArea(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    padding: EdgeInsets.only(bottom: 30 * scale),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(maxWidth: maxContent),
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: sidePad),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildGreeting(scale),
-                              SizedBox(height: 22 * scale),
-                              _buildStatsCard(
-                                scale,
-                                totalTugas: totalTugas,
-                                belumSelesai: belumSelesai,
-                                dikerjakan: dikerjakan,
-                                selesai: selesai,
+                final availableYears = discoveredYears.toList()..sort();
+
+                return Stack(
+                  children: [
+                    // LAYER 1: BACKGROUND GRADIENT
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _buildHeaderBackground(scale, bgHeight),
+                    ),
+
+                    // LAYER 2: KONTEN
+                    SafeArea(
+                      child: SingleChildScrollView(
+                        physics: const BouncingScrollPhysics(),
+                        padding: EdgeInsets.only(bottom: 30 * scale),
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(maxWidth: maxContent),
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: sidePad,
                               ),
-                              SizedBox(height: 28 * scale),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildGreeting(scale),
+                                  SizedBox(height: 22 * scale),
+                                  _buildStatsCard(
+                                    scale,
+                                    totalTugas: totalTugas,
+                                    belumSelesai: belumSelesai,
+                                    dikerjakan: dikerjakan,
+                                    selesai: selesai,
+                                  ),
+                                  SizedBox(height: 28 * scale),
 
-                              // GRAFIK DENGAN FILTER DROPDOWN TAHUN
-                              _buildChartCard(scale, tugasBulanan),
-                              SizedBox(height: 30 * scale),
+                                  // GRAFIK DENGAN FILTER TAHUN MODEL KALENDER
+                                  _buildChartCard(
+                                    scale,
+                                    tugasBulanan,
+                                    availableYears,
+                                  ),
+                                  SizedBox(height: 30 * scale),
 
-                              // MENU UTAMA
-                              Text(
-                                'Menu Utama',
-                                style: TextStyle(
-                                  fontSize: AppTypography.section * scale,
-                                  fontWeight: FontWeight.bold,
-                                  color: biruTua,
-                                ),
+                                  // MENU UTAMA
+                                  Text(
+                                    'Menu Utama',
+                                    style: TextStyle(
+                                      fontSize: AppTypography.section * scale,
+                                      fontWeight: FontWeight.bold,
+                                      color: biruTua,
+                                    ),
+                                  ),
+                                  SizedBox(height: 14 * scale),
+                                  _buildMenuGrid(
+                                    scale,
+                                    menuColumns,
+                                    belumSelesai: belumSelesai,
+                                    selesai: selesai,
+                                    totalRiwayatKendala: totalRiwayatKendala,
+                                  ),
+                                ],
                               ),
-                              SizedBox(height: 14 * scale),
-                              _buildMenuGrid(
-                                scale,
-                                menuColumns,
-                                belumSelesai: belumSelesai,
-                                selesai: selesai,
-                                totalRiwayatKendala: totalRiwayatKendala,
-                              ),
-                            ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-              ],
+                  ],
+                );
+              },
             );
           },
         );
@@ -637,11 +901,13 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
   }
 
   // ==============================================
-  // GRAFIK 12 BULAN & DROPDOWN TAHUN
+  // GRAFIK 12 BULAN & FILTER TAHUN KALENDER
   // ==============================================
-  Widget _buildChartCard(double scale, List<int> dataBulanan) {
-    final currentYr = DateTime.now().year;
-    final List<int> listTahun = List.generate(5, (i) => currentYr - 2 + i);
+  Widget _buildChartCard(
+    double scale,
+    List<int> dataBulanan,
+    List<int> availableYears,
+  ) {
     final int totalTahunIni = dataBulanan.fold<int>(0, (a, b) => a + b);
     final String keteranganFilter = _filterGrafik == 'terkendala'
         ? '$totalTahunIni riwayat kendala (awal pelaporan hingga selesai) di $_selectedYear'
@@ -687,34 +953,44 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
                   ),
                 ],
               ),
-              // Dropdown Tahun
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 10 * scale),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF0F4F8),
-                  borderRadius: BorderRadius.circular(12 * scale),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<int>(
-                    value: _selectedYear,
-                    icon: Icon(
-                      Icons.arrow_drop_down,
-                      color: biruMid,
-                      size: 20 * scale,
-                    ),
-                    style: TextStyle(
-                      color: biruTua,
-                      fontSize: AppTypography.small * scale,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    items: listTahun.map((y) {
-                      return DropdownMenuItem<int>(value: y, child: Text('$y'));
-                    }).toList(),
-                    onChanged: (val) {
-                      if (val != null) {
-                        setState(() => _selectedYear = val);
-                      }
-                    },
+              // Tombol Pemilih Tahun Bergaya Kalender
+              InkWell(
+                onTap: () => _showYearPickerDialog(availableYears),
+                borderRadius: BorderRadius.circular(12 * scale),
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 12 * scale,
+                    vertical: 8 * scale,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F4F8),
+                    borderRadius: BorderRadius.circular(12 * scale),
+                    border: Border.all(color: biruMid.withOpacity(0.25)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.calendar_month_rounded,
+                        color: biruMid,
+                        size: 16 * scale,
+                      ),
+                      SizedBox(width: 6 * scale),
+                      Text(
+                        '$_selectedYear',
+                        style: TextStyle(
+                          color: biruTua,
+                          fontSize: AppTypography.small * scale,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(width: 4 * scale),
+                      Icon(
+                        Icons.arrow_drop_down,
+                        color: biruMid,
+                        size: 18 * scale,
+                      ),
+                    ],
                   ),
                 ),
               ),

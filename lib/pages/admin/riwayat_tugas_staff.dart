@@ -1538,37 +1538,195 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     );
   }
 
-  Widget _filterBar(bool wide, List<int> yearList) {
-    final monthDropdown = _periodDropdown(
-      value: _selectedMonth,
-      items: [
-        const DropdownMenuItem(value: 0, child: Text('Semua Bulan')),
-        for (var i = 0; i < 12; i++)
-          DropdownMenuItem(value: i + 1, child: Text(_monthNames[i])),
-      ],
-      onChanged: (v) => setState(() {
-        _selectedMonth = v;
-        page = 0;
-      }),
-    );
+  void _showMonthYearPicker() {
+    int tempYear = _selectedYear != 0 ? _selectedYear : DateTime.now().year;
+    int tempMonth = _selectedMonth != 0 ? _selectedMonth : DateTime.now().month;
 
-    final yearDropdown = _periodDropdown(
-      value: _selectedYear,
-      items: [
-        const DropdownMenuItem(value: 0, child: Text('Semua Tahun')),
-        for (final y in yearList) DropdownMenuItem(value: y, child: Text('$y')),
-      ],
-      onChanged: (v) => setState(() {
-        _selectedYear = v;
-        page = 0;
-      }),
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              titlePadding: const EdgeInsets.all(16),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: blue),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear--;
+                      });
+                    },
+                  ),
+                  Text(
+                    "$tempYear",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: navy,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, color: blue),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear++;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 300,
+                height: 220,
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  itemCount: 12,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 2.0,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemBuilder: (context, index) {
+                    final isSelected = (index + 1) == tempMonth;
+                    return InkWell(
+                      onTap: () {
+                        setDialogState(() {
+                          tempMonth = index + 1;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isSelected ? blue : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected ? blue : Colors.transparent,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          _monthNames[index].substring(0, 3),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: isSelected ? Colors.white : navy,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedMonth = 0;
+                      _selectedYear = 0;
+                      page = 0;
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text(
+                    "Semua Periode",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: blue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _selectedYear = tempYear;
+                      _selectedMonth = tempMonth;
+                      page = 0;
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text(
+                    "Terapkan",
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _filterBar(bool wide, List<int> yearList) {
+    String currentPeriodLabel = "Semua Periode";
+    if (_selectedMonth != 0 && _selectedYear != 0) {
+      currentPeriodLabel =
+          "${_monthNames[_selectedMonth - 1].substring(0, 3)} $_selectedYear";
+    } else if (_selectedMonth != 0) {
+      currentPeriodLabel = _monthNames[_selectedMonth - 1];
+    } else if (_selectedYear != 0) {
+      currentPeriodLabel = "$_selectedYear";
+    }
+
+    final calendarPickerButton = InkWell(
+      onTap: _showMonthYearPicker,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _periodActive ? blue : Colors.transparent),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.calendar_month_rounded, size: 18, color: blue),
+            const SizedBox(width: 8),
+            Text(
+              currentPeriodLabel,
+              style: const TextStyle(
+                fontSize: AppTypography.body,
+                fontWeight: FontWeight.w600,
+                color: navy,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.arrow_drop_down, color: blue),
+          ],
+        ),
+      ),
     );
 
     final resetButton = TextButton.icon(
-      onPressed: _periodActive
+      onPressed: (_periodActive || pencarian.isNotEmpty)
           ? () => setState(() {
               _selectedMonth = 0;
               _selectedYear = 0;
+              pencarian = '';
               page = 0;
             })
           : null,
@@ -1581,12 +1739,8 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
         children: [
           Expanded(child: _searchBar()),
           const SizedBox(width: 12),
-          const Icon(Icons.filter_alt_rounded, color: blue),
+          calendarPickerButton,
           const SizedBox(width: 8),
-          SizedBox(width: 160, child: monthDropdown),
-          const SizedBox(width: 8),
-          SizedBox(width: 140, child: yearDropdown),
-          const SizedBox(width: 4),
           resetButton,
         ],
       );
@@ -1599,12 +1753,11 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
         const SizedBox(height: 10),
         Row(
           children: [
-            Expanded(child: monthDropdown),
+            Expanded(child: calendarPickerButton),
             const SizedBox(width: 8),
-            Expanded(child: yearDropdown),
+            resetButton,
           ],
         ),
-        Align(alignment: Alignment.centerRight, child: resetButton),
       ],
     );
   }

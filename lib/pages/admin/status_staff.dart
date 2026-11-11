@@ -1256,6 +1256,139 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
     _availableYears = years.toList()..sort();
   }
 
+  void _showMonthYearPicker() {
+    int tempYear = _selectedYear;
+    int tempMonth = _selectedMonth;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              titlePadding: const EdgeInsets.all(16),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: _blue),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear--;
+                      });
+                    },
+                  ),
+                  Text(
+                    "$tempYear",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: _navy,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, color: _blue),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear++;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 300,
+                height: 220,
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  itemCount: 12,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 2.0,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemBuilder: (context, index) {
+                    final isSelected = (index + 1) == tempMonth;
+                    return InkWell(
+                      onTap: () {
+                        setDialogState(() {
+                          tempMonth = index + 1;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isSelected ? _blue : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected ? _blue : Colors.transparent,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          _months[index].substring(0, 3),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: isSelected ? Colors.white : _navy,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    final now = DateTime.now();
+                    setState(() {
+                      _selectedMonth = now.month;
+                      _selectedYear = now.year;
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text(
+                    "Bulan Ini",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _blue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _selectedYear = tempYear;
+                      _selectedMonth = tempMonth;
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text(
+                    "Terapkan",
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.of(context).size.width >= 900;
@@ -1369,7 +1502,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
             decoration: _card(14),
             child: Row(
               children: [
-                const Icon(Icons.filter_alt_rounded, color: _blue),
+                const Icon(Icons.calendar_month_rounded, color: _blue),
                 const SizedBox(width: 10),
                 const Text(
                   'Periode Kinerja:',
@@ -1380,48 +1513,41 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                   ),
                 ),
                 const Spacer(),
-
-                DropdownButton<int>(
-                  value: _selectedMonth,
-                  underline: const SizedBox(),
-                  icon: const Icon(Icons.arrow_drop_down, color: _blue),
-                  items: List.generate(12, (index) {
-                    return DropdownMenuItem(
-                      value: index + 1,
-                      child: Text(
-                        _months[index],
-                        style: const TextStyle(
-                          fontSize: AppTypography.body,
-                          fontWeight: FontWeight.w600,
+                InkWell(
+                  onTap: _showMonthYearPicker,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0F4F8),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: _blue.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.calendar_today_rounded,
+                          size: 15,
+                          color: _blue,
                         ),
-                      ),
-                    );
-                  }),
-                  onChanged: (val) {
-                    if (val != null) setState(() => _selectedMonth = val);
-                  },
-                ),
-                const SizedBox(width: 12),
-
-                DropdownButton<int>(
-                  value: _selectedYear,
-                  underline: const SizedBox(),
-                  icon: const Icon(Icons.arrow_drop_down, color: _blue),
-                  items: _availableYears.map((y) {
-                    return DropdownMenuItem(
-                      value: y,
-                      child: Text(
-                        '$y',
-                        style: const TextStyle(
-                          fontSize: AppTypography.body,
-                          fontWeight: FontWeight.w600,
+                        const SizedBox(width: 8),
+                        Text(
+                          '${_months[_selectedMonth - 1]} $_selectedYear',
+                          style: const TextStyle(
+                            fontSize: AppTypography.body,
+                            fontWeight: FontWeight.bold,
+                            color: _navy,
+                          ),
                         ),
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (val) {
-                    if (val != null) setState(() => _selectedYear = val);
-                  },
+                        const SizedBox(width: 4),
+                        const Icon(Icons.arrow_drop_down, color: _blue),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
+import '../../tugas/detail_tugas_admin_page.dart';
 import '../../tugas/kelola_tugas_page.dart';
 import '../../widgets/admin_header.dart';
 import 'admin_sidebar.dart';
@@ -255,6 +256,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
         if (tglMulai != null) {
           events.putIfAbsent(_dateKey(tglMulai), () => []).add({
             "penugasan_id": assignment.id,
+            "tugas_id": tugasId,
             "title": judulTugas,
             "time": _jam(tglMulai),
             "type": "Tugas Diberikan",
@@ -272,6 +274,7 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
         if (tglDeadline != null) {
           events.putIfAbsent(_dateKey(tglDeadline), () => []).add({
             "penugasan_id": assignment.id,
+            "tugas_id": tugasId,
             "title": judulTugas,
             "time": _jam(tglDeadline),
             "type": "Batas Selesai ($statusTampil)",
@@ -744,10 +747,20 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
               final String staffNama = (item["staff_nama"] ?? '-').toString();
 
               return InkWell(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const KelolaTugasPage()),
-                ),
+                onTap: () {
+                  final tugasId = (item["tugas_id"] ?? '').toString().trim();
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => tugasId.isNotEmpty
+                          ? DetailTugasAdminPage(
+                              tugasId: tugasId,
+                              modeLihat: true,
+                            )
+                          : const KelolaTugasPage(),
+                    ),
+                  );
+                },
                 borderRadius: BorderRadius.circular(16),
                 child: Container(
                   margin: const EdgeInsets.only(bottom: 12),

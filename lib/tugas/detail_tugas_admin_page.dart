@@ -1124,7 +1124,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           'updated_at': FieldValue.serverTimestamp(),
         });
       });
-      _message('Penugasan dihentikan.');
+      _message('Penugasan dipindahkan ke Pending.');
       await _loadPage();
     } catch (e) {
       _message('Gagal menghentikan tugas: $e', error: true);
@@ -1545,9 +1545,16 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                   onTap: () async {
                     try {
                       final url = await _storage.ambilLinkRiwayat(id, doc.id);
-                      await launchUrl(
-                        Uri.parse(url),
-                        mode: LaunchMode.externalApplication,
+                      if (!mounted) return;
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => SimtasFilePreviewPage(
+                            namaFile: (d['file_nama'] ?? 'Lampiran').toString(),
+                            bytes: Uint8List(0),
+                            externalUrl: url,
+                          ),
+                        ),
                       );
                     } catch (e) {
                       _message('Gagal membuka riwayat: $e', error: true);
@@ -2294,7 +2301,8 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                         ),
                       ),
                       _Badge(
-                        text: status.toUpperCase(),
+                        text: (status == 'dihentikan' ? 'pending' : status)
+                            .toUpperCase(),
                         color: _statusColor(status),
                       ),
                     ],

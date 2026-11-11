@@ -92,9 +92,7 @@ Stream<List<Map<String, dynamic>>> streamRiwayatPenugasan({String? staffId}) {
     for (final doc in snapshot.docs) {
       final assignment = doc.data();
       final status = (assignment['status'] ?? '').toString().toLowerCase();
-      if (status != 'disetujui' &&
-          status != 'selesai' &&
-          status != 'dihentikan') {
+      if (status != 'disetujui' && status != 'selesai') {
         continue;
       }
       final taskId = (assignment['tugas_id'] ?? '').toString();

@@ -8,7 +8,7 @@ import '../../theme/app_theme.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/supabase_storage_service.dart';
-
+import '../../widgets/simtas_file_preview_page.dart';
 import '../../services/riwayat_file_service.dart';
 import '../../widgets/admin_header.dart';
 import 'admin_sidebar.dart';
@@ -529,10 +529,7 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
     for (final item in assignments) {
       final aData = item.data();
       final status = (aData['status'] ?? '').toString().toLowerCase();
-      if (status != 'disetujui' &&
-          status != 'selesai' &&
-          status != 'dihentikan')
-        continue;
+      if (status != 'disetujui' && status != 'selesai') continue;
 
       final tid = (aData['tugas_id'] ?? '').toString();
       final tData = tugas[tid] ?? <String, dynamic>{};
@@ -1178,16 +1175,20 @@ class _RiwayatTugasStaffPageState extends State<RiwayatTugasStaffPage>
       return;
     }
 
-    // PDF / dokumen lain: buka di tab/aplikasi pembaca bila punya tautan.
-    if (url.isNotEmpty) {
-      try {
-        if (await launchUrl(
-          Uri.parse(url),
-          mode: LaunchMode.externalApplication,
-        )) {
-          return;
-        }
-      } catch (_) {}
+    // PDF / dokumen lain: tampilkan di dalam aplikasi.
+    if (url.isNotEmpty || _s(f['b64']).isNotEmpty) {
+      final bytes = await _fileBytes(f);
+      if (!ctx.mounted) return;
+      await Navigator.of(ctx).push(
+        MaterialPageRoute<void>(
+          builder: (_) => SimtasFilePreviewPage(
+            namaFile: name,
+            bytes: bytes ?? Uint8List(0),
+            externalUrl: url,
+          ),
+        ),
+      );
+      return;
     }
     messenger.showSnackBar(
       const SnackBar(

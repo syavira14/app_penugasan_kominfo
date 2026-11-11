@@ -24,7 +24,7 @@ class AppColors {
   static const Color oranyeWarning = Color(0xFFFF9800);
 }
 
-enum SortBy { terbaru, namaAZ, tanggal }
+enum SortBy { terbaru, terlama, namaAZ, prioritas, tanggal }
 
 enum FilterStatus {
   semua,
@@ -347,19 +347,51 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
 
       final statuses = _statusesByTugas[doc.id] ?? ['pending'];
       final sudahDisetujui = assignmentGroupStatus(statuses) == 'disetujui';
+      // Filter Pending juga memuat tugas yang dihentikan atasan.
       final cocokStatus =
           _filterStatus == FilterStatus.semua ||
-          statuses.contains(_filterStatus.name);
+          statuses.contains(_filterStatus.name) ||
+          (_filterStatus == FilterStatus.pending &&
+              statuses.contains('dihentikan'));
 
       return cocokSearch && cocokTanggal && cocokStatus && !sudahDisetujui;
     }).toList();
 
-    if (_sortBy == SortBy.namaAZ) {
-      result.sort(
-        (a, b) => (a.data()['judul'] ?? '').toString().compareTo(
-          (b.data()['judul'] ?? '').toString(),
-        ),
-      );
+    // Tugas yang baru dibuat belum punya tanggal dari server (null), anggap
+    // paling baru supaya tampil di paling atas.
+    DateTime dibuat(QueryDocumentSnapshot<Map<String, dynamic>> d) =>
+        _asDate(d.data()['tanggal_tugas_diberikan']) ?? DateTime.now();
+    int terbaruDulu(
+      QueryDocumentSnapshot<Map<String, dynamic>> a,
+      QueryDocumentSnapshot<Map<String, dynamic>> b,
+    ) => dibuat(b).compareTo(dibuat(a));
+    int bobot(QueryDocumentSnapshot<Map<String, dynamic>> d) {
+      switch ((d.data()['prioritas'] ?? '').toString().toLowerCase()) {
+        case 'tinggi':
+          return 3;
+        case 'rendah':
+          return 1;
+        default:
+          return 2;
+      }
+    }
+
+    if (_sortBy == SortBy.terbaru) {
+      result.sort(terbaruDulu);
+    } else if (_sortBy == SortBy.terlama) {
+      result.sort((a, b) => dibuat(a).compareTo(dibuat(b)));
+    } else if (_sortBy == SortBy.prioritas) {
+      result.sort((a, b) {
+        final c = bobot(b).compareTo(bobot(a));
+        return c != 0 ? c : terbaruDulu(a, b);
+      });
+    } else if (_sortBy == SortBy.namaAZ) {
+      result.sort((a, b) {
+        final c = (a.data()['judul'] ?? '').toString().toLowerCase().compareTo(
+          (b.data()['judul'] ?? '').toString().toLowerCase(),
+        );
+        return c != 0 ? c : terbaruDulu(a, b);
+      });
     } else if (_sortBy == SortBy.tanggal) {
       result.sort(
         (a, b) => (_asDate(a.data()['tanggal_mulai_tugas']) ?? DateTime(1900))
@@ -1248,8 +1280,12 @@ class _KelolaTugasPageState extends State<KelolaTugasPage> {
     switch (value) {
       case SortBy.terbaru:
         return 'Terbaru';
+      case SortBy.terlama:
+        return 'Terlama';
       case SortBy.namaAZ:
         return 'Nama A-Z';
+      case SortBy.prioritas:
+        return 'Prioritas';
       case SortBy.tanggal:
         return 'Tanggal Mulai';
     }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -60,6 +61,47 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       );
   }
 
+  /// Mengekstrak nama staf yang tersimpan (mendukung nama di field `nama`,
+  /// metadata `email_kontak`, maupun `user.displayName`).
+  String _resolveEffectiveNama(Map<String, dynamic> data, User? authUser) {
+    final rawKontak = (data['email_kontak'] ?? '').toString();
+    if (rawKontak.contains('||')) {
+      final parts = rawKontak.split('||');
+      if (parts.length >= 5 && parts[4].trim().isNotEmpty) {
+        return parts[4].trim();
+      }
+    }
+    final display = (authUser?.displayName ?? '').trim();
+    if (display.isNotEmpty && !display.startsWith('ADMIN_AUTH::')) {
+      return display;
+    }
+    return (data['nama'] ?? data['nama_lengkap'] ?? '').toString().trim();
+  }
+
+  String _packEmailKontakWithNama({
+    required String previousRaw,
+    required String aliasTag,
+    required String nama,
+    String? newPassword,
+  }) {
+    final basePacked = StaffAdminApi.packEmailKontak(
+      '',
+      password: newPassword,
+      aliasTag: aliasTag,
+      previousRawEmailKontak: previousRaw,
+    );
+    final parts = basePacked.split('||');
+    final cleanEmail = parts.isNotEmpty ? parts[0].trim() : '';
+    final pass = parts.length >= 2 ? parts[1].trim() : '';
+    final alias = parts.length >= 3 ? parts[2].trim() : aliasTag.trim();
+    final nipOver = parts.length >= 4 ? parts[3].trim() : '';
+    final cleanNama = nama.replaceAll('||', ' ').trim();
+
+    final candidate = '$cleanEmail||$pass||$alias||$nipOver||$cleanNama';
+    if (candidate.length <= 200) return candidate;
+    return basePacked;
+  }
+
   Future<void> _fetchUserData() async {
     final user = FirebaseAuth.instance.currentUser;
 
@@ -68,6 +110,38 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       return;
     }
 
+    // 1. Muat instan dari cache lokal terlebih dahulu agar halaman langsung tampil tanpa loading lama.
+    try {
+      final cachedDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get(const GetOptions(source: Source.cache));
+      if (cachedDoc.exists && mounted) {
+        final data = cachedDoc.data() ?? {};
+        final baseModel = UserModel.fromFirestore(cachedDoc);
+        final effNama = _resolveEffectiveNama(data, user);
+        setState(() {
+          _rawEmailKontakFromDb = (data['email_kontak'] ?? '').toString();
+          currentUser = UserModel(
+            uid: baseModel.uid,
+            nip: baseModel.nip,
+            nama: effNama.isNotEmpty ? effNama : baseModel.nama,
+            email: baseModel.email,
+            emailKontak: baseModel.emailKontak,
+            noHp: baseModel.noHp,
+            jabatan: baseModel.jabatan,
+            role: baseModel.role,
+            statusPekerjaan: baseModel.statusPekerjaan,
+            fotoBase64: baseModel.fotoBase64,
+            createdAt: baseModel.createdAt,
+            updatedAt: baseModel.updatedAt,
+          );
+          _isLoading = false;
+        });
+      }
+    } catch (_) {}
+
+    // 2. Sinkronkan data terbaru dari server.
     try {
       final doc = await FirebaseFirestore.instance
           .collection('users')
@@ -76,13 +150,30 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
 
       if (doc.exists && mounted) {
         final data = doc.data() ?? {};
+        final baseModel = UserModel.fromFirestore(doc);
+        final effNama = _resolveEffectiveNama(data, user);
         setState(() {
           _rawEmailKontakFromDb = (data['email_kontak'] ?? '').toString();
-          currentUser = UserModel.fromFirestore(doc);
+          currentUser = UserModel(
+            uid: baseModel.uid,
+            nip: baseModel.nip,
+            nama: effNama.isNotEmpty ? effNama : baseModel.nama,
+            email: baseModel.email,
+            emailKontak: baseModel.emailKontak,
+            noHp: baseModel.noHp,
+            jabatan: baseModel.jabatan,
+            role: baseModel.role,
+            statusPekerjaan: baseModel.statusPekerjaan,
+            fotoBase64: baseModel.fotoBase64,
+            createdAt: baseModel.createdAt,
+            updatedAt: baseModel.updatedAt,
+          );
         });
       }
     } catch (e) {
-      _snack('Gagal memuat profil: $e');
+      if (currentUser == null) {
+        _snack('Gagal memuat profil: $e');
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -145,13 +236,31 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
       if (user == null) throw Exception('User belum login');
 
       final Uint8List bytes = await pickedFile.readAsBytes();
+      final String b64 = base64Encode(bytes);
 
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-        'foto_base64': base64Encode(bytes),
-        'updated_at': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      if (mounted && currentUser != null) {
+        setState(() {
+          currentUser = UserModel(
+            uid: currentUser!.uid,
+            nip: currentUser!.nip,
+            nama: currentUser!.nama,
+            email: currentUser!.email,
+            emailKontak: currentUser!.emailKontak,
+            noHp: currentUser!.noHp,
+            jabatan: currentUser!.jabatan,
+            role: currentUser!.role,
+            statusPekerjaan: currentUser!.statusPekerjaan,
+            fotoBase64: b64,
+            createdAt: currentUser!.createdAt,
+            updatedAt: DateTime.now(),
+          );
+        });
+      }
 
-      await _fetchUserData();
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).update(
+        {'foto_base64': b64, 'updated_at': FieldValue.serverTimestamp()},
+      );
+
       _snack('Foto profil berhasil diperbarui');
     } on FirebaseException catch (e) {
       _snack('Firebase error: ${e.message ?? e.code}');
@@ -294,47 +403,68 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   await user.updatePassword(newPass);
                 }
 
-                // Ambil string raw email_kontak dari database secara aman tanpa bergantung pada getter
-                String previousRaw = _rawEmailKontakFromDb;
-                if (previousRaw.isEmpty) {
-                  try {
-                    final freshDoc = await FirebaseFirestore.instance
-                        .collection('users')
-                        .doc(user.uid)
-                        .get();
-                    previousRaw = (freshDoc.data()?['email_kontak'] ?? '')
-                        .toString();
-                  } catch (_) {}
-                }
-
-                // Sinkronkan kredensial di Firestore agar Atasan tetap dapat mereset
-                // password ke NIP bila staf lupa password.
                 final String aliasTag =
                     StaffAdminApi.extractAliasTagFromAuthEmail(
                       emailLogin,
-                      fallbackRawEmailKontak: previousRaw,
+                      fallbackRawEmailKontak: _rawEmailKontakFromDb,
                     );
-                final String packedEmailKontak = StaffAdminApi.packEmailKontak(
-                  '',
-                  password: changingPassword
+                final String packedEmailKontak = _packEmailKontakWithNama(
+                  previousRaw: _rawEmailKontakFromDb,
+                  aliasTag: aliasTag,
+                  nama: nama,
+                  newPassword: changingPassword
                       ? newPass
                       : (currentPass.isNotEmpty ? currentPass : null),
-                  aliasTag: aliasTag,
-                  previousRawEmailKontak: previousRaw,
                 );
 
-                // Simpan langsung ke Firestore dokumen profil pengguna
-                await FirebaseFirestore.instance
+                final userRef = FirebaseFirestore.instance
                     .collection('users')
-                    .doc(user.uid)
-                    .update({
-                      'nama': nama,
-                      'no_hp': noHp,
-                      'email_kontak': packedEmailKontak,
-                      'updated_at': FieldValue.serverTimestamp(),
-                    });
+                    .doc(user.uid);
 
-                await _fetchUserData();
+                // Simpan langsung ke Firestore dokumen users/{uid}.
+                // Memperbarui field 'nama', 'no_hp', 'email_kontak', dan 'updated_at'.
+                try {
+                  await userRef.update({
+                    'nama': nama,
+                    'no_hp': noHp,
+                    'email_kontak': packedEmailKontak,
+                    'updated_at': FieldValue.serverTimestamp(),
+                  });
+                } on FirebaseException catch (e) {
+                  // Jika aturan Firestore belum diperbarui untuk mengizinkan field 'nama',
+                  // simpan field yang diizinkan terlebih dahulu.
+                  await userRef.update({
+                    'no_hp': noHp,
+                    'email_kontak': packedEmailKontak,
+                    'updated_at': FieldValue.serverTimestamp(),
+                  });
+                  debugPrint(
+                    'Perhatian: field nama memerlukan publish firestore.rules terbaru ($e)',
+                  );
+                }
+
+                unawaited(user.updateDisplayName(nama).catchError((_) {}));
+
+                // Perbarui tampilan secara instan tanpa menunggu loading ulang dari server.
+                if (mounted && currentUser != null) {
+                  setState(() {
+                    _rawEmailKontakFromDb = packedEmailKontak;
+                    currentUser = UserModel(
+                      uid: currentUser!.uid,
+                      nip: currentUser!.nip,
+                      nama: nama,
+                      email: currentUser!.email,
+                      emailKontak: currentUser!.emailKontak,
+                      noHp: noHp,
+                      jabatan: currentUser!.jabatan,
+                      role: currentUser!.role,
+                      statusPekerjaan: currentUser!.statusPekerjaan,
+                      fotoBase64: currentUser!.fotoBase64,
+                      createdAt: currentUser!.createdAt,
+                      updatedAt: DateTime.now(),
+                    );
+                  });
+                }
 
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
 

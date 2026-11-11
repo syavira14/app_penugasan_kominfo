@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../../theme/app_theme.dart';
 import '../../widgets/app_layout.dart';
 import 'tugas_detail_page.dart';
 
@@ -44,6 +47,32 @@ class TugasModel {
   });
 }
 
+enum _UrutTugas { terbaru, terlama, namaAZ, prioritas }
+
+String _namaUrut(_UrutTugas u) {
+  switch (u) {
+    case _UrutTugas.terbaru:
+      return 'Terbaru';
+    case _UrutTugas.terlama:
+      return 'Terlama';
+    case _UrutTugas.namaAZ:
+      return 'Nama A-Z';
+    case _UrutTugas.prioritas:
+      return 'Prioritas';
+  }
+}
+
+int _bobotPrioritas(String p) {
+  switch (p.toLowerCase()) {
+    case 'tinggi':
+      return 3;
+    case 'rendah':
+      return 1;
+    default:
+      return 2;
+  }
+}
+
 class TugasStaffPage extends StatefulWidget {
   const TugasStaffPage({super.key});
 
@@ -56,11 +85,57 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   String _filterAktif = 'Semua';
+  _UrutTugas _urut = _UrutTugas.terbaru;
+
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _sub;
+  List<TugasModel> _semuaTugas = const [];
+  bool _memuat = true;
+  String? _error;
+  int _loadVersion = 0;
+  final Map<String, String> _namaAdminCache = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = _assignmentStream.listen(
+      (snapshot) async {
+        final version = ++_loadVersion;
+        try {
+          final tasks = await _loadTasks(snapshot.docs);
+          if (!mounted || version != _loadVersion) return;
+          setState(() {
+            _semuaTugas = tasks;
+            _error = null;
+            _memuat = false;
+          });
+        } catch (e) {
+          if (!mounted || version != _loadVersion) return;
+          setState(() {
+            _error = 'Gagal memuat detail tugas:\n$e';
+            _memuat = false;
+          });
+        }
+      },
+      onError: (Object e) {
+        if (!mounted) return;
+        setState(() {
+          _error = 'Gagal memuat tugas:\n$e';
+          _memuat = false;
+        });
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> get _assignmentStream {
     final user = _auth.currentUser;
     if (user == null) {
-      return const Stream.empty();
+      return Stream<QuerySnapshot<Map<String, dynamic>>>.empty();
     }
 
     return _firestore
@@ -86,11 +161,20 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
     final tugasData = tugasDoc.data() ?? {};
 
     final adminId = (tugasData['dibuat_oleh'] ?? '').toString();
-    Map<String, dynamic> adminData = {};
+    String namaAdmin = '-';
 
     if (adminId.isNotEmpty) {
-      final adminDoc = await _firestore.collection('users').doc(adminId).get();
-      adminData = adminDoc.data() ?? {};
+      final cached = _namaAdminCache[adminId];
+      if (cached != null) {
+        namaAdmin = cached;
+      } else {
+        final adminDoc = await _firestore
+            .collection('users')
+            .doc(adminId)
+            .get();
+        namaAdmin = (adminDoc.data()?['nama'] ?? '-').toString();
+        _namaAdminCache[adminId] = namaAdmin;
+      }
     }
 
     return {
@@ -103,7 +187,7 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
       'tanggal_mulai_tugas': tugasData['tanggal_mulai_tugas'],
       'tanggal_selesai_tugas': tugasData['tanggal_selesai_tugas'],
       'prioritas': tugasData['prioritas'] ?? 'sedang',
-      'nama_atasan': adminData['nama'] ?? '-',
+      'nama_atasan': namaAdmin,
       'status': assignmentData['status'] ?? 'pending',
       'tanggal_dihentikan': assignmentData['tanggal_dihentikan'],
       'file_hasil_url': assignmentData['file_hasil_url'],
@@ -116,75 +200,107 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
   Future<List<TugasModel>> _loadTasks(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> assignments,
   ) async {
-    final List<TugasModel> result = [];
+    // Dimuat paralel agar tidak menunggu satu per satu.
+    final hasil = await Future.wait(assignments.map(_muatSatuTugas));
+    return hasil.whereType<TugasModel>().toList();
+  }
 
-    for (final assignment in assignments) {
-      try {
-        final data = await _buildTaskData(assignment);
-        final status = (data['status'] ?? 'pending').toString().toLowerCase();
+  Future<TugasModel?> _muatSatuTugas(
+    QueryDocumentSnapshot<Map<String, dynamic>> assignment,
+  ) async {
+    try {
+      final data = await _buildTaskData(assignment);
+      final status = (data['status'] ?? 'pending').toString().toLowerCase();
 
-        if (status == 'disetujui') {
-          continue;
-        }
-        if (status == 'dihentikan') {
-          final tanggal = _asDate(data['tanggal_dihentikan']);
-          if (tanggal != null && DateTime.now().difference(tanggal).inHours >= 72) continue;
-        }
+      if (status == 'disetujui') return null;
 
-        result.add(
-          TugasModel(
-            idTugas: data['tugas_id'].toString(),
-            penugasanId: data['assignment_id'].toString(),
-            judulTugas: data['judul'].toString(),
-            deskripsiTugas: data['deskripsi'].toString(),
-            lokasi: data['tempat_tugas'].toString(),
-            tanggalDiberikan: _asDate(data['tanggal_tugas_diberikan']),
-            tanggalMulai: _asDate(data['tanggal_mulai_tugas']),
-            tanggalSelesai: _asDate(data['tanggal_selesai_tugas']),
-            prioritasTugas: data['prioritas'].toString(),
-            namaAtasan: data['nama_atasan'].toString(),
-            statusTugas: status,
-            fileHasil: data['file_hasil_nama']?.toString(),
-            keteranganHasil: data['catatan_staff']?.toString(),
-            catatanRevisi: data['catatan_revisi']?.toString(),
-          ),
-        );
-      } catch (_) {}
+      return TugasModel(
+        idTugas: data['tugas_id'].toString(),
+        penugasanId: data['assignment_id'].toString(),
+        judulTugas: data['judul'].toString(),
+        deskripsiTugas: data['deskripsi'].toString(),
+        lokasi: data['tempat_tugas'].toString(),
+        tanggalDiberikan: _asDate(data['tanggal_tugas_diberikan']),
+        tanggalMulai: _asDate(data['tanggal_mulai_tugas']),
+        tanggalSelesai: _asDate(data['tanggal_selesai_tugas']),
+        prioritasTugas: data['prioritas'].toString(),
+        namaAtasan: data['nama_atasan'].toString(),
+        statusTugas: status,
+        fileHasil: data['file_hasil_nama']?.toString(),
+        keteranganHasil: data['catatan_staff']?.toString(),
+        catatanRevisi: data['catatan_revisi']?.toString(),
+      );
+    } catch (_) {
+      return null;
     }
-
-    return result;
   }
 
   List<TugasModel> _filterTasks(List<TugasModel> tasks) {
+    final List<TugasModel> hasil;
+
     if (_filterAktif == 'Semua') {
-      return tasks;
+      hasil = List<TugasModel>.of(tasks);
+    } else if (_filterAktif == 'Dikumpulkan') {
+      hasil = tasks.where((t) => t.statusTugas == 'dikumpulkan').toList();
+    } else if (_filterAktif == 'Revisi') {
+      hasil = tasks.where((t) => t.statusTugas == 'revisi').toList();
+    } else if (_filterAktif == 'Terkendala') {
+      hasil = tasks.where((t) => t.statusTugas == 'terkendala').toList();
+    } else {
+      // Pending juga memuat tugas yang dihentikan atasan.
+      hasil = tasks
+          .where((t) => _displayStatus(t.statusTugas) == _filterAktif)
+          .toList();
     }
 
-    if (_filterAktif == 'Dikumpulkan') {
-      return tasks.where((task) {
-        return task.statusTugas == 'dikumpulkan' ||
-            task.statusTugas == 'revisi';
-      }).toList();
-    }
+    _urutkan(hasil);
+    return hasil;
+  }
 
-    if (_filterAktif == 'Terkendala') {
-      return tasks.where((task) => task.statusTugas == 'terkendala').toList();
-    }
+  /// Tugas yang baru dibuat belum punya tanggal dari server (null) sehingga
+  /// dianggap paling baru dan tampil di paling atas.
+  DateTime _tglBuat(TugasModel t) => t.tanggalDiberikan ?? DateTime.now();
 
-    return tasks.where((task) {
-      return _displayStatus(task.statusTugas) == _filterAktif;
-    }).toList();
+  void _urutkan(List<TugasModel> list) {
+    int terbaruDulu(TugasModel a, TugasModel b) =>
+        _tglBuat(b).compareTo(_tglBuat(a));
+
+    switch (_urut) {
+      case _UrutTugas.terbaru:
+        list.sort(terbaruDulu);
+        break;
+      case _UrutTugas.terlama:
+        list.sort((a, b) => _tglBuat(a).compareTo(_tglBuat(b)));
+        break;
+      case _UrutTugas.namaAZ:
+        list.sort((a, b) {
+          final c = a.judulTugas.toLowerCase().compareTo(
+            b.judulTugas.toLowerCase(),
+          );
+          return c != 0 ? c : terbaruDulu(a, b);
+        });
+        break;
+      case _UrutTugas.prioritas:
+        list.sort((a, b) {
+          final c = _bobotPrioritas(
+            b.prioritasTugas,
+          ).compareTo(_bobotPrioritas(a.prioritasTugas));
+          return c != 0 ? c : terbaruDulu(a, b);
+        });
+        break;
+    }
   }
 
   String _displayStatus(String status) {
     switch (status.toLowerCase()) {
+      // Tugas yang dihentikan atasan ditampilkan sebagai Pending.
       case 'dihentikan':
-        return 'Dihentikan';
       case 'pending':
         return 'Pending';
       case 'berlangsung':
         return 'Berlangsung';
       case 'dikumpulkan':
+        return 'Dikumpulkan';
       case 'revisi':
         return 'Revisi';
       case 'terkendala':
@@ -214,6 +330,8 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
         return 'Belum ada tugas yang terkendala';
       case 'Dikumpulkan':
         return 'Belum ada tugas yang dikumpulkan';
+      case 'Revisi':
+        return 'Belum ada tugas yang perlu direvisi';
       case 'Pending':
       case 'Berlangsung':
       case 'Semua':
@@ -295,85 +413,7 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
                 child: ResponsiveContent(
                   child: Padding(
                     padding: EdgeInsets.fromLTRB(0, 16 * scale, 0, 12 * scale),
-                    child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                      stream: _assignmentStream,
-                      builder: (context, snapshot) {
-                        if (snapshot.hasError) {
-                          return Center(
-                            child: Text(
-                              'Gagal memuat tugas:\n${snapshot.error}',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 12 * scale),
-                            ),
-                          );
-                        }
-
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-
-                        final assignments = snapshot.data?.docs ?? [];
-
-                        return FutureBuilder<List<TugasModel>>(
-                          future: _loadTasks(assignments),
-                          builder: (context, taskSnapshot) {
-                            if (taskSnapshot.connectionState ==
-                                ConnectionState.waiting) {
-                              return const Center(
-                                child: CircularProgressIndicator(),
-                              );
-                            }
-
-                            if (taskSnapshot.hasError) {
-                              return Center(
-                                child: Text(
-                                  'Gagal memuat detail tugas:\n${taskSnapshot.error}',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(fontSize: 12 * scale),
-                                ),
-                              );
-                            }
-
-                            final tasks = _filterTasks(taskSnapshot.data ?? []);
-
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Daftar Tugas',
-                                  style: TextStyle(
-                                    fontSize: 17 * scale,
-                                    fontWeight: FontWeight.bold,
-                                    color: kBiruTua,
-                                  ),
-                                ),
-                                SizedBox(height: 14 * scale),
-                                Expanded(
-                                  child: tasks.isEmpty
-                                      ? _EmptyTaskState(
-                                          pesan: _getPesanKosong(),
-                                        )
-                                      : ListView.builder(
-                                          padding: EdgeInsets.zero,
-                                          itemCount: tasks.length,
-                                          itemBuilder: (context, index) {
-                                            return _buildTaskCard(
-                                              context,
-                                              tasks[index],
-                                              scale,
-                                            );
-                                          },
-                                        ),
-                                ),
-                              ],
-                            );
-                          },
-                        );
-                      },
-                    ),
+                    child: _buildDaftar(scale),
                   ),
                 ),
               ),
@@ -384,11 +424,100 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
     );
   }
 
+  Widget _buildDaftar(double scale) {
+    if (_error != null) {
+      return Center(
+        child: Text(
+          _error!,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12 * scale),
+        ),
+      );
+    }
+
+    if (_memuat) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final tasks = _filterTasks(_semuaTugas);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Daftar Tugas',
+                style: TextStyle(
+                  fontSize: 17 * scale,
+                  fontWeight: FontWeight.bold,
+                  color: kBiruTua,
+                ),
+              ),
+            ),
+            _buildUrutDropdown(scale),
+          ],
+        ),
+        SizedBox(height: 14 * scale),
+        Expanded(
+          child: tasks.isEmpty
+              ? _EmptyTaskState(pesan: _getPesanKosong())
+              : ListView.builder(
+                  padding: EdgeInsets.zero,
+                  itemCount: tasks.length,
+                  itemBuilder: (context, index) {
+                    return _buildTaskCard(context, tasks[index], scale);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUrutDropdown(double scale) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12 * scale),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14 * scale),
+        border: Border.all(color: kBiruSedang.withOpacity(.25)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<_UrutTugas>(
+          value: _urut,
+          isDense: true,
+          borderRadius: BorderRadius.circular(14 * scale),
+          dropdownColor: Colors.white,
+          icon: Icon(Icons.sort_rounded, color: kBiruSedang, size: 20 * scale),
+          style: TextStyle(
+            fontSize: 13 * scale,
+            fontWeight: FontWeight.bold,
+            color: kBiruTua,
+          ),
+          items: _UrutTugas.values
+              .map(
+                (u) => DropdownMenuItem<_UrutTugas>(
+                  value: u,
+                  child: Text(_namaUrut(u)),
+                ),
+              )
+              .toList(),
+          onChanged: (v) {
+            if (v == null) return;
+            setState(() => _urut = v);
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildFilterTabs(double scale, double screenWidth) {
     final tabs = [
       'Semua',
       'Pending',
       'Berlangsung',
+      'Revisi',
       'Terkendala',
       'Dikumpulkan',
     ];
@@ -419,7 +548,7 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
               style: TextStyle(
                 color: aktif ? kBiruTua : Colors.white,
                 fontWeight: FontWeight.bold,
-                fontSize: 12.5 * scale,
+                fontSize: 14 * scale,
               ),
             ),
           ),
@@ -455,7 +584,9 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
     );
   }
 
-  Widget _buildTaskCard(BuildContext context, TugasModel tugas, double scale) {
+  Widget _buildTaskCard(BuildContext context, TugasModel tugas, double base) {
+    // Semua filter memakai ukuran besar yang sama agar mudah dibaca (usia 40+).
+    final double scale = (base * 1.25).clamp(1.0, 1.5);
     final statusColor = _warnaStatus(tugas.statusTugas);
     final prioritasColor = _warnaPrioritas(tugas.prioritasTugas);
 
@@ -562,22 +693,7 @@ class _TugasStaffPageState extends State<TugasStaffPage> {
     );
   }
 
-  Color _warnaStatus(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending':
-        return Colors.orange;
-      case 'berlangsung':
-        return kBiruSedang;
-      case 'dikumpulkan':
-        return Colors.green;
-      case 'revisi':
-        return Colors.orange.shade800;
-      case 'terkendala':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
+  Color _warnaStatus(String status) => AppTaskStatus.color(status);
 
   Color _warnaPrioritas(String prioritas) {
     switch (prioritas.toLowerCase()) {

@@ -149,7 +149,7 @@ Color _statusColor(String s) {
   }
 }
 
-String _statusLabel(String s) => s == 'Dikumpulkan' ? 'Review Atasan' : s;
+String _statusLabel(String s) => s;
 
 Widget _pill(String text, Color color, {IconData? icon}) => Container(
   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),

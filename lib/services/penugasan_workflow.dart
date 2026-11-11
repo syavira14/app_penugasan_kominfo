@@ -4,9 +4,9 @@ bool canTransitionAssignment(String from, String to) {
   return switch (from) {
     'pending' => to == 'berlangsung',
     'berlangsung' => to == 'dikumpulkan'|| to == 'terkendala',
-    'revisi' => to == 'dikumpulkan',
+    'revisi' => to == 'dikumpulkan' || to == 'terkendala',
     'dikumpulkan' => to == 'revisi' || to == 'disetujui',
-    'terkendala' => to == 'berlangsung',
+    'terkendala' => to == 'berlangsung' || to == 'revisi',
     'dihentikan' => false,
     _ => false,
   };

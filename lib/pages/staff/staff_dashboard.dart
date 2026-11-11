@@ -41,13 +41,14 @@ class _TugasStats {
 
     int pending = 0, berlangsung = 0, terkendala = 0, selesai = 0;
 
-    int dihentikan = 0;
     for (final doc in snap.docs) {
       final data = doc.data() as Map<String, dynamic>;
       final status = (data['status'] ?? '').toString().toLowerCase();
-      if (status == 'dihentikan') { dihentikan++; continue; }
 
-      if (status == 'pending' || status == 'belum dimulai') {
+      // Tugas yang dihentikan atasan dihitung sebagai Pending.
+      if (status == 'pending' ||
+          status == 'belum dimulai' ||
+          status == 'dihentikan') {
         pending++;
       } else if (status == 'terkendala') {
         terkendala++;
@@ -64,7 +65,7 @@ class _TugasStats {
     }
 
     return _TugasStats(
-      total: snap.docs.length - dihentikan,
+      total: snap.docs.length,
       pending: pending,
       berlangsung: berlangsung,
       terkendala: terkendala,
@@ -110,9 +111,13 @@ class _StaffDashboardPageState extends State<StaffDashboardPage> {
   }
 
   Future<void> _initializeData() async {
-    await initializeDateFormatting('id_ID', null);
-    if (mounted) setState(() => _localeReady = true);
-    await _fetchUserData();
+    // Jalankan paralel: format tanggal dan data user.
+    await Future.wait([
+      initializeDateFormatting('id_ID', null).then((_) {
+        if (mounted) setState(() => _localeReady = true);
+      }),
+      _fetchUserData(),
+    ]);
   }
 
   Future<void> _fetchUserData() async {
@@ -325,11 +330,16 @@ class _StaffDashboardPageState extends State<StaffDashboardPage> {
             shape: const CircleBorder(),
             child: InkWell(
               customBorder: const CircleBorder(),
-              onTap: () {},
+              onTap: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const StaffProfilPage()),
+                );
+                _fetchUserData();
+              },
               child: Padding(
                 padding: EdgeInsets.all(10 * scale),
                 child: Icon(
-                  Icons.notifications_none_rounded,
+                  Icons.person_outline_rounded,
                   color: Colors.white,
                   size: 24 * scale,
                 ),

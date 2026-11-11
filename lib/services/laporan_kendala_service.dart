@@ -1,4 +1,3 @@
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -43,11 +42,9 @@ class StatusLaporanKendala {
 /// - Bukti diunggah menggunakan SupabaseStorageService.
 /// - Simpan path relatif bucket pada bukti_path.
 class LaporanKendalaService {
-  LaporanKendalaService({
-    FirebaseFirestore? firestore,
-    FirebaseAuth? auth,
-  })  : _firestore = firestore ?? FirebaseFirestore.instance,
-        _auth = auth ?? FirebaseAuth.instance;
+  LaporanKendalaService({FirebaseFirestore? firestore, FirebaseAuth? auth})
+    : _firestore = firestore ?? FirebaseFirestore.instance,
+      _auth = auth ?? FirebaseAuth.instance;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
@@ -62,22 +59,24 @@ class LaporanKendalaService {
     final user = _auth.currentUser;
 
     if (user == null) {
-      throw StateError(
-        'Sesi login tidak ditemukan. Silakan login kembali.',
-      );
+      throw StateError('Sesi login tidak ditemukan. Silakan login kembali.');
     }
 
     return user.uid;
   }
 
+  /// Status penugasan setelah kendala selesai/ditolak: kembali ke status
+  /// sebelum terkendala (revisi tetap revisi), default berlangsung.
+  String _statusSetelahKendala(Map<String, dynamic> penugasan) {
+    final sebelum = (penugasan['status_sebelum_kendala'] ?? '').toString();
+    return sebelum == 'revisi' ? 'revisi' : 'berlangsung';
+  }
+
   Future<void> _pastikanAdmin(String uid) async {
     final user = await _firestore.collection('users').doc(uid).get();
 
-    if ((user.data()?['role'] ?? '').toString().toLowerCase() !=
-        'admin') {
-      throw StateError(
-        'Hanya admin/atasan yang boleh menangani laporan.',
-      );
+    if ((user.data()?['role'] ?? '').toString().toLowerCase() != 'admin') {
+      throw StateError('Hanya admin/atasan yang boleh menangani laporan.');
     }
   }
 
@@ -99,18 +98,14 @@ class LaporanKendalaService {
 
   /// Stream laporan milik staff yang sedang login.
   Stream<QuerySnapshot<Map<String, dynamic>>> streamLaporanSaya() {
-    return _laporan
-        .where('pelapor_id', isEqualTo: _uid)
-        .snapshots();
+    return _laporan.where('pelapor_id', isEqualTo: _uid).snapshots();
   }
 
   /// Stream laporan berdasarkan penugasan.
   Stream<QuerySnapshot<Map<String, dynamic>>> streamLaporanPenugasan(
     String penugasanId,
   ) {
-    return _laporan
-        .where('penugasan_id', isEqualTo: penugasanId)
-        .snapshots();
+    return _laporan.where('penugasan_id', isEqualTo: penugasanId).snapshots();
   }
 
   /// Stream detail satu laporan secara real-time.
@@ -137,35 +132,17 @@ class LaporanKendalaService {
   }) async {
     final uid = _uid;
 
-    final idPenugasan = _wajibIsi(
-      penugasanId,
-      'ID penugasan',
-    );
+    final idPenugasan = _wajibIsi(penugasanId, 'ID penugasan');
 
-    final idTugas = _wajibIsi(
-      tugasId,
-      'ID tugas',
-    );
+    final idTugas = _wajibIsi(tugasId, 'ID tugas');
 
-    final jenis = _wajibIsi(
-      jenisKendala,
-      'Jenis kendala',
-    );
+    final jenis = _wajibIsi(jenisKendala, 'Jenis kendala');
 
-    final uraian = _wajibIsi(
-      deskripsi,
-      'Deskripsi',
-    );
+    final uraian = _wajibIsi(deskripsi, 'Deskripsi');
 
-    final nilaiDampak = _wajibIsi(
-      dampak,
-      'Dampak',
-    );
+    final nilaiDampak = _wajibIsi(dampak, 'Dampak');
 
-    final nilaiPrioritas = _wajibIsi(
-      prioritas,
-      'Prioritas',
-    );
+    final nilaiPrioritas = _wajibIsi(prioritas, 'Prioritas');
 
     final tugasRef = _penugasan.doc(idPenugasan);
     final laporanRef = _laporan.doc();
@@ -182,31 +159,24 @@ class LaporanKendalaService {
       final staffId = (tugas['staff_id'] ?? '').toString();
 
       if (staffId != uid) {
-        throw StateError(
-          'Hanya staff yang ditugaskan dapat membuat laporan.',
-        );
+        throw StateError('Hanya staff yang ditugaskan dapat membuat laporan.');
       }
 
       if ((tugas['tugas_id'] ?? '').toString() != idTugas) {
+        throw StateError('ID tugas tidak sesuai dengan penugasan.');
+      }
+
+      final statusSaatIni = (tugas['status'] ?? 'pending').toString();
+      if (statusSaatIni != 'berlangsung' && statusSaatIni != 'revisi') {
         throw StateError(
-          'ID tugas tidak sesuai dengan penugasan.',
+          'Laporan baru hanya dapat dibuat saat tugas berlangsung atau revisi.',
         );
       }
 
-      if ((tugas['status'] ?? 'pending').toString() !=
-          'berlangsung') {
-        throw StateError(
-          'Laporan baru hanya dapat dibuat saat tugas berlangsung.',
-        );
-      }
-
-      final laporanAktif =
-          (tugas['kendala_aktif_id'] ?? '').toString();
+      final laporanAktif = (tugas['kendala_aktif_id'] ?? '').toString();
 
       if (laporanAktif.isNotEmpty) {
-        throw StateError(
-          'Masih ada laporan kendala aktif pada penugasan ini.',
-        );
+        throw StateError('Masih ada laporan kendala aktif pada penugasan ini.');
       }
 
       tx.set(laporanRef, {
@@ -245,9 +215,7 @@ class LaporanKendalaService {
   Future<void> mulaiPenanganan(String laporanId) {
     return _ubahOlehAdmin(
       laporanId: laporanId,
-      dari: {
-        StatusLaporanKendala.menungguReview,
-      },
+      dari: {StatusLaporanKendala.menungguReview},
       ke: StatusLaporanKendala.dalamPenanganan,
     );
   }
@@ -262,24 +230,28 @@ class LaporanKendalaService {
   }) {
     return _ubahOlehAdmin(
       laporanId: laporanId,
-      dari: {
-        StatusLaporanKendala.dalamPenanganan,
-      },
+      dari: {StatusLaporanKendala.dalamPenanganan},
       ke: StatusLaporanKendala.menungguKonfirmasi,
       solusi: _wajibIsi(solusi, 'Solusi'),
-      filePath: filePath, fileNama: fileNama,
+      filePath: filePath,
+      fileNama: fileNama,
     );
   }
 
   /// Admin dapat memperbaiki solusi sebelum staff mengonfirmasi.
-  Future<void> editSolusi({required String laporanId, required String solusi,
-    String? filePath, String? fileNama}) async {
+  Future<void> editSolusi({
+    required String laporanId,
+    required String solusi,
+    String? filePath,
+    String? fileNama,
+  }) async {
     final uid = _uid;
     await _pastikanAdmin(uid);
     final ref = _laporan.doc(laporanId);
     await _firestore.runTransaction((tx) async {
       final snap = await tx.get(ref);
-      if (!snap.exists || snap.data()?['status'] != StatusLaporanKendala.menungguKonfirmasi) {
+      if (!snap.exists ||
+          snap.data()?['status'] != StatusLaporanKendala.menungguKonfirmasi) {
         throw StateError('Solusi hanya dapat diedit sebelum konfirmasi Staff.');
       }
       tx.update(ref, {
@@ -321,9 +293,7 @@ class LaporanKendalaService {
   }) async {
     final uid = _uid;
     await _pastikanAdmin(uid);
-    final laporanRef = _laporan.doc(
-      _wajibIsi(laporanId, 'ID laporan'),
-    );
+    final laporanRef = _laporan.doc(_wajibIsi(laporanId, 'ID laporan'));
 
     // Migrasi aman untuk laporan lama yang belum memiliki kendala_aktif_id.
     // Hanya mengklaim penugasan yang benar-benar masih terkendala.
@@ -344,8 +314,7 @@ class LaporanKendalaService {
       if (aktif.isNotEmpty && aktif != laporanRef.id) {
         throw StateError('Penugasan mempunyai laporan aktif lainnya.');
       }
-      if (aktif.isEmpty &&
-          dari.contains((data['status'] ?? '').toString())) {
+      if (aktif.isEmpty && dari.contains((data['status'] ?? '').toString())) {
         tx.update(penugasanRef, {
           'kendala_aktif_id': laporanRef.id,
           'updated_at': FieldValue.serverTimestamp(),
@@ -363,10 +332,7 @@ class LaporanKendalaService {
       final laporan = laporanSnap.data()!;
 
       final penugasanRef = _penugasan.doc(
-        _wajibIsi(
-          (laporan['penugasan_id'] ?? '').toString(),
-          'ID penugasan',
-        ),
+        _wajibIsi((laporan['penugasan_id'] ?? '').toString(), 'ID penugasan'),
       );
 
       final penugasanSnap = await tx.get(penugasanRef);
@@ -377,30 +343,22 @@ class LaporanKendalaService {
 
       final tugas = penugasanSnap.data()!;
 
-      final statusLaporan =
-          (laporan['status'] ?? '').toString();
+      final statusLaporan = (laporan['status'] ?? '').toString();
 
       if (!dari.contains(statusLaporan)) {
-        throw StateError(
-          'Status laporan sudah berubah. Muat ulang halaman.',
-        );
+        throw StateError('Status laporan sudah berubah. Muat ulang halaman.');
       }
 
       if ((tugas['status'] ?? '').toString() != 'terkendala') {
-        throw StateError(
-          'Status penugasan tidak lagi terkendala.',
-        );
+        throw StateError('Status penugasan tidak lagi terkendala.');
       }
 
       // Kompatibilitas laporan lama.
       // Laporan lama mungkin belum menyimpan kendala_aktif_id.
-      final aktifId =
-          (tugas['kendala_aktif_id'] ?? '').toString();
+      final aktifId = (tugas['kendala_aktif_id'] ?? '').toString();
 
       if (aktifId.isNotEmpty && aktifId != laporanRef.id) {
-        throw StateError(
-          'Laporan ini bukan laporan aktif penugasan.',
-        );
+        throw StateError('Laporan ini bukan laporan aktif penugasan.');
       }
 
       tx.update(laporanRef, {
@@ -408,15 +366,17 @@ class LaporanKendalaService {
         'ditangani_oleh': uid,
         'updated_at': FieldValue.serverTimestamp(),
         if (solusi != null) 'solusi': solusi,
-          if (solusi != null) 'solusi_file_path': filePath ?? '',
-          if (solusi != null) 'solusi_file_nama': fileNama ?? '',
+        if (solusi != null) 'solusi_file_path': filePath ?? '',
+        if (solusi != null) 'solusi_file_nama': fileNama ?? '',
         if (alasan != null) 'alasan_penolakan': alasan,
-        if (ke == StatusLaporanKendala.ditolak) 'rejected_at': FieldValue.serverTimestamp(),
+        if (ke == StatusLaporanKendala.ditolak)
+          'rejected_at': FieldValue.serverTimestamp(),
       });
 
       if (ke == StatusLaporanKendala.ditolak) {
         tx.update(penugasanRef, {
-          'status': 'berlangsung',
+          'status': _statusSetelahKendala(tugas),
+          'status_sebelum_kendala': FieldValue.delete(),
           'kendala_aktif_id': FieldValue.delete(),
           'updated_at': FieldValue.serverTimestamp(),
         });
@@ -431,19 +391,13 @@ class LaporanKendalaService {
 
   /// Staff mengonfirmasi kendala sudah teratasi.
   Future<void> konfirmasiSelesai(String laporanId) {
-    return _konfirmasiStaff(
-      laporanId,
-      selesai: true,
-    );
+    return _konfirmasiStaff(laporanId, selesai: true);
   }
 
   /// Staff menyatakan solusi belum berhasil.
   /// Laporan kembali dalam penanganan.
   Future<void> belumTeratasi(String laporanId) {
-    return _konfirmasiStaff(
-      laporanId,
-      selesai: false,
-    );
+    return _konfirmasiStaff(laporanId, selesai: false);
   }
 
   /// Proses konfirmasi oleh staff.
@@ -453,9 +407,7 @@ class LaporanKendalaService {
   }) async {
     final uid = _uid;
 
-    final laporanRef = _laporan.doc(
-      _wajibIsi(laporanId, 'ID laporan'),
-    );
+    final laporanRef = _laporan.doc(_wajibIsi(laporanId, 'ID laporan'));
 
     await _firestore.runTransaction((tx) async {
       final laporanSnap = await tx.get(laporanRef);
@@ -467,23 +419,16 @@ class LaporanKendalaService {
       final laporan = laporanSnap.data()!;
 
       if ((laporan['pelapor_id'] ?? '').toString() != uid) {
-        throw StateError(
-          'Hanya pelapor yang boleh mengonfirmasi solusi.',
-        );
+        throw StateError('Hanya pelapor yang boleh mengonfirmasi solusi.');
       }
 
       if ((laporan['status'] ?? '').toString() !=
           StatusLaporanKendala.menungguKonfirmasi) {
-        throw StateError(
-          'Laporan belum menunggu konfirmasi staff.',
-        );
+        throw StateError('Laporan belum menunggu konfirmasi staff.');
       }
 
       final penugasanRef = _penugasan.doc(
-        _wajibIsi(
-          (laporan['penugasan_id'] ?? '').toString(),
-          'ID penugasan',
-        ),
+        _wajibIsi((laporan['penugasan_id'] ?? '').toString(), 'ID penugasan'),
       );
 
       final penugasanSnap = await tx.get(penugasanRef);
@@ -496,11 +441,8 @@ class LaporanKendalaService {
 
       if ((tugas['staff_id'] ?? '').toString() != uid ||
           (tugas['status'] ?? '').toString() != 'terkendala' ||
-          (tugas['kendala_aktif_id'] ?? '').toString() !=
-              laporanRef.id) {
-        throw StateError(
-          'Status atau pemilik penugasan tidak sesuai.',
-        );
+          (tugas['kendala_aktif_id'] ?? '').toString() != laporanRef.id) {
+        throw StateError('Status atau pemilik penugasan tidak sesuai.');
       }
 
       tx.update(laporanRef, {
@@ -509,8 +451,7 @@ class LaporanKendalaService {
             : StatusLaporanKendala.dalamPenanganan,
         'updated_at': FieldValue.serverTimestamp(),
         'konfirmasi_staff_at': FieldValue.serverTimestamp(),
-        if (selesai)
-          'resolved_at': FieldValue.serverTimestamp(),
+        if (selesai) 'resolved_at': FieldValue.serverTimestamp(),
       });
 
       if (selesai) {

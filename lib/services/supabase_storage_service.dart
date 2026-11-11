@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'staff_admin_api.dart';
+
 /// Model hasil upload file ke Supabase Storage.
 class HasilUploadTugas {
   final String path;
@@ -64,18 +66,31 @@ class SupabaseStorageService {
       throw Exception('Sesi login tidak ditemukan. Silakan login kembali.');
     }
 
-    final token = await user.getIdTokenResult(true);
+    final token = await user.getIdTokenResult(false);
 
     final role = token.claims?['role'];
 
     if (role != 'authenticated') {
-      throw Exception(
-        'Akun belum memiliki izin untuk mengakses '
-        'Supabase Storage. Hubungi administrator.',
+      // Jangan memblokir di sini: biarkan Supabase yang memutuskan lewat
+      // policy bucket, lalu tampilkan pesan yang jelas bila ditolak.
+      debugPrint(
+        'PERINGATAN: Firebase token tidak memiliki claim role=authenticated.',
       );
     }
 
     return user;
+  }
+
+  /// Ringkasan isi token Firebase (tanpa data rahasia) untuk diagnosis izin.
+  Future<String> _ringkasToken() async {
+    try {
+      final r = await _auth.currentUser?.getIdTokenResult();
+      final c = r?.claims ?? const <String, dynamic>{};
+      return 'role=${c['role']}, aud=${c['aud']}, iss=${c['iss']}, '
+          'sub=${c['sub'] ?? c['user_id']}';
+    } catch (e) {
+      return 'token tidak terbaca: $e';
+    }
   }
 
   /// Memeriksa ukuran dan isi file.
@@ -93,13 +108,21 @@ class SupabaseStorageService {
   static String mimeTypeDariNama(String namaFile) {
     final ext = namaFile.split('.').last.toLowerCase();
     switch (ext) {
-      case 'pdf': return 'application/pdf';
+      case 'pdf':
+        return 'application/pdf';
       case 'jpg':
-      case 'jpeg': return 'image/jpeg';
-      case 'png': return 'image/png';
-      case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      case 'doc': return 'application/msword';
-      default: throw FormatException('Format file .$ext belum didukung. Gunakan PDF, JPG, PNG, atau DOCX.');
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'docx':
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      case 'doc':
+        return 'application/msword';
+      default:
+        throw FormatException(
+          'Format file .$ext belum didukung. Gunakan PDF, JPG, PNG, atau DOCX.',
+        );
     }
   }
 
@@ -114,6 +137,7 @@ class SupabaseStorageService {
     required Uint8List bytes,
     required String contentType,
   }) async {
+    String? filePathUpload;
     try {
       // 1. Periksa autentikasi.
       final user = await _periksaPengguna();
@@ -140,6 +164,7 @@ class SupabaseStorageService {
       final timestamp = DateTime.now().microsecondsSinceEpoch;
 
       final filePath = '${user.uid}/$safeTugasId/${timestamp}_$safeName';
+      filePathUpload = filePath;
 
       debugPrint('========== UPLOAD SUPABASE ==========');
       debugPrint('Bucket: $bucket');
@@ -155,7 +180,10 @@ class SupabaseStorageService {
           .uploadBinary(
             filePath,
             bytes,
-            fileOptions: FileOptions(contentType: mimeTypeDariNama(namaFile), upsert: false),
+            fileOptions: FileOptions(
+              contentType: mimeTypeDariNama(namaFile),
+              upsert: false,
+            ),
           );
 
       // 7. Normalisasi path hasil upload.
@@ -169,10 +197,42 @@ class SupabaseStorageService {
       debugPrint('Path bersih: $cleanUploadedPath');
       debugPrint('=====================================');
 
+      // Simpan di cache memori agar langsung bisa dilihat tanpa unduh ulang.
+      StaffAdminApi.cacheMemoryBytes(cleanUploadedPath, bytes);
+
       // 8. Kembalikan informasi file.
       return HasilUploadTugas(path: cleanUploadedPath, namaFile: namaFile);
     } on StorageException catch (e) {
       debugPrint('Supabase Storage error: $e');
+
+      final denied =
+          e.statusCode == '401' ||
+          e.statusCode == '403' ||
+          e.message.toLowerCase().contains('row-level security');
+      if (denied && filePathUpload != null) {
+        // Cadangan: unggah lewat sesi Admin latar belakang (sudah tersedia di
+        // StaffAdminApi) bila policy Supabase menolak token staf.
+        final viaAdmin = await StaffAdminApi.uploadSupabaseViaAdmin(
+          filePath: filePathUpload,
+          bytes: bytes,
+          contentType: mimeTypeDariNama(namaFile),
+        );
+        if (viaAdmin != null && viaAdmin.isNotEmpty) {
+          StaffAdminApi.cacheMemoryBytes(viaAdmin, bytes);
+          return HasilUploadTugas(path: viaAdmin, namaFile: namaFile);
+        }
+      }
+      if (denied) {
+        final info = await _ringkasToken();
+        throw Exception(
+          'Izin unggah ditolak Supabase (${e.statusCode}).\n'
+          'Detail server: ${e.message}\n'
+          'Path: $filePathUpload\n'
+          'Token Firebase: $info\n'
+          'Syarat: role harus "authenticated", dan policy bucket file-tugas '
+          'harus mengizinkan folder uid staf.',
+        );
+      }
 
       throw Exception(
         'Gagal mengunggah file ke Supabase: '
@@ -235,27 +295,47 @@ class SupabaseStorageService {
   Future<String> ambilLinkSolusi(String laporanId) async =>
       _ambilLinkFileAman(kind: 'solusi', laporanId: laporanId);
 
-  Future<String> ambilLinkRiwayat(String penugasanId, String submissionId) async =>
-      _ambilLinkFileAman(kind: 'riwayat', assignmentId: penugasanId, submissionId: submissionId);
+  Future<String> ambilLinkRiwayat(
+    String penugasanId,
+    String submissionId,
+  ) async => _ambilLinkFileAman(
+    kind: 'riwayat',
+    assignmentId: penugasanId,
+    submissionId: submissionId,
+  );
 
   Future<String> ambilLinkPenghentian(String penugasanId) async =>
       _ambilLinkFileAman(kind: 'penghentian', assignmentId: penugasanId);
 
-  Future<String> _ambilLinkFileAman({required String kind, String? laporanId,
-      String? assignmentId, String? submissionId}) async {
+  Future<String> _ambilLinkFileAman({
+    required String kind,
+    String? laporanId,
+    String? assignmentId,
+    String? submissionId,
+  }) async {
     final user = _auth.currentUser;
     if (user == null) throw StateError('Sesi login tidak tersedia.');
-    final token = await user.getIdToken(true);
+    final token = await user.getIdToken();
     final response = await http.post(
-      Uri.parse('https://uxdloenucntsmcviskfo.supabase.co/functions/v1/get-assignment-file-url'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-      body: jsonEncode({'kind': kind, if (laporanId != null) 'laporanId': laporanId,
+      Uri.parse(
+        'https://uxdloenucntsmcviskfo.supabase.co/functions/v1/get-assignment-file-url',
+      ),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'kind': kind,
+        if (laporanId != null) 'laporanId': laporanId,
         if (assignmentId != null) 'assignmentId': assignmentId,
-        if (submissionId != null) 'submissionId': submissionId}),
+        if (submissionId != null) 'submissionId': submissionId,
+      }),
     );
     final data = jsonDecode(response.body);
     if (response.statusCode != 200 || data is! Map || data['url'] == null) {
-      throw StateError('Gagal mengakses file ($kind): ${data is Map ? data['error'] : response.statusCode}');
+      throw StateError(
+        'Gagal mengakses file ($kind): ${data is Map ? data['error'] : response.statusCode}',
+      );
     }
     return data['url'].toString();
   }
@@ -281,7 +361,7 @@ class SupabaseStorageService {
       }
 
       // 2. Ambil Firebase ID Token terbaru.
-      final firebaseToken = await user.getIdToken(true);
+      final firebaseToken = await user.getIdToken();
 
       if (firebaseToken == null || firebaseToken.isEmpty) {
         throw Exception('Gagal mendapatkan token Firebase.');

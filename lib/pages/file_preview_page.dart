@@ -1,4 +1,3 @@
-
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -17,8 +16,7 @@ class FilePreviewPage extends StatelessWidget {
     this.externalUrl,
   });
 
-  bool get _isPdf =>
-      namaFile.toLowerCase().endsWith('.pdf');
+  bool get _isPdf => namaFile.toLowerCase().endsWith('.pdf');
 
   bool get _isImage {
     final name = namaFile.toLowerCase();
@@ -27,18 +25,12 @@ class FilePreviewPage extends StatelessWidget {
         name.endsWith('.png');
   }
 
-  Future<void> _bukaEksternal(
-    BuildContext context,
-  ) async {
+  Future<void> _bukaEksternal(BuildContext context) async {
     final url = externalUrl;
 
     if (url == null || url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Tautan eksternal tidak tersedia.',
-          ),
-        ),
+        const SnackBar(content: Text('Tautan eksternal tidak tersedia.')),
       );
       return;
     }
@@ -55,11 +47,9 @@ class FilePreviewPage extends StatelessWidget {
     } catch (e) {
       if (!context.mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Gagal membuka file: $e'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Gagal membuka file: $e')));
     }
   }
 
@@ -133,10 +123,7 @@ class FilePreviewPage extends StatelessWidget {
             Text(
               namaFile,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
             const Text(

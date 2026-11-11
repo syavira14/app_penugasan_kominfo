@@ -66,14 +66,23 @@ class AuthService {
             final data = Map<String, dynamic>.from(
               userDoc.data() as Map<String, dynamic>,
             );
-            await StaffAdminApi.syncOwnPasswordIfNeeded(
-              uid: uid,
-              userData: data,
-              password: pass,
-              authEmail: authEmail,
+            // Sinkron di latar belakang agar login tidak menunggu tulis Firestore.
+            unawaited(
+              StaffAdminApi.syncOwnPasswordIfNeeded(
+                uid: uid,
+                userData: data,
+                password: pass,
+                authEmail: authEmail,
+              ),
             );
             if ((data['role'] ?? '').toString().toLowerCase() == 'admin') {
-              unawaited(StaffAdminApi.syncKendalaCacheForAllTasks());
+              // Ditunda supaya tidak berebut jaringan dengan dashboard.
+              unawaited(
+                Future<void>.delayed(
+                  const Duration(seconds: 15),
+                  () => StaffAdminApi.syncKendalaCacheForAllTasks(),
+                ),
+              );
             }
             return data;
           }

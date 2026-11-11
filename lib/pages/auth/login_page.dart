@@ -35,8 +35,17 @@ class _LoginPageState extends State<LoginPage> {
   final FocusNode _passwordFocusNode = FocusNode();
   final AuthService _authService = AuthService();
 
+  final GlobalKey<FormFieldState<String>> _nipFieldKey =
+      GlobalKey<FormFieldState<String>>();
+  final GlobalKey<FormFieldState<String>> _passwordFieldKey =
+      GlobalKey<FormFieldState<String>>();
+
   bool _obscurePassword = true;
   bool _isLoading = false;
+
+  // Pesan error dari server (ditampilkan di bawah field, bukan snackbar).
+  String? _nipServerError;
+  String? _passwordServerError;
 
   @override
   void dispose() {
@@ -47,6 +56,10 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   void _handleLogin() async {
+    // Bersihkan error server sebelumnya sebelum validasi ulang.
+    _nipServerError = null;
+    _passwordServerError = null;
+
     if (!_formKey.currentState!.validate()) return;
 
     FocusScope.of(context).unfocus();
@@ -95,13 +108,26 @@ class _LoginPageState extends State<LoginPage> {
         _isLoading = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString().replaceAll('Exception: ', '')),
-          backgroundColor: Colors.redAccent,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      final message = e.toString().replaceAll('Exception: ', '');
+      final lower = message.toLowerCase();
+
+      if (lower.contains('kata sandi salah')) {
+        // Termasuk "NIP atau kata sandi salah." -> tampil di field kata sandi.
+        _passwordServerError = 'Kata sandi salah';
+        _passwordFieldKey.currentState?.validate();
+        _passwordFocusNode.requestFocus();
+      } else if (lower.contains('nip tidak terdaftar')) {
+        _nipServerError = message;
+        _nipFieldKey.currentState?.validate();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
@@ -357,7 +383,14 @@ class _LoginPageState extends State<LoginPage> {
             _buildInputLabel('NIP'),
             const SizedBox(height: 8),
             TextFormField(
+              key: _nipFieldKey,
               controller: _identifierController,
+              onChanged: (_) {
+                if (_nipServerError != null) {
+                  _nipServerError = null;
+                  _nipFieldKey.currentState?.validate();
+                }
+              },
               keyboardType: TextInputType.number,
               inputFormatters: [
                 FilteringTextInputFormatter.deny(RegExp(r'\s')),
@@ -380,7 +413,7 @@ class _LoginPageState extends State<LoginPage> {
                     !RegExp(r'^[0-9]+$').hasMatch(clean)) {
                   return 'Masuk hanya menggunakan NIP (angka), bukan email';
                 }
-                return null;
+                return _nipServerError;
               },
             ),
 
@@ -390,8 +423,15 @@ class _LoginPageState extends State<LoginPage> {
             _buildInputLabel('Kata Sandi'),
             const SizedBox(height: 8),
             TextFormField(
+              key: _passwordFieldKey,
               controller: _passwordController,
               focusNode: _passwordFocusNode,
+              onChanged: (_) {
+                if (_passwordServerError != null) {
+                  _passwordServerError = null;
+                  _passwordFieldKey.currentState?.validate();
+                }
+              },
               obscureText: _obscurePassword,
               textInputAction: TextInputAction.done,
               style: const TextStyle(fontSize: 14, color: AppColors.biruTua),
@@ -420,7 +460,7 @@ class _LoginPageState extends State<LoginPage> {
                 if (value == null || value.isEmpty) {
                   return 'Kata sandi wajib diisi';
                 }
-                return null;
+                return _passwordServerError;
               },
             ),
 
@@ -572,6 +612,10 @@ class _LoginPageState extends State<LoginPage> {
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: Colors.redAccent, width: 1),
       ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
+      ),
     );
   }
 }
@@ -579,39 +623,52 @@ class _LoginPageState extends State<LoginPage> {
 class _BackgroundWavePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint1 = Paint()
+    final paint = Paint()
       ..color = Colors.white.withOpacity(0.05)
       ..style = PaintingStyle.fill;
 
-    final path1 = Path()
-      ..moveTo(0, size.height * 0.25)
-      ..quadraticBezierTo(
-        size.width * 0.4,
-        size.height * 0.1,
-        size.width,
-        size.height * 0.35,
-      )
-      ..lineTo(size.width, 0)
-      ..lineTo(0, 0)
-      ..close();
+    final path1 = Path();
+    path1.moveTo(0, size.height * 0.7);
+    path1.quadraticBezierTo(
+      size.width * 0.25,
+      size.height * 0.5,
+      size.width * 0.5,
+      size.height * 0.65,
+    );
+    path1.quadraticBezierTo(
+      size.width * 0.75,
+      size.height * 0.8,
+      size.width,
+      size.height * 0.6,
+    );
+    path1.lineTo(size.width, 0);
+    path1.lineTo(0, 0);
+    path1.close();
+
+    canvas.drawPath(path1, paint);
 
     final paint2 = Paint()
       ..color = AppColors.cyan.withOpacity(0.08)
       ..style = PaintingStyle.fill;
 
-    final path2 = Path()
-      ..moveTo(0, size.height * 0.65)
-      ..quadraticBezierTo(
-        size.width * 0.6,
-        size.height * 0.85,
-        size.width,
-        size.height * 0.55,
-      )
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
+    final path2 = Path();
+    path2.moveTo(0, size.height * 0.5);
+    path2.quadraticBezierTo(
+      size.width * 0.35,
+      size.height * 0.75,
+      size.width * 0.7,
+      size.height * 0.55,
+    );
+    path2.quadraticBezierTo(
+      size.width * 0.85,
+      size.height * 0.45,
+      size.width,
+      size.height * 0.5,
+    );
+    path2.lineTo(size.width, 0);
+    path2.lineTo(0, 0);
+    path2.close();
 
-    canvas.drawPath(path1, paint1);
     canvas.drawPath(path2, paint2);
   }
 

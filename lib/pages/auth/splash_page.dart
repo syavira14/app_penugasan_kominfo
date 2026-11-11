@@ -13,7 +13,7 @@ class SplashPage extends StatefulWidget {
 
 class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
   // Lama splash tampil (progress bar mengikuti durasi ini)
-  static const Duration _splashDuration = Duration(seconds: 3);
+  static const Duration _splashDuration = Duration(milliseconds: 1800);
 
   // Aksen emas (sama dengan aksen di dashboard)
   static const Color _gold = Color(0xFFFFC857);

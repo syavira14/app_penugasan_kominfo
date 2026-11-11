@@ -1,21 +1,13 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 
-import '../../services/file_preview_service.dart';
-import '../../services/riwayat_file_service.dart';
 import '../../services/riwayat_penugasan_service.dart';
 import '../../services/staff_admin_api.dart';
-import '../../services/supabase_storage_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_layout.dart';
-import '../../widgets/simtas_file_preview_page.dart';
 
 // ───────────────────────── Warna (disamakan dengan staff_kalender) ─────────────────────────
 const Color kBiruTua = Color(0xFF1A1464);
@@ -214,7 +206,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
   ];
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final SupabaseStorageService _storage = SupabaseStorageService();
 
   List<TugasModel> _daftarRiwayat = [];
   StreamSubscription<List<Map<String, dynamic>>>? _subscription;
@@ -414,20 +405,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
   bool _isImage(String name) =>
       const ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].contains(_extOf(name));
 
-  Future<String> _urlFile(TugasModel t) async {
-    if (t.fileHasilPath.isNotEmpty) {
-      try {
-        return await SupabaseStorageService().buatLinkSementara(
-          t.fileHasilPath,
-        );
-      } catch (_) {
-        return ambilUrlFileHasil(t.id, path: t.fileHasilPath);
-      }
-    }
-    if (t.fileHasilUrl.isNotEmpty) return t.fileHasilUrl;
-    throw StateError('File hasil pekerjaan belum tersedia.');
-  }
-
   void _pesan(String text, {bool error = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -441,28 +418,14 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
 
   Future<void> _lihatFile(BuildContext ctx, TugasModel t, String name) async {
     try {
-      final url = await _urlFile(t);
-      if (_isImage(name)) {
-        if (!ctx.mounted) return;
-        _previewGambar(ctx, name, url);
-        return;
-      }
-      Uint8List bytes = Uint8List(0);
-      if (!name.toLowerCase().endsWith('.pdf')) {
-        final r = await http.get(Uri.parse(url));
-        if (r.statusCode != 200) throw StateError('HTTP ${r.statusCode}');
-        bytes = r.bodyBytes;
-      }
-      if (!ctx.mounted) return;
-      await Navigator.push(
+      await StaffAdminApi.openInAppFilePreview(
         ctx,
-        MaterialPageRoute<void>(
-          builder: (_) => SimtasFilePreviewPage(
-            namaFile: name,
-            bytes: bytes,
-            externalUrl: url,
-          ),
-        ),
+        namaFile: name,
+        path: t.fileHasilPath,
+        fallbackUrl: t.fileHasilUrl,
+        assignmentId: t.id,
+        tugasId: t.tugasId,
+        kind: 'hasil',
       );
     } catch (e) {
       _pesan('Gagal membuka file: $e', error: true);
@@ -471,51 +434,15 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
 
   Future<void> _unduhFile(TugasModel t, String name) async {
     _pesan('Mengunduh $name...');
-    try {
-      Uint8List data;
-      if (t.fileHasilPath.isNotEmpty) {
-        try {
-          data = await FilePreviewService().downloadFileStaff(t.fileHasilPath);
-        } catch (_) {
-          final r = await http.get(Uri.parse(await _urlFile(t)));
-          if (r.statusCode != 200) throw StateError('HTTP ${r.statusCode}');
-          data = r.bodyBytes;
-        }
-      } else {
-        final r = await http.get(Uri.parse(await _urlFile(t)));
-        if (r.statusCode != 200) throw StateError('HTTP ${r.statusCode}');
-        data = r.bodyBytes;
-      }
-      final ext = _extOf(name);
-      final base = ext.isEmpty
-          ? name
-          : name.substring(0, name.length - ext.length - 1);
-      await FileSaver.instance.saveFile(
-        name: base,
-        bytes: data,
-        ext: ext,
-        mimeType: MimeType.other,
-      );
-      _pesan('File "$name" berhasil diunduh');
-    } catch (e) {
-      try {
-        await _bukaFile(await _urlFile(t));
-      } catch (_) {
-        _pesan('Gagal mengunduh file: $e', error: true);
-      }
-    }
-  }
-
-  Future<void> _bukaFile(String url) async {
-    if (url.isEmpty) return;
-    try {
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Gagal membuka file')));
-    }
+    await StaffAdminApi.downloadSupabaseFile(
+      context,
+      namaFile: name,
+      path: t.fileHasilPath,
+      fallbackUrl: t.fileHasilUrl,
+      assignmentId: t.id,
+      tugasId: t.tugasId,
+      kind: 'hasil',
+    );
   }
 
   // ─────────────────────── Muat Riwayat Status Step-by-Step ───────────────────────
@@ -523,6 +450,7 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
   Future<Map<String, List<Map<String, dynamic>>>> _loadExtra(
     TugasModel t,
   ) async {
+    StaffAdminApi.prefetchFile(t.fileHasilPath); // siapkan file lebih awal
     final id = t.id;
     final tid = t.tugasId;
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? t.staffUid;
@@ -939,10 +867,146 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
     );
   }
 
+  void _showMonthYearPicker() {
+    int tempYear = _selectedYear != 0 ? _selectedYear : DateTime.now().year;
+    int tempMonth = _selectedMonth != 0 ? _selectedMonth : DateTime.now().month;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              titlePadding: const EdgeInsets.all(16),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: kBiruSedang),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear--;
+                      });
+                    },
+                  ),
+                  Text(
+                    "$tempYear",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: kBiruTua,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, color: kBiruSedang),
+                    onPressed: () {
+                      setDialogState(() {
+                        tempYear++;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 300,
+                height: 220,
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  itemCount: 12,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 2.0,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemBuilder: (context, index) {
+                    final isSelected = (index + 1) == tempMonth;
+                    return InkWell(
+                      onTap: () {
+                        setDialogState(() {
+                          tempMonth = index + 1;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? kBiruSedang
+                              : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected
+                                ? kBiruSedang
+                                : Colors.transparent,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          _monthNames[index].substring(0, 3),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: isSelected ? Colors.white : kBiruTua,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedMonth = 0;
+                      _selectedYear = 0;
+                      _page = 0;
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text(
+                    "Semua Periode",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kBiruSedang,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _selectedYear = tempYear;
+                      _selectedMonth = tempMonth;
+                      _page = 0;
+                    });
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text("Terapkan"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildBody(double scale, bool isWide) {
     final q = _pencarian.toLowerCase().trim();
 
-    final years = <int>{DateTime.now().year};
+    final currentYear = DateTime.now().year;
+    final years = <int>{for (int y = 2000; y <= currentYear + 10; y++) y};
     for (final t in _daftarRiwayat) {
       if (t.batasWaktu != null) years.add(t.batasWaktu!.year);
     }
@@ -1222,31 +1286,53 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
   }
 
   Widget _filterBar(double scale, bool wide, List<int> yearList) {
-    final monthDropdown = _periodDropdown(
-      scale: scale,
-      value: _selectedMonth,
-      items: [
-        const DropdownMenuItem(value: 0, child: Text('Semua Bulan')),
-        for (var i = 0; i < 12; i++)
-          DropdownMenuItem(value: i + 1, child: Text(_monthNames[i])),
-      ],
-      onChanged: (v) => setState(() {
-        _selectedMonth = v;
-        _page = 0;
-      }),
-    );
-
-    final yearDropdown = _periodDropdown(
-      scale: scale,
-      value: _selectedYear,
-      items: [
-        const DropdownMenuItem(value: 0, child: Text('Semua Tahun')),
-        for (final y in yearList) DropdownMenuItem(value: y, child: Text('$y')),
-      ],
-      onChanged: (v) => setState(() {
-        _selectedYear = v;
-        _page = 0;
-      }),
+    final calendarPickerButton = InkWell(
+      onTap: _showMonthYearPicker,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        height: 48 * scale,
+        padding: EdgeInsets.symmetric(horizontal: 14 * scale),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: _periodActive ? kBiruSedang : Colors.grey.shade300,
+            width: _periodActive ? 1.5 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.calendar_month_rounded,
+              color: _periodActive ? kBiruSedang : Colors.grey.shade600,
+              size: 20 * scale,
+            ),
+            SizedBox(width: 8 * scale),
+            Text(
+              _periodLabel,
+              style: TextStyle(
+                fontSize: 13 * scale,
+                fontWeight: FontWeight.w600,
+                color: _periodActive ? kBiruTua : Colors.grey.shade700,
+              ),
+            ),
+            SizedBox(width: 6 * scale),
+            Icon(
+              Icons.arrow_drop_down_rounded,
+              color: _periodActive ? kBiruSedang : Colors.grey.shade600,
+              size: 22 * scale,
+            ),
+          ],
+        ),
+      ),
     );
 
     final resetButton = TextButton.icon(
@@ -1266,12 +1352,8 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
         children: [
           Expanded(child: _searchBar(scale)),
           const SizedBox(width: 12),
-          const Icon(Icons.filter_alt_rounded, color: kBiruSedang),
-          const SizedBox(width: 8),
-          SizedBox(width: 160, child: monthDropdown),
-          const SizedBox(width: 8),
-          SizedBox(width: 140, child: yearDropdown),
-          const SizedBox(width: 4),
+          calendarPickerButton,
+          const SizedBox(width: 6),
           resetButton,
         ],
       );
@@ -1284,12 +1366,10 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
         SizedBox(height: 10 * scale),
         Row(
           children: [
-            Expanded(child: monthDropdown),
-            SizedBox(width: 8 * scale),
-            Expanded(child: yearDropdown),
+            Expanded(child: calendarPickerButton),
+            if (_periodActive) ...[SizedBox(width: 6 * scale), resetButton],
           ],
         ),
-        Align(alignment: Alignment.centerRight, child: resetButton),
       ],
     );
   }
@@ -2132,61 +2212,6 @@ class _RiwayatTugasPageState extends State<RiwayatTugasPage> {
             ),
           ],
         ],
-      ),
-    );
-  }
-
-  void _previewGambar(BuildContext ctx, String name, String url) {
-    showDialog(
-      context: ctx,
-      builder: (dctx) => Dialog(
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: 800,
-            maxHeight: MediaQuery.of(dctx).size.height * 0.85,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        name,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: kBiruTua,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(dctx),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              Flexible(
-                child: InteractiveViewer(
-                  child: Image.network(
-                    url,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Padding(
-                      padding: EdgeInsets.all(30),
-                      child: Text('Gambar tidak dapat ditampilkan.'),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

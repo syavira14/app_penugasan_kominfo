@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -90,7 +91,7 @@ class AdminSidebar extends StatelessWidget {
       // Dari Dashboard: tumpuk halaman baru supaya tombol kembali ke Dashboard
       navigator.push(adminRoute(item.page!()));
     } else {
-      // Dari halaman lain: ganti halaman (stack tidak menumpuk)
+      // Dari halaman lain: ganti halaman langsung tanpa animasi berkedip/pop-up
       navigator.pushReplacement(adminRoute(item.page!()));
     }
   }
@@ -156,8 +157,39 @@ class AdminSidebar extends StatelessWidget {
     );
   }
 
+  Widget _badgeCount(int count, {bool isWarning = false}) {
+    if (count <= 0) return const SizedBox.shrink();
+    return Container(
+      constraints: const BoxConstraints(minWidth: 24, minHeight: 22),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: isWarning ? const Color(0xFFFFE4E6) : const Color(0xFFFFD54F),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.14),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Text(
+        count > 99 ? '99+' : '$count',
+        style: TextStyle(
+          color: isWarning ? const Color(0xFFBE123C) : biruTua,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w800,
+          height: 1.1,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final firestore = FirebaseFirestore.instance;
+
     final panel = Container(
       width: isDrawer ? null : 250,
       decoration: const BoxDecoration(
@@ -228,66 +260,102 @@ class AdminSidebar extends StatelessWidget {
             Divider(color: Colors.white.withOpacity(0.2), height: 1),
             const SizedBox(height: 12),
 
-            // Menu
+            // Menu dengan badge real-time hanya di Kelola Tugas & Laporan Kendala
             Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                itemCount: _items.length,
-                itemBuilder: (context, i) {
-                  final item = _items[i];
-                  final selected = i == currentIndex;
+              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: firestore
+                    .collection('penugasan')
+                    .where('status', isEqualTo: 'dikumpulkan')
+                    .snapshots(),
+                builder: (context, tugasSnap) {
+                  final tugasDikumpulkanCount =
+                      tugasSnap.data?.docs.length ?? 0;
 
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Material(
-                      color: selected
-                          ? Colors.white.withOpacity(0.2)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(14),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: () => _onTap(context, i),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 13,
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                item.icon,
-                                size: 22,
-                                color: selected ? accentGold : Colors.white,
-                              ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: Text(
-                                  item.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: AppTypography.body,
-                                    fontWeight: selected
-                                        ? FontWeight.bold
-                                        : FontWeight.w500,
+                  return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: firestore.collection('laporan_kendala').snapshots(),
+                    builder: (context, kendalaSnap) {
+                      final kendalaMasukCount = (kendalaSnap.data?.docs ?? [])
+                          .where((doc) {
+                            final st = (doc.data()['status'] ?? '')
+                                .toString()
+                                .toLowerCase();
+                            return st == 'menunggu_review' ||
+                                st == 'dalam_penanganan';
+                          })
+                          .length;
+
+                      return ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        itemCount: _items.length,
+                        itemBuilder: (context, i) {
+                          final item = _items[i];
+                          final selected = i == currentIndex;
+
+                          // Angka notifikasi hanya di Kelola Tugas (index 2) & Laporan Kendala (index 6)
+                          final int badge = i == 2
+                              ? tugasDikumpulkanCount
+                              : (i == 6 ? kendalaMasukCount : 0);
+
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Material(
+                              color: selected
+                                  ? Colors.white.withOpacity(0.2)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(14),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(14),
+                                onTap: () => _onTap(context, i),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 13,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        item.icon,
+                                        size: 22,
+                                        color: selected
+                                            ? accentGold
+                                            : Colors.white,
+                                      ),
+                                      const SizedBox(width: 14),
+                                      Expanded(
+                                        child: Text(
+                                          item.label,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: AppTypography.body,
+                                            fontWeight: selected
+                                                ? FontWeight.bold
+                                                : FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                      if (badge > 0) ...[
+                                        const SizedBox(width: 6),
+                                        _badgeCount(badge, isWarning: i == 6),
+                                      ] else if (selected)
+                                        Container(
+                                          width: 6,
+                                          height: 6,
+                                          decoration: const BoxDecoration(
+                                            color: accentGold,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
                               ),
-                              if (selected)
-                                Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: const BoxDecoration(
-                                    color: accentGold,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
+                            ),
+                          );
+                        },
+                      );
+                    },
                   );
                 },
               ),
@@ -348,7 +416,7 @@ class AdminSidebar extends StatelessWidget {
 }
 
 /// Route tanpa animasi: pindah halaman langsung tampil,
-/// tanpa efek geser, memudar, atau berkedip.
+/// tanpa efek geser, memudar, atau berkedip seperti pop-up.
 Route<T> adminRoute<T>(Widget page) {
   return PageRouteBuilder<T>(
     pageBuilder: (_, __, ___) => page,

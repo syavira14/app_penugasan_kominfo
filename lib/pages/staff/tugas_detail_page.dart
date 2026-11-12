@@ -592,17 +592,17 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
   }) {
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withOpacity(.20)),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(.035),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: Colors.black.withOpacity(.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -611,21 +611,28 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
         children: [
           Row(
             children: [
-              Icon(icon, color: color, size: 19),
-              const SizedBox(width: 9),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 22),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   title,
                   style: TextStyle(
                     color: color,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const Divider(height: 24),
           child,
         ],
       ),
@@ -636,26 +643,26 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
     final content = (value ?? '').toString().trim();
     if (content.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
             style: TextStyle(
-              fontSize: 13, // Diperbesar dari 11 -> 13
-              color: Colors.blueGrey.shade600,
-              fontWeight: FontWeight.w600,
+              fontSize: 13.5,
+              color: Colors.blueGrey.shade700,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 4),
           Text(
             content,
             style: TextStyle(
-              fontSize: 15, // Diperbesar dari 13 -> 15
-              height: 1.4,
-              color: kBiruTua,
-              fontWeight: emphasize ? FontWeight.w600 : FontWeight.normal,
+              fontSize: 15.5,
+              height: 1.5,
+              color: const Color(0xFF0F172A),
+              fontWeight: emphasize ? FontWeight.bold : FontWeight.w500,
             ),
           ),
         ],
@@ -731,17 +738,34 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _riwayatBaris('Keterangan Staff', d['keterangan']),
+                  const SizedBox(height: 6),
                   OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 46),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                    ),
                     onPressed: () => _bukaLampiranDenganCadangan(
                       nama: name,
                       path: (d['file_path'] ?? '').toString(),
+                      kind: 'riwayat',
+                      submissionId: doc.id,
                       ambilUrl: () => _storageService.ambilLinkRiwayat(
                         widget.penugasanId,
                         doc.id,
                       ),
                     ),
-                    icon: const Icon(Icons.attach_file, size: 17),
-                    label: Text(name, overflow: TextOverflow.ellipsis),
+                    icon: const Icon(Icons.attach_file, size: 19),
+                    label: Text(
+                      name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ],
               );
@@ -874,11 +898,11 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Padding(
-              padding: EdgeInsets.only(bottom: 10),
+              padding: EdgeInsets.only(bottom: 12),
               child: Text(
                 'Seluruh Riwayat Kendala',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 17.5,
                   fontWeight: FontWeight.bold,
                   color: kBiruTua,
                 ),
@@ -1044,67 +1068,40 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
     );
   }
 
-  /// Membuka lampiran: Edge Function dulu, lalu unduh langsung dari Storage
-  /// (tetap dibatasi aturan Supabase). Bila keduanya gagal, tampilkan alasan
-  /// lengkap beserta path dan uid agar penyebabnya terlihat.
+  /// Membuka lampiran langsung di dalam aplikasi menggunakan jalur terpadu
+  /// StaffAdminApi.openInAppFilePreview (mendukung memori, Storage, Edge Function,
+  /// dan cadangan Firestore stored_files).
   Future<void> _bukaLampiranDenganCadangan({
     required String nama,
     required String path,
     required Future<String> Function() ambilUrl,
+    String kind = 'hasil',
+    String? laporanId,
+    String? submissionId,
+    String? fallbackUrl,
   }) async {
-    final uid = _auth.currentUser?.uid ?? '-';
-    final clean = path
-        .trim()
-        .replaceFirst(RegExp(r'^/+'), '')
-        .replaceFirst(RegExp(r'^file-tugas/'), '');
-    final alasan = <String>[];
-
     try {
-      final url = await ambilUrl();
-      await _bukaFile(url, namaFile: nama);
-      return;
-    } catch (e) {
-      alasan.add(
-        '[Edge Function] ${e.toString().replaceFirst('Bad state: ', '')}',
+      await StaffAdminApi.openInAppFilePreview(
+        context,
+        namaFile: nama,
+        path: path,
+        fallbackUrl: fallbackUrl,
+        assignmentId: widget.penugasanId,
+        laporanId: laporanId,
+        submissionId: submissionId,
+        tugasId: _detailTugas?.idTugas,
+        kind: kind,
       );
-    }
-
-    if (clean.isNotEmpty) {
+      return;
+    } catch (_) {
       try {
-        final bytes = await Supabase.instance.client.storage
-            .from('file-tugas')
-            .download(clean)
-            .timeout(const Duration(seconds: 20));
-        if (bytes.isNotEmpty) {
-          if (!mounted) return;
-          await Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) =>
-                  SimtasFilePreviewPage(namaFile: nama, bytes: bytes),
-            ),
-          );
-          return;
-        }
-        alasan.add('[Storage langsung] file kosong');
+        final url = await ambilUrl();
+        await _bukaFile(url, namaFile: nama);
       } catch (e) {
-        alasan.add(
-          '[Storage langsung] '
-          '${e is StorageException ? '${e.statusCode} ${e.message}' : e}',
-        );
+        if (!mounted) return;
+        _tampilkanGalat('Lampiran tidak dapat dibuka', e);
       }
-    } else {
-      alasan.add('Path file kosong pada data Firestore.');
     }
-
-    final folder = clean.contains('/') ? clean.split('/').first : '-';
-    await _tampilkanGalat(
-      'Lampiran tidak dapat dibuka',
-      'Nama: $nama\n'
-          'Path: $clean\n'
-          'Folder pemilik file: $folder\n'
-          'UID akun login: $uid ${folder == uid ? '(sama)' : '(BERBEDA)'}\n\n'
-          '${alasan.join('\n')}',
-    );
   }
 
   Widget _solusiKendala() {
@@ -1140,51 +1137,131 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
             children: [
               const Text('Laporan sedang ditinjau Atasan.'),
               _riwayatKendala(id),
-              if (status == StatusLaporanKendala.menungguReview)
-                OutlinedButton.icon(
-                  onPressed: _bukaFormKendala,
-                  icon: const Icon(Icons.edit),
-                  label: const Text('Edit Laporan Kendala'),
+              if (status == StatusLaporanKendala.menungguReview) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 50,
+                  child: OutlinedButton.icon(
+                    onPressed: _bukaFormKendala,
+                    icon: const Icon(Icons.edit),
+                    label: const Text(
+                      'Edit Laporan Kendala',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                 ),
+              ],
             ],
           );
         }
+        final fileNama =
+            (d['solusi_file_nama'] ??
+                    d['solusi_file_path'] ??
+                    'Lampiran Solusi')
+                .toString()
+                .split('/')
+                .last
+                .replaceFirst(RegExp(r'^\d{10,}_'), '');
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _riwayatKendala(id),
             const Text(
               'Solusi dari Atasan',
-              style: TextStyle(fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16.5,
+                color: kBiruTua,
+              ),
             ),
-            const SizedBox(height: 8),
-            Text((d['solusi'] ?? '').toString()),
-            if ((d['solusi_file_path'] ?? '').toString().isNotEmpty)
-              TextButton.icon(
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F7FF),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: kBiruSedang.withOpacity(0.25)),
+              ),
+              child: Text(
+                (d['solusi'] ?? '').toString(),
+                style: const TextStyle(
+                  fontSize: 15.5,
+                  height: 1.5,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+            ),
+            if ((d['solusi_file_path'] ?? '').toString().isNotEmpty) ...[
+              const SizedBox(height: 14),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50),
+                  foregroundColor: kBiruSedang,
+                  side: BorderSide(color: kBiruSedang.withOpacity(0.5)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
                 onPressed: () => _bukaLampiranDenganCadangan(
-                  nama:
-                      (d['solusi_file_nama'] ??
-                              d['solusi_file_path'] ??
-                              'Lampiran Solusi')
-                          .toString()
-                          .split('/')
-                          .last,
+                  nama: fileNama,
                   path: (d['solusi_file_path'] ?? '').toString(),
+                  kind: 'solusi',
+                  laporanId: id,
                   ambilUrl: () => _storageService.ambilLinkSolusi(id),
                 ),
-                icon: const Icon(Icons.attach_file),
-                label: const Text('Lihat Lampiran Solusi'),
+                icon: const Icon(Icons.description_outlined, size: 22),
+                label: Text(
+                  'Lihat Lampiran Solusi ($fileNama)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
-            const SizedBox(height: 10),
-            ElevatedButton.icon(
-              onPressed: _lanjutkanPekerjaan,
-              icon: const Icon(Icons.check_circle),
-              label: const Text('Kendala Teratasi, Lanjutkan Tugas'),
+            ],
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 52,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade700,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: _lanjutkanPekerjaan,
+                icon: const Icon(Icons.check_circle, size: 22),
+                label: const Text(
+                  'Kendala Teratasi, Lanjutkan Tugas',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                ),
+              ),
             ),
-            OutlinedButton.icon(
-              onPressed: () => _bukaFormKendala(lanjutan: true),
-              icon: const Icon(Icons.report_problem),
-              label: const Text('Kendala Belum Teratasi'),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 52,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.deepOrange.shade800,
+                  side: BorderSide(color: Colors.deepOrange.shade400),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () => _bukaFormKendala(lanjutan: true),
+                icon: const Icon(Icons.report_problem_outlined, size: 22),
+                label: const Text(
+                  'Kendala Belum Teratasi',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                ),
+              ),
             ),
           ],
         );
@@ -1257,6 +1334,21 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
   // Buka lampiran solusi dan riwayat di dalam SIMTAS, bukan tab browser.
   Future<void> _bukaFile(String url, {String? namaFile}) async {
     try {
+      if (url.trim().startsWith('data:')) {
+        final comma = url.indexOf(',');
+        final b64 = url.substring(comma + 1).replaceAll(RegExp(r'\s'), '');
+        final bytes = base64Decode(b64);
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => SimtasFilePreviewPage(
+              namaFile: namaFile ?? 'Lampiran.pdf',
+              bytes: bytes,
+            ),
+          ),
+        );
+        return;
+      }
       final uri = Uri.tryParse(url);
       if (uri == null ||
           !uri.hasScheme ||
@@ -1330,6 +1422,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
         nama: (_assignmentData?['file_revisi_nama'] ?? 'Lampiran revisi')
             .toString(),
         path: pathRevisi,
+        kind: 'revisi',
         ambilUrl: () async {
           final user = _auth.currentUser;
           if (user == null) throw StateError('Sesi login tidak ditemukan.');
@@ -2752,10 +2845,10 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                                 ),
                               ),
                             ),
-                            SizedBox(height: 20 * scale),
+                            SizedBox(height: 24 * scale),
                             SizedBox(
                               width: double.infinity,
-                              height: 50 * scale,
+                              height: 52 * scale,
                               child: ElevatedButton.icon(
                                 onPressed: _uploading
                                     ? null
@@ -2791,7 +2884,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                               ),
                             ),
                             ...[
-                              SizedBox(height: 12 * scale),
+                              SizedBox(height: 18 * scale),
                               OutlinedButton.icon(
                                 onPressed: _bukaFormKendala,
                                 icon: Icon(
@@ -2810,7 +2903,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                                 style: OutlinedButton.styleFrom(
                                   minimumSize: Size(
                                     double.infinity,
-                                    48 * scale,
+                                    52 * scale,
                                   ),
                                   side: BorderSide(color: Colors.red.shade700),
                                   shape: RoundedRectangleBorder(
@@ -2942,7 +3035,7 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
     return Text(
       text,
       style: TextStyle(
-        fontSize: 13.5 * scale,
+        fontSize: 17 * scale,
         fontWeight: FontWeight.bold,
         color: kBiruTua,
       ),
@@ -2952,10 +3045,11 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
   Widget _infoCard(double scale, {required List<Widget> children}) {
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.all(18 * scale),
+      padding: EdgeInsets.all(20 * scale),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22 * scale),
+        borderRadius: BorderRadius.circular(20 * scale),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.04),
@@ -2978,21 +3072,21 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
     double scale, {
     bool highlight = false,
   }) {
-    final Color color = highlight ? Colors.redAccent : kBiruSedang;
+    final Color color = highlight ? const Color(0xFFB42318) : kBiruSedang;
     return Padding(
-      padding: EdgeInsets.only(bottom: 10 * scale),
+      padding: EdgeInsets.only(bottom: 14 * scale),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: EdgeInsets.all(7 * scale),
+            padding: EdgeInsets.all(9 * scale),
             decoration: BoxDecoration(
               color: color.withOpacity(.1),
               borderRadius: BorderRadius.circular(10 * scale),
             ),
-            child: Icon(icon, size: 15 * scale, color: color),
+            child: Icon(icon, size: 19 * scale, color: color),
           ),
-          SizedBox(width: 10 * scale),
+          SizedBox(width: 12 * scale),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3000,17 +3094,21 @@ class _TugasDetailPageState extends State<TugasDetailPage> {
                 Text(
                   label,
                   style: TextStyle(
-                    fontSize: 11 * scale,
-                    color: Colors.grey.shade600,
+                    fontSize: 13.5 * scale,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.blueGrey.shade700,
                   ),
                 ),
-                SizedBox(height: 1 * scale),
+                SizedBox(height: 4 * scale),
                 Text(
                   value.isEmpty ? '-' : value,
                   style: TextStyle(
-                    fontSize: 12.5 * scale,
+                    fontSize: 15.5 * scale,
+                    height: 1.45,
                     fontWeight: FontWeight.w600,
-                    color: highlight ? Colors.redAccent : Colors.black87,
+                    color: highlight
+                        ? const Color(0xFFB42318)
+                        : const Color(0xFF0F172A),
                   ),
                 ),
               ],

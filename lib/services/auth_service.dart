@@ -24,29 +24,13 @@ class AuthService {
       );
     }
 
-    // Coba password apa adanya terlebih dahulu, lalu versi trim() jika ada spasi tak sengaja.
-    final passwordCandidates = <String>[
-      password,
-      if (password.trim() != password && password.trim().isNotEmpty)
-        password.trim(),
-    ];
+    final passwordCandidates = <String>[password];
 
-    // Login menggunakan NIP:
-    // Coba email utama (NIP@simtas.internal), lalu alias hasil reset/mutasi (NIP.r1@simtas.internal, dst.)
-    final aliasList = <String>[
-      '',
-      'r1',
-      'r2',
-      'r3',
-      'r4',
-      'r5',
-      'r6',
-      'r7',
-      'r8',
-      'r9',
-    ];
+    // Gunakan email utama (NIP@simtas.internal) terlebih dahulu, lalu alias r1 bila ada.
+    final aliasList = <String>['', 'r1'];
     FirebaseAuthException? firstAuthError;
     bool foundReplacedAuth = false;
+    bool hitRateLimit = false;
 
     for (int i = 0; i < aliasList.length; i++) {
       final tag = aliasList[i];
@@ -66,23 +50,15 @@ class AuthService {
             final data = Map<String, dynamic>.from(
               userDoc.data() as Map<String, dynamic>,
             );
-            // Sinkron di latar belakang agar login tidak menunggu tulis Firestore.
-            unawaited(
-              StaffAdminApi.syncOwnPasswordIfNeeded(
-                uid: uid,
-                userData: data,
-                password: pass,
-                authEmail: authEmail,
-              ),
+            await StaffAdminApi.syncOwnPasswordIfNeeded(
+              uid: uid,
+              userData: data,
+              password: pass,
+              authEmail: authEmail,
             );
-            if ((data['role'] ?? '').toString().toLowerCase() == 'admin') {
-              // Ditunda supaya tidak berebut jaringan dengan dashboard.
-              unawaited(
-                Future<void>.delayed(
-                  const Duration(seconds: 15),
-                  () => StaffAdminApi.syncKendalaCacheForAllTasks(),
-                ),
-              );
+            final roleStr = (data['role'] ?? '').toString().toLowerCase();
+            if (roleStr == 'admin' || roleStr == 'atasan') {
+              unawaited(StaffAdminApi.syncKendalaCacheForAllTasks());
             }
             return data;
           }
@@ -95,36 +71,68 @@ class AuthService {
             );
             final parts = rest.split('::');
             final primaryAdminEmail = parts.first.trim();
-            await _auth.signOut();
+            final targetAdminUid = parts.length > 1 ? parts[1].trim() : '';
+
+            // Baca data profil Admin selagi masih dalam sesi terautentikasi (`logged() == true`)
+            Map<String, dynamic>? fallbackAdminData;
+            if (targetAdminUid.isNotEmpty) {
+              try {
+                final tDoc = await _firestore
+                    .collection('users')
+                    .doc(targetAdminUid)
+                    .get();
+                if (tDoc.exists && tDoc.data() != null) {
+                  fallbackAdminData = Map<String, dynamic>.from(tDoc.data()!);
+                }
+              } catch (_) {}
+            }
+
             if (primaryAdminEmail.isNotEmpty) {
-              final adminCred = await _auth.signInWithEmailAndPassword(
-                email: primaryAdminEmail,
-                password: pass,
-              );
-              final adminUid = adminCred.user!.uid;
-              final adminDoc = await _firestore
-                  .collection('users')
-                  .doc(adminUid)
-                  .get();
-              if (adminDoc.exists) {
-                final adminData = Map<String, dynamic>.from(
-                  adminDoc.data() as Map<String, dynamic>,
-                );
-                await StaffAdminApi.syncOwnPasswordIfNeeded(
-                  uid: adminUid,
-                  userData: adminData,
+              try {
+                await _auth.signOut();
+                final adminCred = await _auth.signInWithEmailAndPassword(
+                  email: primaryAdminEmail,
                   password: pass,
-                  authEmail: primaryAdminEmail,
                 );
-                unawaited(StaffAdminApi.syncKendalaCacheForAllTasks());
-                return adminData;
+                final adminUid = adminCred.user!.uid;
+                final adminDoc = await _firestore
+                    .collection('users')
+                    .doc(adminUid)
+                    .get();
+                if (adminDoc.exists) {
+                  final adminData = Map<String, dynamic>.from(
+                    adminDoc.data() as Map<String, dynamic>,
+                  );
+                  await StaffAdminApi.syncOwnPasswordIfNeeded(
+                    uid: adminUid,
+                    userData: adminData,
+                    password: pass,
+                    authEmail: primaryAdminEmail,
+                  );
+                  unawaited(StaffAdminApi.syncKendalaCacheForAllTasks());
+                  return adminData;
+                }
+              } on FirebaseAuthException catch (re) {
+                // Jika email utama Admin terkena too-many-requests, masuk kembali lewat
+                // akun jembatan ini dan gunakan profil Admin yang sudah dibaca!
+                if (re.code == 'too-many-requests' &&
+                    fallbackAdminData != null) {
+                  await _auth.signInWithEmailAndPassword(
+                    email: authEmail,
+                    password: pass,
+                  );
+                  fallbackAdminData['role'] = 'admin';
+                  return fallbackAdminData;
+                }
               }
+            } else if (fallbackAdminData != null) {
+              fallbackAdminData['role'] = 'admin';
+              return fallbackAdminData;
             }
           }
 
           // Jika bukan redirect langsung di displayName, cek di koleksi users
-          // selagi sesi autentikasi masih terbuka (apakah NIP ini milik Admin
-          // yang dimutasi atau Staf yang direset ke alias baru).
+          // selagi sesi autentikasi masih terbuka.
           foundReplacedAuth = true;
           try {
             final allUsers = await _firestore.collection('users').get();
@@ -137,31 +145,43 @@ class AuthService {
                 final activeAlias = StaffAdminApi.extractStoredAliasTag(
                   d['email_kontak'],
                 );
-                if (role == 'admin' &&
+                if ((role == 'admin' || role == 'atasan') &&
                     primaryEmail.isNotEmpty &&
                     primaryEmail.toLowerCase() != authEmail.toLowerCase()) {
-                  await _auth.signOut();
-                  final adminCred = await _auth.signInWithEmailAndPassword(
-                    email: primaryEmail,
-                    password: pass,
-                  );
-                  final adminUid = adminCred.user!.uid;
-                  final adminDoc = await _firestore
-                      .collection('users')
-                      .doc(adminUid)
-                      .get();
-                  if (adminDoc.exists) {
-                    final adminData = Map<String, dynamic>.from(
-                      adminDoc.data() as Map<String, dynamic>,
-                    );
-                    await StaffAdminApi.syncOwnPasswordIfNeeded(
-                      uid: adminUid,
-                      userData: adminData,
+                  final fallbackAdminData = Map<String, dynamic>.from(d);
+                  try {
+                    await _auth.signOut();
+                    final adminCred = await _auth.signInWithEmailAndPassword(
+                      email: primaryEmail,
                       password: pass,
-                      authEmail: primaryEmail,
                     );
-                    unawaited(StaffAdminApi.syncKendalaCacheForAllTasks());
-                    return adminData;
+                    final adminUid = adminCred.user!.uid;
+                    final adminDoc = await _firestore
+                        .collection('users')
+                        .doc(adminUid)
+                        .get();
+                    if (adminDoc.exists) {
+                      final adminData = Map<String, dynamic>.from(
+                        adminDoc.data() as Map<String, dynamic>,
+                      );
+                      await StaffAdminApi.syncOwnPasswordIfNeeded(
+                        uid: adminUid,
+                        userData: adminData,
+                        password: pass,
+                        authEmail: primaryEmail,
+                      );
+                      unawaited(StaffAdminApi.syncKendalaCacheForAllTasks());
+                      return adminData;
+                    }
+                  } on FirebaseAuthException catch (re) {
+                    if (re.code == 'too-many-requests') {
+                      await _auth.signInWithEmailAndPassword(
+                        email: authEmail,
+                        password: pass,
+                      );
+                      fallbackAdminData['role'] = 'admin';
+                      return fallbackAdminData;
+                    }
                   }
                 }
                 if (activeAlias.isNotEmpty &&
@@ -175,15 +195,32 @@ class AuthService {
           await _auth.signOut();
         } on FirebaseAuthException catch (e) {
           firstAuthError ??= e;
-          if (e.code == 'user-disabled' ||
-              e.code == 'too-many-requests' ||
-              e.code == 'network-request-failed') {
+          if (e.code == 'user-disabled' || e.code == 'network-request-failed') {
             throw Exception(_handleAuthError(e.code));
+          }
+          if (e.code == 'too-many-requests') {
+            hitRateLimit = true;
+            // Jangan langsung melempar error di percobaan pertama!
+            // Lanjutkan ke jalur pemulihan otomatis (recoverAndLoginLockedAdmin) di bawah.
+            continue;
           }
           if (e.code == 'user-not-found') {
             break;
           }
         }
+      }
+    }
+
+    // =========================================================================
+    // JALUR PEMULIHAN OTOMATIS SAAT AKUN UTAMA TERKENA `too-many-requests`
+    // =========================================================================
+    if (hitRateLimit) {
+      final recovered = await StaffAdminApi.recoverAndLoginLockedAdmin(
+        nip: input,
+        password: password,
+      );
+      if (recovered != null) {
+        return recovered;
       }
     }
 

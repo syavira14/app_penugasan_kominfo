@@ -65,13 +65,6 @@ class LaporanKendalaService {
     return user.uid;
   }
 
-  /// Status penugasan setelah kendala selesai/ditolak: kembali ke status
-  /// sebelum terkendala (revisi tetap revisi), default berlangsung.
-  String _statusSetelahKendala(Map<String, dynamic> penugasan) {
-    final sebelum = (penugasan['status_sebelum_kendala'] ?? '').toString();
-    return sebelum == 'revisi' ? 'revisi' : 'berlangsung';
-  }
-
   Future<void> _pastikanAdmin(String uid) async {
     final user = await _firestore.collection('users').doc(uid).get();
 
@@ -166,10 +159,9 @@ class LaporanKendalaService {
         throw StateError('ID tugas tidak sesuai dengan penugasan.');
       }
 
-      final statusSaatIni = (tugas['status'] ?? 'pending').toString();
-      if (statusSaatIni != 'berlangsung' && statusSaatIni != 'revisi') {
+      if ((tugas['status'] ?? 'pending').toString() != 'berlangsung') {
         throw StateError(
-          'Laporan baru hanya dapat dibuat saat tugas berlangsung atau revisi.',
+          'Laporan baru hanya dapat dibuat saat tugas berlangsung.',
         );
       }
 
@@ -307,8 +299,9 @@ class LaporanKendalaService {
       final penugasan = await tx.get(penugasanRef);
       if (!penugasan.exists) throw StateError('Penugasan tidak ditemukan.');
       final tugas = penugasan.data()!;
-      if ((tugas['status'] ?? '') != 'terkendala') {
-        throw StateError('Penugasan sudah tidak terkendala.');
+      final statusPenugasan = (tugas['status'] ?? '').toString().toLowerCase();
+      if (statusPenugasan == 'disetujui' || statusPenugasan == 'selesai') {
+        throw StateError('Penugasan sudah selesai.');
       }
       final aktif = (tugas['kendala_aktif_id'] ?? '').toString();
       if (aktif.isNotEmpty && aktif != laporanRef.id) {
@@ -349,8 +342,9 @@ class LaporanKendalaService {
         throw StateError('Status laporan sudah berubah. Muat ulang halaman.');
       }
 
-      if ((tugas['status'] ?? '').toString() != 'terkendala') {
-        throw StateError('Status penugasan tidak lagi terkendala.');
+      final statusTugasNow = (tugas['status'] ?? '').toString().toLowerCase();
+      if (statusTugasNow == 'disetujui' || statusTugasNow == 'selesai') {
+        throw StateError('Status penugasan sudah selesai.');
       }
 
       // Kompatibilitas laporan lama.
@@ -375,8 +369,7 @@ class LaporanKendalaService {
 
       if (ke == StatusLaporanKendala.ditolak) {
         tx.update(penugasanRef, {
-          'status': _statusSetelahKendala(tugas),
-          'status_sebelum_kendala': FieldValue.delete(),
+          'status': 'berlangsung',
           'kendala_aktif_id': FieldValue.delete(),
           'updated_at': FieldValue.serverTimestamp(),
         });

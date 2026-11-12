@@ -154,6 +154,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
   void initState() {
     super.initState();
     StaffAdminApi.cleanupOrphanedTugasData();
+    StaffAdminApi.ensureSingleCanonicalAdminDoc();
     initializeDateFormatting('id_ID', null).then((_) {
       if (mounted) setState(() => _localeReady = true);
     });
@@ -166,7 +167,7 @@ class _DashboardAdminPageState extends State<DashboardAdminPage> {
   String _fmt(int n) => n < 10 ? '0$n' : '$n';
 
   void _buka(Widget halaman) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => halaman));
+    Navigator.of(context).push(adminRoute(halaman));
   }
 
   void _showYearPickerDialog(List<int> availableYears) {

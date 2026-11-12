@@ -1799,6 +1799,7 @@ class _DetailLaporanKendalaAdminPageState
     PlatformFile? selectedFile;
     Uint8List? selectedBytes;
     String? fileError;
+    String? textError;
 
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -1826,10 +1827,16 @@ class _DetailLaporanKendalaAdminPageState
                       TextField(
                         controller: controller,
                         maxLines: 4,
+                        onChanged: (_) {
+                          if (textError != null) {
+                            setModalState(() => textError = null);
+                          }
+                        },
                         decoration: InputDecoration(
-                          labelText: 'Keterangan solusi / arahan (wajib)',
+                          labelText: 'Jawaban / keterangan solusi (wajib)',
                           hintText:
-                              'Tuliskan langkah solusi untuk membantu staff...',
+                              'Tuliskan jawaban atau arahan solusi untuk staff...',
+                          errorText: textError,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -1955,7 +1962,13 @@ class _DetailLaporanKendalaAdminPageState
                   style: FilledButton.styleFrom(backgroundColor: _blue),
                   onPressed: () {
                     final solusi = controller.text.trim();
-                    if (solusi.isEmpty) return;
+                    if (solusi.isEmpty) {
+                      setModalState(() {
+                        textError =
+                            'Jawaban atau keterangan solusi wajib diisi.';
+                      });
+                      return;
+                    }
 
                     Navigator.pop(dialogContext, {
                       'solusi': solusi,
@@ -2267,7 +2280,7 @@ class _DetailLaporanKendalaAdminPageState
         runSpacing: 12,
         children: [
           _button(
-            'Kirim Solusi & File',
+            'Jawab / Kirim Solusi',
             Icons.send_rounded,
             () => _formSolusi(edit: false),
           ),
@@ -2792,11 +2805,21 @@ class _DetailLaporanKendalaAdminPageState
             }
 
             final assignmentStatus = (assignment?['status'] ?? '').toString();
-            final activeId = (assignment?['kendala_aktif_id'] ?? '').toString();
+            final statusLower = assignmentStatus.trim().toLowerCase();
+            final activeId = (assignment?['kendala_aktif_id'] ?? '')
+                .toString()
+                .trim();
+            final reportStatus = _value(data, 'status', '');
 
             final isActiveAssignment =
-                assignmentStatus == 'terkendala' &&
-                (activeId.isEmpty || activeId == widget.laporanId);
+                statusLower != 'disetujui' &&
+                statusLower != 'selesai' &&
+                (activeId == widget.laporanId ||
+                    (activeId.isEmpty &&
+                        (statusLower == 'terkendala' ||
+                            StatusLaporanKendala.aktif.contains(
+                              reportStatus,
+                            ))));
 
             return _detailContent(data, assignmentStatus, isActiveAssignment);
           },

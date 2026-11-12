@@ -224,6 +224,298 @@ class StaffAdminApi {
     return clean;
   }
 
+  /// Membersihkan dokumen Admin/Atasan duplikat di koleksi `users` dan menyatukannya
+  /// ke satu dokumen Admin utama (kanonik) agar tidak pernah ada lebih dari 1 dokumen Atasan.
+  static Future<DocumentSnapshot<Map<String, dynamic>>?>
+  ensureSingleCanonicalAdminDoc([FirebaseFirestore? dbInstance]) async {
+    final db = dbInstance ?? _firestore;
+    try {
+      final snap = await db.collection('users').get();
+      final adminDocs = snap.docs.where((d) {
+        final role = _str(d.data()['role']).toLowerCase();
+        return role == 'admin' || role == 'atasan';
+      }).toList();
+
+      if (adminDocs.isEmpty) return null;
+      if (adminDocs.length == 1) return adminDocs.first;
+
+      final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+
+      // Urutkan agar kita memilih dokumen dengan data paling baru (updated_at terbaru) sebagai sumber data,
+      // namun prioritaskan dokumen kanonik asli (yang bukan dibuat dari sesi rescue baru, atau yang paling lama created_at-nya)
+      // atau dokumen dengan UID aktif jika sudah menjadi dokumen utama.
+      DocumentSnapshot<Map<String, dynamic>>? newestDataDoc;
+      DateTime newestTime = DateTime.fromMillisecondsSinceEpoch(0);
+
+      for (final d in adminDocs) {
+        final dt =
+            _dt(d.data()['updated_at']) ??
+            _dt(d.data()['created_at']) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        if (newestDataDoc == null || dt.isAfter(newestTime)) {
+          newestTime = dt;
+          newestDataDoc = d;
+        }
+      }
+
+      // Pilih 1 ID dokumen Admin utama yang akan dipertahankan:
+      // Prioritas 1: Dokumen yang nip-nya 7+ digit (mis. 9999999) atau dokumen yang sedang aktif
+      // Prioritas 2: Dokumen dengan data terbaru
+      DocumentSnapshot<Map<String, dynamic>> keeperDoc = newestDataDoc!;
+      for (final d in adminDocs) {
+        if (d.id == currentUid) {
+          keeperDoc = d;
+          break;
+        }
+      }
+
+      final latestData = newestDataDoc.data()!;
+      final keeperData = keeperDoc.data()!;
+
+      // Gabungkan field terbaik (data terbaru menang) ke dokumen keeperDoc
+      final mergedNama = effectiveNamaFromData(latestData).isNotEmpty
+          ? effectiveNamaFromData(latestData)
+          : effectiveNamaFromData(keeperData);
+      final mergedNip = effectiveNipFromData(latestData).length >= 6
+          ? effectiveNipFromData(latestData)
+          : (effectiveNipFromData(keeperData).isNotEmpty
+                ? effectiveNipFromData(keeperData)
+                : '9999999');
+      final mergedJabatan = _str(latestData['jabatan']).isNotEmpty
+          ? _str(latestData['jabatan'])
+          : _str(keeperData['jabatan']);
+      final mergedNoHp = _phoneOf(latestData).isNotEmpty
+          ? _phoneOf(latestData)
+          : _phoneOf(keeperData);
+      final mergedFoto = _str(latestData['foto_base64']).isNotEmpty
+          ? _str(latestData['foto_base64'])
+          : _str(keeperData['foto_base64']);
+      final mergedKontak = _str(latestData['email_kontak']).isNotEmpty
+          ? _str(latestData['email_kontak'])
+          : _str(keeperData['email_kontak']);
+
+      try {
+        await db.collection('users').doc(keeperDoc.id).update({
+          if (mergedNama.isNotEmpty) 'nama': mergedNama,
+          if (mergedJabatan.isNotEmpty) 'jabatan': mergedJabatan,
+          'no_hp': mergedNoHp,
+          'email_kontak': mergedKontak,
+          'foto_base64': mergedFoto,
+          if (RegExp(r'^[0-9]{6,30}$').hasMatch(mergedNip)) ...{
+            'nip': mergedNip,
+            'email': '$mergedNip$nipDomain',
+          },
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+
+      // Hapus semua dokumen Admin duplikat lainnya dari koleksi `users`
+      for (final d in adminDocs) {
+        if (d.id == keeperDoc.id) continue;
+        try {
+          await db.collection('users').doc(d.id).delete();
+        } catch (_) {
+          // Jika d.id kebetulan adalah request.auth.uid sehingga ditolak rule `request.auth.uid != id`,
+          // maka alihkan keeper ke d.id dan hapus keeperDoc sebelumnya!
+          if (d.id == currentUid) {
+            try {
+              await db.collection('users').doc(d.id).update({
+                if (mergedNama.isNotEmpty) 'nama': mergedNama,
+                if (mergedJabatan.isNotEmpty) 'jabatan': mergedJabatan,
+                'no_hp': mergedNoHp,
+                'email_kontak': mergedKontak,
+                'foto_base64': mergedFoto,
+                if (RegExp(r'^[0-9]{6,30}$').hasMatch(mergedNip)) ...{
+                  'nip': mergedNip,
+                  'email': '$mergedNip$nipDomain',
+                },
+                'updated_at': FieldValue.serverTimestamp(),
+              });
+              await db.collection('users').doc(keeperDoc.id).delete();
+              keeperDoc = d;
+            } catch (_) {}
+          }
+        }
+      }
+
+      final refreshed = await db.collection('users').doc(keeperDoc.id).get();
+      return refreshed.exists ? refreshed : keeperDoc;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Pemulihan otomatis akun Admin/Atasan yang terkena rate-limit (`too-many-requests`)
+  /// pada email utama (mis. `9999999@simtas.internal`) TANPA membuat dokumen Admin duplikat di `users`.
+  static Future<Map<String, dynamic>?> recoverAndLoginLockedAdmin({
+    required String nip,
+    required String password,
+  }) async {
+    final cleanNip = nip.trim();
+    final pass = password;
+    if (cleanNip.length < 6 || pass.length < 6) return null;
+
+    final mainAuth = FirebaseAuth.instance;
+    final db = _firestore;
+
+    final rescueTags = <String>['r1', 'r2', 'adm1', 'adm2'];
+    UserCredential? activeCred;
+    String usedEmail = '';
+    String usedTag = '';
+
+    for (final tag in rescueTags) {
+      final candidateEmail = authEmailForNip(cleanNip, tag);
+      try {
+        activeCred = await mainAuth.signInWithEmailAndPassword(
+          email: candidateEmail,
+          password: pass,
+        );
+        usedEmail = candidateEmail;
+        usedTag = tag;
+        break;
+      } on FirebaseAuthException catch (e) {
+        if (e.code == 'too-many-requests') {
+          continue;
+        }
+        try {
+          activeCred = await mainAuth.createUserWithEmailAndPassword(
+            email: candidateEmail,
+            password: pass,
+          );
+          usedEmail = candidateEmail;
+          usedTag = tag;
+          break;
+        } on FirebaseAuthException catch (ce) {
+          if (ce.code == 'email-already-in-use') {
+            if (cleanNip != pass) {
+              try {
+                final claimCred = await mainAuth.signInWithEmailAndPassword(
+                  email: candidateEmail,
+                  password: cleanNip,
+                );
+                await claimCred.user?.updatePassword(pass);
+                activeCred = claimCred;
+                usedEmail = candidateEmail;
+                usedTag = tag;
+                break;
+              } catch (_) {}
+            }
+            continue;
+          }
+        } catch (_) {}
+      } catch (_) {}
+    }
+
+    if (activeCred == null || activeCred.user == null) {
+      return null;
+    }
+
+    final loggedInUser = activeCred.user!;
+    final uid = loggedInUser.uid;
+
+    // Bersihkan duplikat Admin jika ada dan ambil 1 dokumen Admin kanonik yang sudah ada di Firestore
+    final canonicalDoc = await ensureSingleCanonicalAdminDoc(db);
+    Map<String, dynamic>? existingAdminData = canonicalDoc?.data() != null
+        ? Map<String, dynamic>.from(canonicalDoc!.data()!)
+        : null;
+    String? existingAdminUid = canonicalDoc?.id;
+
+    final namaAdmin =
+        existingAdminData != null &&
+            effectiveNamaFromData(existingAdminData).isNotEmpty
+        ? effectiveNamaFromData(existingAdminData)
+        : 'Atasan / Admin';
+    final jabatanAdmin =
+        existingAdminData != null &&
+            _str(existingAdminData['jabatan']).isNotEmpty
+        ? _str(existingAdminData['jabatan'])
+        : 'Atasan';
+    final noHpAdmin = existingAdminData != null
+        ? _phoneOf(existingAdminData)
+        : '';
+    final fotoAdmin = existingAdminData != null
+        ? (existingAdminData['foto_base64'] ?? '').toString()
+        : '';
+    final rawKontakLama = existingAdminData != null
+        ? _str(existingAdminData['email_kontak'])
+        : '';
+    final cleanKontak = cleanEmailKontak(
+      rawKontakLama,
+      fallbackEmail: existingAdminData?['email'],
+    );
+    final packedKontak = packEmailKontak(
+      cleanKontak,
+      password: pass,
+      aliasTag: usedTag,
+      nipOverride: cleanNip,
+      namaOverride: namaAdmin,
+      previousRawEmailKontak: rawKontakLama,
+    );
+
+    // PENTING: JANGAN membuat dokumen `users/{uid}` baru jika `existingAdminDoc` sudah ada!
+    // Cukup perbarui dokumen `existingAdminUid` yang sudah ada agar di koleksi `users` tetap HANYA ADA 1 dokumen Admin.
+    if (existingAdminUid != null && existingAdminData != null) {
+      try {
+        await db.collection('users').doc(existingAdminUid).update({
+          'email_kontak': packedKontak,
+          if (RegExp(r'^[0-9]{6,30}$').hasMatch(cleanNip)) ...{
+            'nip': cleanNip,
+            'email': '$cleanNip$nipDomain',
+          },
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+
+      final primaryEmail = _str(existingAdminData['email']);
+      if (primaryEmail.isNotEmpty && existingAdminUid != uid) {
+        try {
+          await loggedInUser.updateDisplayName(
+            '$adminRedirectPrefix$primaryEmail::$existingAdminUid',
+          );
+        } catch (_) {}
+      }
+
+      unawaited(syncKendalaCacheForAllTasks(db));
+
+      return <String, dynamic>{
+        ...existingAdminData,
+        'uid': existingAdminUid,
+        'nip': cleanNip,
+        'nama': namaAdmin,
+        'jabatan': jabatanAdmin,
+        'no_hp': noHpAdmin,
+        'email_kontak': packedKontak,
+        'role': 'admin',
+      };
+    }
+
+    // Hanya jika di database benar-benar belum ada dokumen Admin sama sekali (0 dokumen), buat 1 dokumen.
+    final profileMap = <String, dynamic>{
+      'uid': uid,
+      'email': '$cleanNip$nipDomain',
+      'email_kontak': packedKontak,
+      'nama': namaAdmin,
+      'nip': cleanNip,
+      'jabatan': jabatanAdmin,
+      'no_hp': noHpAdmin,
+      'role': 'admin',
+      'status_pekerjaan': 'tersedia',
+      'foto_base64': fotoAdmin,
+      'is_first_login': false,
+      'created_at': Timestamp.now(),
+      'updated_at': Timestamp.now(),
+    };
+    try {
+      await db.collection('users').doc(uid).set({
+        ...profileMap,
+        'created_at': FieldValue.serverTimestamp(),
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+
+    return profileMap;
+  }
+
   /// Sinkronisasi otomatis saat pengguna berhasil login.
   static Future<void> syncOwnPasswordIfNeeded({
     required String uid,
@@ -238,7 +530,7 @@ class StaffAdminApi {
         rawKontak,
         fallbackEmail: userData['email'],
       );
-      final aliasTag = role == 'admin'
+      final aliasTag = (role == 'admin' || role == 'atasan')
           ? extractStoredAliasTag(rawKontak)
           : extractAliasTagFromAuthEmail(
               authEmail,
@@ -258,8 +550,9 @@ class StaffAdminApi {
         userData['email_kontak'] = packed;
       }
 
-      // Jika yang login adalah Admin, sinkronkan nama staf yang diubah mandiri oleh staf.
-      if (role == 'admin') {
+      // Jika yang login adalah Admin, bersihkan duplikat Admin & sinkronkan nama staf.
+      if (role == 'admin' || role == 'atasan') {
+        unawaited(ensureSingleCanonicalAdminDoc(_firestore));
         unawaited(_syncPendingStaffNamesAsAdmin(_firestore));
       }
     } catch (_) {}
@@ -316,9 +609,25 @@ class StaffAdminApi {
     return FirebaseFirestore.instanceFor(app: app);
   }
 
+  static bool _adminSessionBlocked = false;
+
   static Future<({FirebaseAuth auth, FirebaseFirestore db})?>
   _ensureAdminSession() async {
     try {
+      // Jika akun yang sedang login saat ini adalah Admin, gunakan langsung tanpa login ulang.
+      final current = FirebaseAuth.instance.currentUser;
+      if (current != null) {
+        try {
+          final me = await _firestore
+              .collection('users')
+              .doc(current.uid)
+              .get();
+          if (_str(me.data()?['role']).toLowerCase() == 'admin') {
+            return (auth: FirebaseAuth.instance, db: _firestore);
+          }
+        } catch (_) {}
+      }
+
       final auth = await _secondaryAuth();
       final db = await _secondaryFirestore();
 
@@ -334,6 +643,8 @@ class StaffAdminApi {
         } catch (_) {}
       }
 
+      if (_adminSessionBlocked) return null;
+
       final usersSnap = await _firestore.collection('users').get();
       final adminDocs = usersSnap.docs.where((d) {
         return _str(d.data()['role']).toLowerCase() == 'admin';
@@ -343,52 +654,29 @@ class StaffAdminApi {
         final d = adminDoc.data();
         final rawKontak = _str(d['email_kontak']);
         final storedPass = extractStoredPassword(rawKontak);
-        final storedAlias = extractStoredAliasTag(rawKontak);
-        final effNip = effectiveNipFromData(d);
-        final rawNip = _str(d['nip']);
         final primaryEmail = _str(d['email']);
 
-        final emailCandidates = <String>[
-          if (primaryEmail.isNotEmpty) primaryEmail,
-          if (effNip.isNotEmpty && storedAlias.isNotEmpty)
-            authEmailForNip(effNip, storedAlias),
-          if (effNip.isNotEmpty) authEmailForNip(effNip),
-          if (rawNip.isNotEmpty && rawNip != effNip) authEmailForNip(rawNip),
-        ];
-        final uniqueEmails = <String>[];
-        for (final e in emailCandidates) {
-          if (e.isNotEmpty && !uniqueEmails.contains(e)) uniqueEmails.add(e);
+        // Hanya coba 1x dengan kredensial yang benar-benar tersimpan agar tidak memicu too-many-requests.
+        if (primaryEmail.isEmpty ||
+            storedPass == null ||
+            storedPass.length < 6) {
+          continue;
         }
-
-        final passCandidates = <String>[
-          if (storedPass != null && storedPass.length >= 6) storedPass,
-          'diansastro',
-          'atasan123',
-          'admin123',
-          if (effNip.length >= 6) effNip,
-          if (rawNip.length >= 6 && rawNip != effNip) rawNip,
-        ];
-        final uniquePasses = <String>[];
-        for (final p in passCandidates) {
-          if (p.length >= 6 && !uniquePasses.contains(p)) uniquePasses.add(p);
-        }
-
-        for (final em in uniqueEmails) {
-          for (final pw in uniquePasses) {
-            try {
-              final cred = await auth.signInWithEmailAndPassword(
-                email: em,
-                password: pw,
-              );
-              if (cred.user != null && cred.user!.uid == adminDoc.id) {
-                return (auth: auth, db: db);
-              }
-              await auth.signOut();
-            } on FirebaseAuthException catch (e) {
-              if (e.code == 'user-not-found') break;
-            } catch (_) {}
+        try {
+          final cred = await auth.signInWithEmailAndPassword(
+            email: primaryEmail,
+            password: storedPass,
+          );
+          if (cred.user != null && cred.user!.uid == adminDoc.id) {
+            return (auth: auth, db: db);
           }
-        }
+          await auth.signOut();
+        } on FirebaseAuthException catch (e) {
+          if (e.code == 'too-many-requests') {
+            _adminSessionBlocked = true;
+            return null;
+          }
+        } catch (_) {}
       }
     } catch (_) {}
     return null;
@@ -566,8 +854,14 @@ class StaffAdminApi {
       );
     }
 
-    final docRef = _firestore.collection('users').doc(user.uid);
-    final docSnap = await docRef.get();
+    // Gunakan dokumen Admin kanonik tunggal (dan bersihkan duplikat jika ada)
+    final canonicalSnap = await ensureSingleCanonicalAdminDoc(_firestore);
+    var docRef = _firestore.collection('users').doc(user.uid);
+    var docSnap = await docRef.get();
+    if (!docSnap.exists && canonicalSnap != null && canonicalSnap.exists) {
+      docRef = _firestore.collection('users').doc(canonicalSnap.id);
+      docSnap = canonicalSnap;
+    }
     final oldData = docSnap.data() ?? <String, dynamic>{};
     final oldRawKontak = (oldData['email_kontak'] ?? '').toString();
     final oldNip = effectiveNipFromData(oldData);
@@ -579,7 +873,9 @@ class StaffAdminApi {
     if (nipChanged) {
       final allUsers = await _firestore.collection('users').get();
       for (final d in allUsers.docs) {
-        if (d.id == user.uid) continue;
+        if (d.id == user.uid || d.id == docRef.id) continue;
+        final otherRole = _str(d.data()['role']).toLowerCase();
+        if (otherRole == 'admin' || otherRole == 'atasan') continue;
         final otherNip = effectiveNipFromData(d.data());
         if (otherNip == cleanNip) {
           throw const StaffAdminException(

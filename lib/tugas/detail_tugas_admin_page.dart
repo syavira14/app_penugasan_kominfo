@@ -1508,24 +1508,41 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         const _LabelForm(label: 'Catatan Revisi'),
 
         Text(data['catatan_revisi'].toString()),
-        if (status == 'revisi')
-          TextButton.icon(
+        if (status == 'revisi') ...[
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 44),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
             onPressed: () =>
                 _editCatatanRevisi(id, data['catatan_revisi'].toString()),
-            icon: const Icon(Icons.edit),
+            icon: const Icon(Icons.edit, size: 18),
             label: const Text('Edit Keterangan Revisi'),
           ),
+        ],
         if (status == 'revisi' &&
-            (data['revisi_aktif_id'] ?? '').toString().isEmpty)
+            (data['revisi_aktif_id'] ?? '').toString().isEmpty) ...[
+          const SizedBox(height: 10),
           OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 44),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
             onPressed: _reviewing.contains(id)
                 ? null
                 : () => _pulihkanRevisiLama(id),
-            icon: const Icon(Icons.link),
+            icon: const Icon(Icons.link, size: 18),
             label: const Text('Hubungkan Revisi Lama'),
           ),
+        ],
 
-        if (revisionUrl.isNotEmpty || revisionPath.isNotEmpty)
+        if (revisionUrl.isNotEmpty || revisionPath.isNotEmpty) ...[
+          const SizedBox(height: 10),
           TextButton.icon(
             onPressed: () async {
               final name = (data['file_revisi_nama'] ?? 'Lampiran revisi')
@@ -1545,6 +1562,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
               (data['file_revisi_nama'] ?? 'File pendukung revisi').toString(),
             ),
           ),
+        ],
       ],
 
       StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -1601,33 +1619,51 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
       ),
 
       if (status == 'dikumpulkan') ...[
-        const SizedBox(height: 10),
+        const SizedBox(height: 16),
 
         Row(
           children: [
             Expanded(
-              child: OutlinedButton(
-                onPressed: _reviewing.contains(id)
-                    ? null
-                    : () => _mintaRevisi(id),
-
-                child: const Text('Minta Revisi'),
+              child: SizedBox(
+                height: 48,
+                child: OutlinedButton(
+                  onPressed: _reviewing.contains(id)
+                      ? null
+                      : () => _mintaRevisi(id),
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Minta Revisi',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
               ),
             ),
 
-            const SizedBox(width: 8),
+            const SizedBox(width: 14),
 
             Expanded(
-              child: ElevatedButton(
-                onPressed: _reviewing.contains(id) ? null : () => _setujui(id),
-
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-
-                  foregroundColor: Colors.white,
+              child: SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _reviewing.contains(id)
+                      ? null
+                      : () => _setujui(id),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Disetujui',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 ),
-
-                child: const Text('Disetujui'),
               ),
             ),
           ],
@@ -2341,14 +2377,29 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                     ],
                   ),
                   ..._hasilPenugasan(assignment.id, data),
-                  if (status != 'dihentikan' && status != 'disetujui')
-                    OutlinedButton.icon(
-                      onPressed: () => _hentikanPenugasan(assignment.id),
-                      icon: const Icon(Icons.stop_circle_outlined),
-                      label: const Text('Hentikan Tugas'),
+                  if (status != 'dihentikan' && status != 'disetujui') ...[
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      height: 46,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _hentikanPenugasan(assignment.id),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFB42318),
+                          side: const BorderSide(color: Color(0xFFB42318)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.stop_circle_outlined, size: 19),
+                        label: const Text(
+                          'Hentikan Tugas',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
                     ),
+                  ],
                   if (status == 'dihentikan') ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     Text(
                       'Alasan penghentian: ${data['alasan_penghentian'] ?? '-'}',
                       style: const TextStyle(
@@ -2359,8 +2410,15 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                     if ((data['bukti_penghentian_path'] ?? '')
                         .toString()
                         .trim()
-                        .isNotEmpty)
-                      TextButton.icon(
+                        .isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
                         onPressed: () {
                           final p = (data['bukti_penghentian_path'] ?? '')
                               .toString()
@@ -2377,15 +2435,28 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                             kind: 'penghentian',
                           );
                         },
-                        icon: const Icon(Icons.attach_file),
+                        icon: const Icon(Icons.attach_file, size: 18),
                         label: Text(
                           'Lihat Dokumen Penghentian (${(data['bukti_penghentian_path'] ?? '').toString().split('/').last.replaceFirst(RegExp(r'^\d{10,}_'), '')})',
                         ),
                       ),
-                    TextButton.icon(
+                    ],
+                    const SizedBox(height: 10),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(0, 46),
+                        backgroundColor: biruSedang,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
                       onPressed: () => _mulaiUlangPenugasan(assignment.id),
-                      icon: const Icon(Icons.restart_alt),
-                      label: const Text('Mulai Ulang Tugas'),
+                      icon: const Icon(Icons.restart_alt, size: 19),
+                      label: const Text(
+                        'Mulai Ulang Tugas',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ],
                 ],

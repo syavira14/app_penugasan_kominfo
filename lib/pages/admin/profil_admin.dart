@@ -67,10 +67,13 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
     }
 
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
+      final canonicalDoc = await StaffAdminApi.ensureSingleCanonicalAdminDoc();
+      var doc =
+          canonicalDoc ??
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get();
 
       if (doc.exists && mounted) {
         setState(() => currentUser = UserModel.fromFirestore(doc));
@@ -140,9 +143,12 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
 
       final Uint8List bytes = await pickedFile.readAsBytes();
 
+      final targetDocId = (currentUser?.uid.isNotEmpty == true)
+          ? currentUser!.uid
+          : user.uid;
       await FirebaseFirestore.instance
           .collection('users')
-          .doc(user.uid)
+          .doc(targetDocId)
           .update({
             'foto_base64': base64Encode(bytes),
             'updated_at': FieldValue.serverTimestamp(),

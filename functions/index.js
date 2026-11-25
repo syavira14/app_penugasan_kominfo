@@ -6,6 +6,10 @@ const admin = require("firebase-admin");
 
 const { createClient } = require("@supabase/supabase-js");
 
+const crypto = require("crypto");
+
+const nodemailer = require("nodemailer");
+
 // Inisialisasi Firebase Admin SDK.
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -15,6 +19,11 @@ if (!admin.apps.length) {
 const supabaseUrl = defineSecret("SUPABASE_URL");
 
 const serviceRoleKey = defineSecret("SUPABASE_SERVICE_ROLE_KEY");
+
+// Secret SMTP untuk mengirim email lupa password (mis. Gmail + App Password).
+const smtpUser = defineSecret("SMTP_USER");
+
+const smtpPass = defineSecret("SMTP_PASS");
 
 // Cloud Function untuk membuat signed URL
 // file hasil pekerjaan dan lampiran revisi.
@@ -557,3 +566,213 @@ exports.adminResolveResetRequest = onCall(async (request) => {
   });
   return { ok: true };
 });
+
+// ===========================================================
+// LUPA KATA SANDI VIA EMAIL
+// Staf mengisi NIP + email (yang diisi sendiri di profil) di halaman login.
+// Jika cocok, sandi baru acak dibuat dan DIKIRIM ke email tersebut.
+// ===========================================================
+
+const SEP = "||";
+
+// Email kontak bersih (bagian sebelum "||" / tab) dari field email_kontak.
+function cleanKontak(raw) {
+  return String(raw || "")
+    .split(SEP)[0]
+    .split("\t")[0]
+    .trim()
+    .toLowerCase();
+}
+
+// NIP efektif: nip_override (bagian ke-4 di email_kontak) lebih diutamakan.
+function effectiveNip(data) {
+  const raw = String(data.email_kontak || "");
+  if (raw.includes(SEP)) {
+    const parts = raw.split(SEP);
+    if (parts.length >= 4 && parts[3].trim()) return parts[3].trim();
+  }
+  return String(data.nip || "").trim();
+}
+
+async function findUserByNip(nip) {
+  const db = admin.firestore();
+  let snap = await db.collection("users").where("nip", "==", nip).limit(1).get();
+  if (snap.empty) {
+    snap = await db
+      .collection("users")
+      .where("nip", "==", Number(nip))
+      .limit(1)
+      .get();
+  }
+  if (!snap.empty) return snap.docs[0];
+  // Cadangan: NIP bisa tersimpan sebagai override di email_kontak.
+  const all = await db.collection("users").get();
+  return all.docs.find((d) => effectiveNip(d.data()) === nip) || null;
+}
+
+// Sandi acak 10 karakter (huruf + angka, tanpa karakter yang mirip).
+function generatePassword() {
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const digits = "23456789";
+  const all = letters + digits;
+  const chars = [
+    letters[crypto.randomInt(letters.length)],
+    digits[crypto.randomInt(digits.length)],
+  ];
+  while (chars.length < 10) chars.push(all[crypto.randomInt(all.length)]);
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}
+
+// Menjaga metadata password aktif di email_kontak tetap sinkron dengan sandi baru.
+function repackKontak(raw, newPass) {
+  const s = String(raw || "");
+  if (!s.includes(SEP)) return s; // belum ada metadata -> biarkan, app sinkron saat login
+  const parts = s.split(SEP);
+  parts[1] = newPass;
+  const packed = parts.join(SEP);
+  return packed.length <= 200 ? packed : parts[0];
+}
+
+function escapeHtml(v) {
+  return String(v).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[c]);
+}
+
+const PESAN_UMUM =
+  "Jika NIP dan email cocok dengan data terdaftar, kata sandi baru sudah dikirim ke email tersebut. " +
+  "Periksa juga folder Spam.";
+
+async function prosesLupaPassword(request) {
+    const nip = String((request.data || {}).nip || "").trim();
+    const email = String((request.data || {}).email || "")
+      .trim()
+      .toLowerCase();
+
+    if (!/^[0-9]{6,30}$/.test(nip)) {
+      throw new HttpsError("invalid-argument", "NIP tidak valid.");
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
+      throw new HttpsError("invalid-argument", "Format email tidak valid.");
+    }
+
+    console.log("forgotPasswordByEmail: cari NIP", nip);
+    const doc = await findUserByNip(nip);
+    if (!doc) {
+      console.log("forgotPasswordByEmail: NIP tidak ditemukan");
+      return { ok: true, message: PESAN_UMUM };
+    }
+
+    const data = doc.data();
+    const role = String(data.role || "").toLowerCase();
+    if (!["staff", "admin", "atasan"].includes(role)) {
+      return { ok: true, message: PESAN_UMUM };
+    }
+
+    // Email harus sama persis dengan email yang diisi pemilik akun di profil.
+    const emailTerdaftar = cleanKontak(data.email_kontak);
+    if (!emailTerdaftar || emailTerdaftar !== email) {
+      console.log("forgotPasswordByEmail: email tidak cocok / belum diisi di profil");
+      return { ok: true, message: PESAN_UMUM };
+    }
+
+    // Batasi permintaan: 1x per 2 menit & 5x per jam per akun.
+    const db = admin.firestore();
+    const logRef = db.collection("log_lupa_password").doc(doc.id);
+    const now = Date.now();
+    const log = (await logRef.get()).data() || {};
+    const recent = (log.waktu || []).filter((t) => now - t < 3600 * 1000);
+    if (recent.length && now - Math.max(...recent) < 2 * 60 * 1000) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Permintaan terlalu sering. Coba lagi dalam 2 menit.",
+      );
+    }
+    if (recent.length >= 5) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Terlalu banyak permintaan. Coba lagi dalam 1 jam.",
+      );
+    }
+    await logRef.set({ waktu: [...recent, now] });
+
+    const newPass = generatePassword();
+    const nama = String(data.nama || "Pengguna");
+
+    console.log("forgotPasswordByEmail: data cocok, mengirim email");
+    // 1) Kirim email lebih dulu: jika gagal, sandi lama tetap berlaku.
+    try {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: { user: smtpUser.value(), pass: smtpPass.value() },
+      });
+      await transporter.sendMail({
+        from: `"SIMTAS Kominfo" <${smtpUser.value()}>`,
+        to: emailTerdaftar,
+        subject: "Kata Sandi Baru Akun SIMTAS",
+        text:
+          `Halo ${nama},\n\n` +
+          `Permintaan lupa kata sandi untuk NIP ${nip} telah diproses.\n\n` +
+          `Kata sandi baru Anda: ${newPass}\n\n` +
+          `Silakan masuk memakai NIP dan kata sandi di atas, lalu segera ganti kata sandi Anda.\n` +
+          `Jika Anda tidak merasa meminta ini, hubungi Admin.\n\n` +
+          `SIMTAS - Dinas Komunikasi dan Informatika`,
+        html:
+          `<p>Halo <b>${escapeHtml(nama)}</b>,</p>` +
+          `<p>Permintaan lupa kata sandi untuk NIP <b>${escapeHtml(nip)}</b> telah diproses.</p>` +
+          `<p>Kata sandi baru Anda:</p>` +
+          `<p style="font-size:20px;font-family:monospace;letter-spacing:2px;background:#f1f5f9;padding:12px 16px;display:inline-block;border-radius:8px"><b>${escapeHtml(newPass)}</b></p>` +
+          `<p>Silakan masuk memakai NIP dan kata sandi di atas, lalu segera ganti kata sandi Anda.<br>` +
+          `Jika Anda tidak merasa meminta ini, hubungi Admin.</p>` +
+          `<p style="color:#64748b">SIMTAS - Dinas Komunikasi dan Informatika</p>`,
+      });
+    } catch (e) {
+      console.error("forgotPasswordByEmail: gagal kirim email", e);
+      throw new HttpsError(
+        "internal",
+        "Gagal mengirim email. Coba lagi nanti atau hubungi Admin.",
+      );
+    }
+
+    // 2) Baru ganti sandi di Firebase Auth + sinkronkan metadata.
+    try {
+      await admin.auth().updateUser(doc.id, { password: newPass });
+      await admin.auth().revokeRefreshTokens(doc.id);
+      await doc.ref.update({
+        email_kontak: repackKontak(data.email_kontak, newPass),
+        updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.error("forgotPasswordByEmail: gagal set sandi", doc.id, e);
+      throw new HttpsError(
+        "internal",
+        "Gagal memperbarui kata sandi. Hubungi Admin.",
+      );
+    }
+
+    return { ok: true, message: PESAN_UMUM };
+}
+
+exports.forgotPasswordByEmail = onCall(
+  { secrets: [smtpUser, smtpPass] },
+  async (request) => {
+    try {
+      return await prosesLupaPassword(request);
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.error("forgotPasswordByEmail: error tak terduga", e);
+      throw new HttpsError(
+        "internal",
+        `Kesalahan server (${e.code || e.message || "tidak diketahui"}). Hubungi Admin.`,
+      );
+    }
+  },
+);

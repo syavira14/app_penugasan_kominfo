@@ -83,15 +83,16 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     required String aliasTag,
     required String nama,
     String? newPassword,
+    String emailKontak = '',
   }) {
     final basePacked = StaffAdminApi.packEmailKontak(
-      '',
+      emailKontak.trim(),
       password: newPassword,
       aliasTag: aliasTag,
       previousRawEmailKontak: previousRaw,
     );
     final parts = basePacked.split('||');
-    final cleanEmail = parts.isNotEmpty ? parts[0].trim() : '';
+    final cleanEmail = emailKontak.trim();
     final pass = parts.length >= 2 ? parts[1].trim() : '';
     final alias = parts.length >= 3 ? parts[2].trim() : aliasTag.trim();
     final nipOver = parts.length >= 4 ? parts[3].trim() : '';
@@ -337,6 +338,11 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
     final nipC = TextEditingController(text: currentNip);
     final jabatanC = TextEditingController(text: currentUser?.jabatan ?? '');
     final noHpC = TextEditingController(text: currentUser?.noHp ?? '');
+    final emailKontakC = TextEditingController(
+      text: StaffAdminApi.cleanEmailKontak(_rawEmailKontakFromDb).isNotEmpty
+          ? StaffAdminApi.cleanEmailKontak(_rawEmailKontakFromDb)
+          : (currentUser?.emailKontak ?? ''),
+    );
     final currentPassC = TextEditingController();
     final newPassC = TextEditingController();
     final confirmPassC = TextEditingController();
@@ -357,6 +363,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
             Future<void> save() async {
               final nama = namaC.text.trim();
               final noHp = noHpC.text.trim();
+              final emailKontak = emailKontakC.text.trim();
               final currentPass = currentPassC.text;
               final newPass = newPassC.text;
               final confirmPass = confirmPassC.text;
@@ -368,6 +375,13 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                 if (nama.isEmpty) return 'Nama lengkap wajib diisi.';
                 if (nama.length > 100) return 'Nama maksimal 100 karakter.';
                 if (noHp.length > 30) return 'No. HP maksimal 30 karakter.';
+                if (emailKontak.length > 100) {
+                  return 'Email maksimal 100 karakter.';
+                }
+                if (emailKontak.isNotEmpty &&
+                    !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(emailKontak)) {
+                  return 'Format email tidak valid.';
+                }
                 if (changingPassword) {
                   if (currentPass.isEmpty) {
                     return 'Masukkan kata sandi saat ini untuk mengubah kata sandi.';
@@ -412,6 +426,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                   previousRaw: _rawEmailKontakFromDb,
                   aliasTag: aliasTag,
                   nama: nama,
+                  emailKontak: emailKontak,
                   newPassword: changingPassword
                       ? newPass
                       : (currentPass.isNotEmpty ? currentPass : null),
@@ -454,7 +469,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                       nip: currentUser!.nip,
                       nama: nama,
                       email: currentUser!.email,
-                      emailKontak: currentUser!.emailKontak,
+                      emailKontak: emailKontak,
                       noHp: noHp,
                       jabatan: currentUser!.jabatan,
                       role: currentUser!.role,
@@ -554,7 +569,7 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                                 ),
                                 SizedBox(height: 6),
                                 Text(
-                                  'Perbarui nama, nomor telepon, atau kata sandi akun Anda.',
+                                  'Perbarui nama, nomor telepon, email, atau kata sandi akun Anda.',
                                   style: TextStyle(
                                     color: _abuTeks,
                                     fontSize: AppTypography.body,
@@ -654,6 +669,27 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                                           'Masukkan nomor HP',
                                           Icons.phone_outlined,
                                         ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  _labeled(
+                                    'Email (untuk lupa kata sandi)',
+                                    TextField(
+                                      controller: emailKontakC,
+                                      keyboardType: TextInputType.emailAddress,
+                                      textInputAction: TextInputAction.next,
+                                      style: const TextStyle(
+                                        fontSize: AppTypography.body,
+                                        color: kBiruTua,
+                                      ),
+                                      decoration: _dec(
+                                        'contoh@gmail.com',
+                                        Icons.mail_outline_rounded,
+                                      ).copyWith(
+                                        helperText:
+                                            'Kata sandi baru dikirim ke email ini saat Anda memakai "Lupa kata sandi".',
+                                        helperMaxLines: 2,
                                       ),
                                     ),
                                   ),
@@ -1151,6 +1187,12 @@ class _StaffProfilPageState extends State<StaffProfilPage> {
                       icon: Icons.phone_outlined,
                       title: 'No. HP / WhatsApp',
                       value: _valueOrDash(user?.noHp),
+                    ),
+                    _divider(),
+                    _buildProfileItem(
+                      icon: Icons.mail_outline_rounded,
+                      title: 'Email',
+                      value: _valueOrDash(user?.emailKontak),
                     ),
                     _divider(),
                     _buildProfileItem(

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
 import '../admin/dashboard_admin_page.dart';
+import 'forgot_password_page.dart';
 import '../staff/staff_dashboard.dart';
 
 class AppColors {
@@ -216,7 +217,7 @@ class _LoginPageState extends State<LoginPage> {
             child: Stack(
               children: [
                 Positioned.fill(
-                  child: CustomPaint(painter: _BackgroundWavePainter()),
+                  child: CustomPaint(painter: BackgroundWavePainter()),
                 ),
                 Center(child: _buildHeaderContent(isDesktop: true)),
               ],
@@ -258,7 +259,7 @@ class _LoginPageState extends State<LoginPage> {
               ),
             ),
             Positioned.fill(
-              child: CustomPaint(painter: _BackgroundWavePainter()),
+              child: CustomPaint(painter: BackgroundWavePainter()),
             ),
             Positioned.fill(
               child: Padding(
@@ -464,7 +465,30 @@ class _LoginPageState extends State<LoginPage> {
               },
             ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _isLoading
+                    ? null
+                    : () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ForgotPasswordPage(),
+                        ),
+                      ),
+                child: const Text(
+                  'Lupa kata sandi?',
+                  style: TextStyle(
+                    color: AppColors.biruSedang,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
 
             // TOMBOL MASUK
             SizedBox(
@@ -620,7 +644,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 }
 
-class _BackgroundWavePainter extends CustomPainter {
+class BackgroundWavePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()

@@ -1,13 +1,20 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 
 import 'staff_admin_api.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  static const String _edgeUrl =
+      'https://uxdloenucntsmcviskfo.supabase.co/functions/v1/staff-admin';
+  static const String _supabaseAnonKey =
+      'sb_publishable_wgHJYNJa0o7z5hNY7eNGKQ_T7z4gr5-';
 
   /// Memproses login via Firebase Auth menggunakan NIP dan mengambil role dari Firestore.
   /// Input berupa alamat email (seperti @gmail.com) ditolak secara tegas.
@@ -254,6 +261,52 @@ class AuthService {
       return 'Kata sandi salah.';
     } catch (_) {
       return 'NIP atau kata sandi salah.';
+    }
+  }
+
+  /// Lupa password: kirim email terdaftar ke Edge Function untuk
+  /// mengirimkan link reset password Firebase Authentication ke email tersebut.
+  Future<String> forgotPassword({required String email}) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse(_edgeUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': _supabaseAnonKey,
+            },
+            body: jsonEncode({
+              'action': 'forgot-password',
+              'email': email.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      Map<String, dynamic> data = {};
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map) data = Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StaffAdminException(
+          (data['error'] ?? 'Gagal memproses permintaan lupa password.')
+              .toString(),
+          response.statusCode,
+        );
+      }
+
+      final masked = (data['email_masked'] ?? '').toString();
+      if (masked.isNotEmpty) {
+        return 'Link reset password telah dikirimkan ke $masked. Silakan periksa kotak masuk (inbox) atau folder spam.';
+      }
+      return 'Link reset password telah dikirimkan ke email Anda. Silakan periksa kotak masuk (inbox) atau folder spam.';
+    } on StaffAdminException catch (e) {
+      throw Exception(e.message);
+    } catch (_) {
+      throw Exception(
+        'Tidak dapat menghubungi layanan lupa password. Periksa koneksi internet.',
+      );
     }
   }
 

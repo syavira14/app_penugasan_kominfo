@@ -279,10 +279,12 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                   return 'NIP harus berupa angka 6 sampai 30 digit.';
                 }
                 if (noHp.length > 30) return 'No. HP maksimal 30 karakter.';
-                if (emailKontak.isNotEmpty &&
-                    !RegExp(
-                      r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
-                    ).hasMatch(emailKontak)) {
+                if (emailKontak.isEmpty) {
+                  return 'Email wajib diisi.';
+                }
+                if (!RegExp(
+                  r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                ).hasMatch(emailKontak)) {
                   return 'Format email tidak valid.';
                 }
                 if ((nipChanged || changingPassword) && currentPass.isEmpty) {
@@ -522,6 +524,27 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                                           Icons.phone_outlined,
                                         ),
                                       ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  _labeled(
+                                    'Email (untuk lupa password)',
+                                    TextField(
+                                      controller: emailC,
+                                      keyboardType: TextInputType.emailAddress,
+                                      textInputAction: TextInputAction.next,
+                                      style: const TextStyle(
+                                        fontSize: AppTypography.body,
+                                        color: _loginTitle,
+                                      ),
+                                      decoration:
+                                          _dec(
+                                            'Masukkan email aktif',
+                                            Icons.mail_outline_rounded,
+                                          ).copyWith(
+                                            helperText:
+                                                'Wajib diisi untuk fitur lupa password',
+                                          ),
                                     ),
                                   ),
 
@@ -984,6 +1007,12 @@ class _ProfilAdminPageState extends State<ProfilAdminPage> {
                       icon: Icons.phone_outlined,
                       title: 'No. HP / WhatsApp',
                       value: _valueOrDash(user?.noHp),
+                    ),
+                    _divider(),
+                    _buildProfileItem(
+                      icon: Icons.mail_outline_rounded,
+                      title: 'Email (untuk lupa password)',
+                      value: _valueOrDash(user?.emailKontak),
                     ),
                     _divider(),
                     _buildProfileItem(

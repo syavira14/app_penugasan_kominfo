@@ -109,6 +109,12 @@ function authBase(): string {
   return `https://identitytoolkit.googleapis.com/v1/projects/${loadServiceAccount().project_id}`;
 }
 
+async function authLookupByEmail(email: string) {
+  const r = await google(`${authBase()}/accounts:lookup`, "POST", { email: [email] });
+  if (!r.ok) return null;
+  return (r.json.users ?? [])[0] ?? null;
+}
+
 async function authLookup(uid: string) {
   const r = await google(`${authBase()}/accounts:lookup`, "POST", { localId: [uid] });
   if (!r.ok) {
@@ -162,6 +168,32 @@ async function fsPatch(path: string, fields: Record<string, unknown>, mask?: str
     console.error("firestore patch", path, r.status, r.json);
     throw new HttpError(500, "Gagal menyimpan data ke Firestore.");
   }
+}
+
+async function findUserByEmail(email: string): Promise<{ id: string; fields: any } | null> {
+  const target = email.trim().toLowerCase();
+  let pageToken = "";
+  for (let page = 0; page < 10; page++) {
+    const q = pageToken ? `?pageSize=200&pageToken=${encodeURIComponent(pageToken)}` : "?pageSize=200";
+    const r = await google(`${fsBase()}/users${q}`, "GET");
+    if (!r.ok) {
+      console.error("firestore list users", r.status, r.json);
+      throw new HttpError(500, "Gagal mencari data akun berdasarkan email.");
+    }
+    const docs = (r.json.documents ?? []) as any[];
+    for (const d of docs) {
+      const fields = d.fields ?? {};
+      const kontak = emailPemulihan(fields).toLowerCase();
+      const emailUtama = str(fields, "email").toLowerCase();
+      if ((kontak && kontak === target) || (emailUtama && emailUtama === target)) {
+        const id = String(d.name).split("/").pop()!;
+        return { id, fields };
+      }
+    }
+    pageToken = String(r.json.nextPageToken ?? "");
+    if (!pageToken) break;
+  }
+  return null;
 }
 
 async function findUserByNip(nip: string): Promise<{ id: string; fields: any } | null> {
@@ -280,6 +312,234 @@ async function setPassword(uid: string, password: string, doc: any) {
   }
 }
 
+// ---------- Lupa password via email ----------
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const LUPA_MAKS_PERCOBAAN = 5;          // per NIP per jendela
+const LUPA_JENDELA_MS = 60 * 60 * 1000; // 1 jam
+const LUPA_JEDA_MS = 60 * 1000;         // minimal 1 menit antar percobaan
+
+// Email pemulihan = bagian sebelum "||" pada field email_kontak
+// (format yang sama dengan StaffAdminApi.cleanEmailKontak di aplikasi).
+function emailPemulihan(fields: any): string {
+  const kontak = str(fields, "email_kontak").split("||")[0].split("\t")[0].trim();
+  if (kontak) return kontak;
+  const lama = str(fields, "email").split("||")[0].split("\t")[0].trim();
+  return lama && !lama.toLowerCase().endsWith(DOMAIN) ? lama : "";
+}
+
+// Password lama yang tersimpan di email_kontak ("bersih||password||alias||...").
+function passwordTersimpan(fields: any): string | null {
+  const raw = str(fields, "email_kontak");
+  const parts = raw.includes("||") ? raw.split("||") : raw.split("\t");
+  if (parts.length >= 2 && parts[1].trim().length >= 6) return parts[1].trim();
+  return null;
+}
+
+function maskEmail(email: string): string {
+  const [user, domain] = email.split("@");
+  if (!domain) return email;
+  const awal = user.slice(0, Math.min(2, user.length));
+  return `${awal}${"*".repeat(Math.max(user.length - awal.length, 3))}@${domain}`;
+}
+
+function escapeHtml(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// Password acak 10 karakter (tanpa karakter yang mirip: 0/O, 1/l/I),
+// dijamin mengandung huruf besar, huruf kecil, dan angka.
+function buatPasswordAcak(panjang = 10): string {
+  const besar = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const kecil = "abcdefghijkmnopqrstuvwxyz";
+  const angka = "23456789";
+  const semua = besar + kecil + angka;
+  const pick = (set: string) => {
+    const b = new Uint32Array(1);
+    const batas = Math.floor(0x100000000 / set.length) * set.length;
+    do crypto.getRandomValues(b); while (b[0] >= batas);
+    return set[b[0] % set.length];
+  };
+  for (;;) {
+    let out = "";
+    for (let i = 0; i < panjang; i++) out += pick(semua);
+    if (/[A-Z]/.test(out) && /[a-z]/.test(out) && /[0-9]/.test(out)) return out;
+  }
+}
+
+// Pembatasan percobaan per NIP (disimpan di koleksi lupa_password_log; koleksi ini
+// tidak punya aturan Firestore sehingga hanya bisa diakses server).
+async function batasiPercobaan(nip: string) {
+  const path = `lupa_password_log/${nip}`;
+  const doc = await fsGet(path);
+  const now = Date.now();
+  let mulai = now;
+  let jumlah = 0;
+  let terakhir = 0;
+  if (doc) {
+    const m = Date.parse(doc.jendela_mulai?.timestampValue ?? "");
+    const t = Date.parse(doc.terakhir?.timestampValue ?? "");
+    const j = Number(doc.jumlah?.integerValue ?? 0);
+    if (!Number.isNaN(m) && now - m < LUPA_JENDELA_MS) {
+      mulai = m;
+      jumlah = j;
+    }
+    if (!Number.isNaN(t)) terakhir = t;
+  }
+  if (terakhir && now - terakhir < LUPA_JEDA_MS) {
+    const detik = Math.ceil((LUPA_JEDA_MS - (now - terakhir)) / 1000);
+    throw new HttpError(429, `Terlalu cepat. Coba lagi dalam ${detik} detik.`);
+  }
+  if (jumlah >= LUPA_MAKS_PERCOBAAN) {
+    const menit = Math.ceil((LUPA_JENDELA_MS - (now - mulai)) / 60000);
+    throw new HttpError(429, `Terlalu banyak percobaan. Coba lagi dalam ${menit} menit.`);
+  }
+  await fsPatch(path, {
+    jendela_mulai: { timestampValue: new Date(mulai).toISOString() },
+    jumlah: { integerValue: String(jumlah + 1) },
+    terakhir: { timestampValue: new Date(now).toISOString() },
+  });
+}
+
+// Konfigurasi email: mendukung Brevo (gratis tanpa perlu domain sendiri)
+// maupun Resend (jika sudah verifikasi domain).
+function konfigurasiEmail() {
+  const brevoKey = (Deno.env.get("BREVO_API_KEY") ?? "").trim();
+  const brevoFrom = (Deno.env.get("BREVO_FROM") ?? "").trim();
+  if (brevoKey) {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(brevoFrom)) {
+      throw new HttpError(500, "BREVO_FROM belum diisi dengan alamat email pengirim.");
+    }
+    return { provider: "brevo" as const, apiKey: brevoKey, from: brevoFrom };
+  }
+
+  const apiKey = (Deno.env.get("RESEND_API_KEY") ?? "").trim();
+  const from = (Deno.env.get("RESEND_FROM") ?? "SIMTAS Kominfo <noreply@domain-anda.id>").trim();
+  if (!apiKey) {
+    throw new HttpError(500, "Layanan email belum dikonfigurasi (BREVO_API_KEY / RESEND_API_KEY).");
+  }
+  if (!/^[^<>]+<[^<>@\s]+@[^<>@\s]+>$/.test(from)) {
+    throw new HttpError(500, "RESEND_FROM belum diatur dengan alamat domain terverifikasi.");
+  }
+  return { provider: "resend" as const, apiKey, from };
+}
+
+async function kirimEmail(args: {
+  provider: "brevo" | "resend";
+  apiKey: string; from: string; to: string; subject: string; text: string; html: string;
+}) {
+  if (args.provider === "brevo") {
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "api-key": args.apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sender: { name: "SIMTAS Kominfo", email: args.from },
+        to: [{ email: args.to }],
+        subject: args.subject,
+        textContent: args.text,
+        htmlContent: args.html,
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error("Brevo gagal mengirim email", response.status, result);
+      const detail = String(result?.message ?? result?.code ?? `HTTP ${response.status}`);
+      throw new Error(detail);
+    }
+    return result;
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${args.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: args.from, to: [args.to], subject: args.subject,
+      text: args.text, html: args.html,
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error("Resend gagal mengirim email", response.status, result);
+    const detail = String(result?.message ?? result?.error ?? `HTTP ${response.status}`);
+    throw new Error(detail);
+  }
+  return result;
+}
+
+async function rateLimitKey(raw: string): Promise<string> {
+  const bytes = new TextEncoder().encode(raw.trim().toLowerCase());
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function isiEmailResetLink(nama: string, nip: string, resetLink: string) {
+  const n = escapeHtml(nama || "Pengguna");
+  const linkAman = escapeHtml(resetLink);
+  const text =
+    `Halo ${nama || "Pengguna"},\n\n` +
+    `Anda menerima email ini karena ada permintaan untuk mengatur ulang password akun SIMTAS Anda` +
+    (nip ? ` (NIP ${nip})` : "") +
+    `.\n\n` +
+    `Klik tautan berikut untuk mengatur ulang password Anda:\n${resetLink}\n\n` +
+    `Jika Anda tidak meminta pengaturan ulang password, abaikan email ini.\n\n` +
+    `SIMTAS - Dinas Komunikasi dan Informatika`;
+  const html = `<!doctype html><html><body style="margin:0;background:#F8FAFC;font-family:Arial,Helvetica,sans-serif;color:#0D1B2A">
+<div style="max-width:480px;margin:24px auto;background:#fff;border:1px solid #E2E8F0;border-radius:16px;overflow:hidden">
+  <div style="background:#1E3A8A;color:#fff;padding:20px 24px">
+    <div style="font-size:20px;font-weight:700;letter-spacing:1px">SIMTAS</div>
+    <div style="font-size:12px;opacity:.85">Sistem Informasi Manajemen Tugas dan Staff</div>
+  </div>
+  <div style="padding:24px">
+    <p style="margin:0 0 12px">Halo <b>${n}</b>,</p>
+    <p style="margin:0 0 18px;font-size:14px;line-height:1.5">Anda menerima email ini karena ada permintaan untuk mengatur ulang password akun SIMTAS Anda${nip ? ` (NIP <b>${escapeHtml(nip)}</b>)` : ""}.</p>
+    <div style="text-align:center;margin:24px 0">
+      <a href="${linkAman}" style="display:inline-block;background:#2563EB;color:#fff;text-decoration:none;font-size:15px;font-weight:700;padding:13px 28px;border-radius:10px">Reset Password</a>
+    </div>
+    <p style="margin:0 0 10px;font-size:12.5px;color:#64748B;line-height:1.5">Jika tombol di atas tidak berfungsi, salin dan buka tautan berikut di browser Anda:</p>
+    <p style="margin:0 0 16px;font-size:12px;word-break:break-all;color:#2563EB">${linkAman}</p>
+    <p style="margin:0;font-size:12.5px;color:#64748B;line-height:1.5">Jika Anda tidak meminta pengaturan ulang password, abaikan email ini.</p>
+  </div>
+  <div style="padding:12px 24px;background:#F8FAFC;font-size:11.5px;color:#64748B;text-align:center">Dinas Komunikasi dan Informatika</div>
+</div></body></html>`;
+  return { text, html };
+}
+
+function isiEmailPasswordBaru(nama: string, nip: string, passwordBaru: string) {
+  const n = escapeHtml(nama || "Pengguna");
+  const text =
+    `Halo ${nama || "Pengguna"},\n\n` +
+    `Permintaan lupa kata sandi untuk akun SIMTAS (NIP ${nip}) telah diproses.\n\n` +
+    `Kata sandi baru Anda: ${passwordBaru}\n\n` +
+    `Silakan masuk memakai NIP dan kata sandi di atas, lalu segera ganti kata sandi ` +
+    `melalui menu Profil > Ubah Kata Sandi.\n\n` +
+    `Jika Anda tidak merasa meminta ini, segera hubungi Atasan/Admin.\n\n` +
+    `SIMTAS - Dinas Komunikasi dan Informatika`;
+  const html = `<!doctype html><html><body style="margin:0;background:#F8FAFC;font-family:Arial,Helvetica,sans-serif;color:#0D1B2A">
+<div style="max-width:480px;margin:24px auto;background:#fff;border:1px solid #E2E8F0;border-radius:16px;overflow:hidden">
+  <div style="background:#1E3A8A;color:#fff;padding:20px 24px">
+    <div style="font-size:20px;font-weight:700;letter-spacing:1px">SIMTAS</div>
+    <div style="font-size:12px;opacity:.85">Sistem Informasi Manajemen Tugas dan Staff</div>
+  </div>
+  <div style="padding:24px">
+    <p style="margin:0 0 12px">Halo <b>${n}</b>,</p>
+    <p style="margin:0 0 16px;font-size:14px;line-height:1.5">Permintaan lupa kata sandi untuk akun dengan NIP <b>${escapeHtml(nip)}</b> telah diproses. Berikut kata sandi baru Anda:</p>
+    <div style="text-align:center;margin:20px 0">
+      <span style="display:inline-block;background:#EFF6FF;border:1px dashed #2563EB;border-radius:10px;padding:14px 24px;font-size:24px;font-weight:700;letter-spacing:3px;font-family:Consolas,Menlo,monospace">${escapeHtml(passwordBaru)}</span>
+    </div>
+    <p style="margin:0 0 12px;font-size:14px;line-height:1.5">Masuk memakai <b>NIP</b> dan kata sandi di atas, lalu segera ganti kata sandi melalui menu <b>Profil &rarr; Ubah Kata Sandi</b>.</p>
+    <p style="margin:0;font-size:12.5px;color:#64748B;line-height:1.5">Jika Anda tidak merasa meminta ini, segera hubungi Atasan/Admin.</p>
+  </div>
+  <div style="padding:12px 24px;background:#F8FAFC;font-size:11.5px;color:#64748B;text-align:center">Dinas Komunikasi dan Informatika</div>
+</div></body></html>`;
+  return { text, html };
+}
+
 // ---------- Aksi ----------
 async function handle(action: string, data: any, req: Request) {
   switch (action) {
@@ -289,7 +549,9 @@ async function handle(action: string, data: any, req: Request) {
       const u = await findUserByNip(data.nip);
       if (!u) return { exists: false };
       const acc = await authLookup(u.id);
-      const legacy = !!acc && String(acc.email ?? "").toLowerCase() !== `${data.nip}${DOMAIN}`;
+      const accEmail = String(acc?.email ?? "").toLowerCase();
+      const nipPattern = new RegExp(`^${data.nip}(\\.[a-z0-9]+)?@simtas\\.internal$`);
+      const legacy = !!acc && !nipPattern.test(accEmail);
       return { exists: true, legacy };
     }
 
@@ -317,6 +579,88 @@ async function handle(action: string, data: any, req: Request) {
         created_at: { timestampValue: new Date().toISOString() },
       });
       return { ok: true };
+    }
+
+    // Lupa password: input email terdaftar -> generate link reset password Firebase Auth -> kirim ke email.
+    case "forgot-password": {
+      const email = String(data.email ?? "").trim().toLowerCase();
+      if (!EMAIL_RE.test(email) || email.length > 200) {
+        throw new HttpError(400, "Format email tidak valid.");
+      }
+
+      const u = await findUserByEmail(email);
+      if (!u) {
+        throw new HttpError(404, "Email tidak terdaftar pada akun SIMTAS.");
+      }
+
+      const acc = await authLookup(u.id);
+      if (!acc || !acc.email) {
+        throw new HttpError(404, "Akun login tidak ditemukan. Hubungi Atasan/Admin.");
+      }
+
+      const emailConfig = konfigurasiEmail();
+      const nipPengguna = str(u.fields, "nip");
+      let authEmail = String(acc.email);
+      // Akun login HARUS bernama "<NIP>@simtas.internal" (atau "<NIP>.<alias>@simtas.internal").
+      // Sebelumnya hanya dicek endsWith(DOMAIN), sehingga akun Atasan yang NIP-nya pernah
+      // diganti (email login lama masih "<NIPLAMA>@simtas.internal") TIDAK diperbaiki.
+      // Akibatnya link reset mengubah sandi akun lama, sedangkan halaman login masuk lewat
+      // akun "jembatan" <NIP>@simtas.internal yang sandinya tidak ikut berubah.
+      const nipPattern = new RegExp(`^${nipPengguna}(\\.[a-z0-9]+)?@simtas\\.internal$`);
+      if (validNip(nipPengguna) && !nipPattern.test(authEmail.toLowerCase())) {
+        const emailBaru = `${nipPengguna}${DOMAIN}`;
+        const holder = await authLookupByEmail(emailBaru);
+        if (holder && holder.localId && holder.localId !== u.id) {
+          const holderDoc = await fsGet(`users/${holder.localId}`);
+          if (!holderDoc || str(holderDoc, "nip") === nipPengguna) {
+            await google(`${authBase()}/accounts:delete`, "POST", { localId: holder.localId });
+            if (holderDoc) {
+              await google(`${fsBase()}/users/${holder.localId}`, "DELETE");
+            }
+          }
+        }
+        await authUpdate(u.id, { email: emailBaru });
+        await fsPatch(`users/${u.id}`, {
+          email: { stringValue: emailBaru },
+          updated_at: { timestampValue: new Date().toISOString() },
+        }, ["email", "updated_at"]);
+        authEmail = emailBaru;
+      }
+
+      const oobRes = await google(`${authBase()}/accounts:sendOobCode`, "POST", {
+        requestType: "PASSWORD_RESET",
+        email: authEmail,
+        returnOobLink: true,
+      });
+      if (!oobRes.ok || !oobRes.json?.oobLink) {
+        console.error("accounts:sendOobCode gagal", oobRes.status, oobRes.json);
+        throw new HttpError(502, "Gagal membuat link reset password Firebase.");
+      }
+
+      const resetLink = String(oobRes.json.oobLink);
+      const namaPengguna = str(u.fields, "nama");
+      const kontak = emailPemulihan(u.fields) || email;
+
+      const isi = isiEmailResetLink(namaPengguna, nipPengguna, resetLink);
+      try {
+        await kirimEmail({
+          provider: emailConfig.provider,
+          apiKey: emailConfig.apiKey,
+          from: emailConfig.from,
+          to: kontak,
+          subject: "Reset your password for SIMTAS",
+          text: isi.text,
+          html: isi.html,
+        });
+      } catch (e) {
+        console.error("kirim email gagal", e);
+        const detail = e instanceof Error ? e.message : "Terjadi kesalahan pengiriman email.";
+        throw new HttpError(
+          502,
+          `Gagal mengirim email: ${detail}`,
+        );
+      }
+      return { ok: true, email_masked: maskEmail(kontak) };
     }
 
     // ===== Khusus admin =====

@@ -669,6 +669,15 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                         keyboardType: TextInputType.phone,
                       ),
                       _buildModalTextField(
+                        'Email (opsional)',
+                        emailC,
+                        Icons.mail_outline_rounded,
+                        hint: 'Contoh: nama@gmail.com',
+                        helperText:
+                            'Boleh kosong, staf bisa mengisi sendiri di profilnya. Dipakai untuk lupa kata sandi.',
+                        keyboardType: TextInputType.emailAddress,
+                      ),
+                      _buildModalTextField(
                         isEdit ? 'Kata Sandi Baru (opsional)' : 'Kata Sandi',
                         passC,
                         Icons.lock_outline_rounded,
@@ -1485,6 +1494,10 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                 _buildInfoRow(Icons.badge_outlined, nip),
 
                 _buildInfoRow(Icons.phone_outlined, wa),
+                _buildInfoRow(
+                  Icons.mail_outline_rounded,
+                  emailKontak.isEmpty ? 'Belum diisi' : emailKontak,
+                ),
                 const Spacer(),
                 GestureDetector(
                   onTap: () => Navigator.push(
@@ -1725,7 +1738,7 @@ class _KelolaStaffPageState extends State<KelolaStaffPage> {
                       gridDelegate:
                           const SliverGridDelegateWithMaxCrossAxisExtent(
                             maxCrossAxisExtent: 240,
-                            mainAxisExtent: 276,
+                            mainAxisExtent: 300,
                             crossAxisSpacing: 12,
                             mainAxisSpacing: 12,
                           ),

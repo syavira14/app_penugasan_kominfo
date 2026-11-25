@@ -798,6 +798,41 @@ class StaffAdminApi {
     }
   }
 
+  /// Meminta link reset password (Firebase Authentication) dikirim ke email
+  /// pemulihan staf melalui Supabase Edge Function.
+  static Future<Map<String, dynamic>> forgotPasswordByEmail({
+    required String email,
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse(_edgeUrl),
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': _supabaseAnonKey,
+          },
+          body: jsonEncode({
+            'action': 'forgot-password',
+            'email': email.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+
+    Map<String, dynamic> payload = {};
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map) payload = Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StaffAdminException(
+        (payload['error'] ?? 'Gagal memproses permintaan lupa kata sandi.')
+            .toString(),
+        response.statusCode,
+      );
+    }
+    return payload;
+  }
+
   static String _phoneOf(Map<String, dynamic> data) {
     for (final key in [
       'no_hp',

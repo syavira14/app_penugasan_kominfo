@@ -13,9 +13,6 @@ const _navy = Color(0xFF1A1464);
 const _blue = Color(0xFF1D5FA0);
 const _sky = Color(0xFF4FA6DE);
 const _bg = Color(0xFFF7F9FB);
-const _maxActive = 5; // maksimal tugas aktif bersamaan
-const _maxMonthlyTotal = 15; // kuota tugas per bulan
-const _maxPerPriority = 5; // kuota per prioritas
 
 const _months = [
   'Januari',
@@ -94,7 +91,7 @@ String _fmtDate(DateTime? d) =>
 bool _isActive(Map<String, dynamic> t) =>
     t['status'] != 'Selesai' && t['status'] != 'Antrean';
 
-/// Kuota bulanan dihitung dari bulan tugas DIBERIKAN (tanggal mulai).
+/// Total tugas dihitung dari bulan tugas DIBERIKAN (tanggal mulai).
 bool _givenIn(Map<String, dynamic> t, int month, int year) {
   final d = t['mulai'] as DateTime?;
   return d != null && d.month == month && d.year == year;
@@ -114,6 +111,26 @@ bool _overlapsMonth(Map<String, dynamic> t, int month, int year) {
   final hi = s.isBefore(e) ? e : s;
   return lo.isBefore(monthEnd) && !hi.isBefore(monthStart);
 }
+
+/// Apakah sebuah tugas mencakup tanggal [day]
+/// (tanggal mulai s/d tanggal selesai, inklusif).
+/// Tugas satu hari (mulai = selesai) hanya mencakup hari itu saja.
+bool _coversDay(Map<String, dynamic> t, DateTime day) {
+  final start = t['mulai'] as DateTime?;
+  final end = (t['selesai'] as DateTime?) ?? start;
+  if (start == null || end == null) return false;
+  final s = DateTime(start.year, start.month, start.day);
+  final e = DateTime(end.year, end.month, end.day);
+  final d = DateTime(day.year, day.month, day.day);
+  final lo = s.isBefore(e) ? s : e;
+  final hi = s.isBefore(e) ? e : s;
+  return !d.isBefore(lo) && !d.isAfter(hi);
+}
+
+/// Staff dianggap sibuk pada [day] bila ada tugas belum selesai
+/// yang rentang tanggalnya mencakup hari tersebut (kapasitas 1 tugas/hari).
+bool _busyOn(List<Map<String, dynamic>> tasks, DateTime day) =>
+    tasks.any((t) => _isActive(t) && _coversDay(t, day));
 
 int _byDeadline(Map<String, dynamic> a, Map<String, dynamic> b) {
   final da = a['deadline'] as DateTime?;
@@ -406,7 +423,7 @@ class _RekapanPribadiPageState extends State<RekapanPribadiPage> {
     final others = inMonth.where((t) => !_isActive(t)).toList()
       ..sort((a, b) => _byDeadline(b, a));
 
-    // Kuota/kinerja: hanya tugas yang DIBERIKAN pada bulan terpilih.
+    // Kinerja: hanya tugas yang DIBERIKAN pada bulan terpilih.
     final given = all.where((t) => _givenIn(t, m, y)).toList();
     final total = given.length;
     final selesai = given.where((t) => t['status'] == 'Selesai').length;
@@ -415,6 +432,10 @@ class _RekapanPribadiPageState extends State<RekapanPribadiPage> {
     final persen = total > 0 ? selesai / total : 0.0;
     int count(String p) => given.where((t) => t['prioritas'] == p).length;
 
+    // Status ditentukan per tanggal: sibuk bila hari ini ada tugas belum
+    // selesai yang rentang tanggalnya mencakup hari ini.
+    final bool sibukHariIni = _busyOn(all, DateTime.now());
+
     return ResponsiveContent(
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
@@ -422,7 +443,7 @@ class _RekapanPribadiPageState extends State<RekapanPribadiPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _profileCard(active.length >= _maxActive, scale),
+            _profileCard(sibukHariIni, scale),
             SizedBox(height: 14 * scale),
             _periodCard(scale),
             SizedBox(height: 14 * scale),
@@ -663,7 +684,7 @@ class _RekapanPribadiPageState extends State<RekapanPribadiPage> {
             children: [
               Expanded(
                 child: Text(
-                  'Tugas aktif periode ini',
+                  'Total tugas aktif',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     color: _navy,
@@ -672,7 +693,7 @@ class _RekapanPribadiPageState extends State<RekapanPribadiPage> {
                 ),
               ),
               Text(
-                '$activeCount/$_maxActive',
+                '$activeCount',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: _navy,
@@ -680,21 +701,6 @@ class _RekapanPribadiPageState extends State<RekapanPribadiPage> {
                 ),
               ),
             ],
-          ),
-          SizedBox(height: 10 * scale),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: (activeCount / _maxActive).clamp(0.0, 1.0),
-              minHeight: 10,
-              backgroundColor: Colors.white,
-              valueColor: const AlwaysStoppedAnimation(_blue),
-            ),
-          ),
-          SizedBox(height: 6 * scale),
-          Text(
-            'Maksimal $_maxActive tugas aktif secara bersamaan',
-            style: TextStyle(fontSize: 11 * scale, color: Colors.grey.shade600),
           ),
         ],
       ),
@@ -727,24 +733,12 @@ class _RekapanPribadiPageState extends State<RekapanPribadiPage> {
             ],
           ),
           SizedBox(height: 6 * scale),
-          RichText(
-            text: TextSpan(
-              text: '$n',
-              style: TextStyle(
-                fontSize: 24 * scale,
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-              children: [
-                TextSpan(
-                  text: ' /$_maxPerPriority',
-                  style: TextStyle(
-                    fontSize: 12 * scale,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
+          Text(
+            '$n',
+            style: TextStyle(
+              fontSize: 24 * scale,
+              fontWeight: FontWeight.bold,
+              color: color,
             ),
           ),
         ],
@@ -822,7 +816,7 @@ class _RekapanPribadiPageState extends State<RekapanPribadiPage> {
           SizedBox(height: 14 * scale),
           Row(
             children: [
-              stat('Kuota Bulan Ini', '$total/$_maxMonthlyTotal', _navy),
+              stat('Total Tugas', '$total', _navy),
               stat('Selesai', '$selesai', Colors.green.shade700),
               stat('Berjalan', '$berjalan', Colors.orange.shade800),
               stat('Terkendala', '$terkendala', Colors.red.shade700),

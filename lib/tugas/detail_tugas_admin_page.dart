@@ -37,28 +37,6 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   static const int _sidebarIndex = 2; // posisi menu Kelola Tugas di sidebar
   static const Color abuBorder = Color(0xFFE1E5F0);
 
-  // Batas kuota tugas per staff sesuai aturan Status Staff:
-  // - Maksimal 5 tugas aktif yang sedang dikerjakan pada satu waktu.
-  // - Maksimal 15 tugas per bulan: Rendah maks 5, Sedang maks 5, Tinggi maks 5.
-  static const int _maxActiveTugas = 5;
-  static const int _maxPerPrioritasBulanan = 5;
-  static const int _maxTotalBulanan = 15;
-
-  static const List<String> _namaBulanList = [
-    'Januari',
-    'Februari',
-    'Maret',
-    'April',
-    'Mei',
-    'Juni',
-    'Juli',
-    'Agustus',
-    'September',
-    'Oktober',
-    'November',
-    'Desember',
-  ];
-
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final SupabaseStorageService _storage = SupabaseStorageService();
@@ -80,7 +58,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   final Set<String> _stafDipilih = {};
   final Map<String, String> _namaStaff = {};
 
-  // Data seluruh tugas & penugasan lain untuk perhitungan kuota aktif & bulanan.
+  // Data seluruh tugas & penugasan lain untuk pengecekan bentrok jadwal staff.
   Map<String, Map<String, dynamic>> _allTugasMap = {};
   List<Map<String, dynamic>> _allPenugasanList = [];
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
@@ -238,31 +216,13 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
     );
   }
 
-  // ─────────────────────── Perhitungan Kuota Staff ───────────────────────
+  // ─────────────────────── Pengecekan Bentrok Jadwal Staff ───────────────────────
 
   DateTime? _parseAnyDate(dynamic v) {
     if (v is Timestamp) return v.toDate();
     if (v is DateTime) return v;
     if (v is String && v.trim().isNotEmpty) return DateTime.tryParse(v.trim());
     return null;
-  }
-
-  String _normPrioritas(dynamic raw) {
-    final p = (raw ?? 'sedang').toString().toLowerCase().trim();
-    if (p.contains('tinggi') || p == 'high') return 'tinggi';
-    if (p.contains('rendah') || p == 'low') return 'rendah';
-    return 'sedang';
-  }
-
-  String _labelPrioritas(String p) {
-    switch (_normPrioritas(p)) {
-      case 'tinggi':
-        return 'Tinggi';
-      case 'rendah':
-        return 'Rendah';
-      default:
-        return 'Sedang';
-    }
   }
 
   bool _isStatusAktif(dynamic rawStatus) {
@@ -274,25 +234,36 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
         s != 'menunggu giliran';
   }
 
-  /// Menghitung beban kerja staff (di luar tugas yang sedang diedit `widget.tugasId`):
-  /// - `active`: jumlah tugas aktif saat ini (maks 5)
-  /// - `rendah`, `sedang`, `tinggi`: jumlah tugas per prioritas pada bulan target (masing-masing maks 5)
-  /// - `monthlyTotal`: total tugas pada bulan target (maks 15)
-  Map<String, int> _hitungKuotaStaff(String staffId, {DateTime? targetMonth}) {
-    final refDate = targetMonth ?? _tanggalMulai ?? DateTime.now();
-    final int month = refDate.month;
-    final int year = refDate.year;
+  String _rentangTanggal(DateTime s, DateTime e) {
+    final a = DateTime(s.year, s.month, s.day);
+    final b = DateTime(e.year, e.month, e.day);
+    if (a == b) return _formatDate(a);
+    return '${_formatDate(a)} - ${_formatDate(b)}';
+  }
 
-    int active = 0;
-    int rendah = 0;
-    int sedang = 0;
-    int tinggi = 0;
+  /// Mencari tugas lain milik staff yang belum selesai dan rentang tanggalnya
+  /// beririsan (per hari) dengan rentang [mulai] s/d [selesai].
+  /// Aturan: satu staf hanya mengerjakan satu tugas dalam satu hari
+  /// (termasuk tugas luar kantor). Tugas yang sedang diedit diabaikan.
+  /// Mengembalikan data tugas yang bentrok, atau `null` jika tidak ada.
+  Map<String, dynamic>? _cariBentrokStaff(
+    String staffId, {
+    required DateTime? mulai,
+    required DateTime? selesai,
+  }) {
+    if (mulai == null) return null;
+    final newStart = DateTime(mulai.year, mulai.month, mulai.day);
+    final endRaw = selesai ?? mulai;
+    final newEndCandidate = DateTime(endRaw.year, endRaw.month, endRaw.day);
+    final newEnd = newEndCandidate.isBefore(newStart)
+        ? newStart
+        : newEndCandidate;
 
     final staffNameLow = (_namaStaff[staffId] ?? '').trim().toLowerCase();
 
     for (final a in _allPenugasanList) {
       final tugasId = (a['tugas_id'] ?? '').toString().trim();
-      // Abaikan tugas yang sedang diedit agar tidak dihitung ganda.
+      // Abaikan tugas yang sedang diedit agar tidak bentrok dengan dirinya.
       if (widget.tugasId != null && tugasId == widget.tugasId) continue;
 
       final aUid =
@@ -313,12 +284,8 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           (aUid.isEmpty && staffNameLow.isNotEmpty && aName == staffNameLow);
       if (!matchStaff) continue;
 
-      final statusRaw = (a['status'] ?? 'pending').toString().toLowerCase();
-      if (statusRaw == 'dihentikan') continue;
-
-      if (_isStatusAktif(statusRaw)) {
-        active++;
-      }
+      // Hanya tugas yang masih aktif yang memblokir jadwal.
+      if (!_isStatusAktif(a['status'])) continue;
 
       final task = _allTugasMap[tugasId];
       final tenggat = _parseAnyDate(
@@ -332,66 +299,52 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                 a['tanggal_diberikan'],
           ) ??
           tenggat;
+      if (diberikan == null) continue;
 
-      if (diberikan != null &&
-          diberikan.month == month &&
-          diberikan.year == year) {
-        final prio = _normPrioritas(
-          a['prioritas'] ??
-              a['priority'] ??
-              task?['prioritas'] ??
-              task?['priority'],
-        );
-        if (prio == 'tinggi') {
-          tinggi++;
-        } else if (prio == 'rendah') {
-          rendah++;
-        } else {
-          sedang++;
-        }
+      final s = DateTime(diberikan.year, diberikan.month, diberikan.day);
+      final eRaw = tenggat ?? diberikan;
+      final eDay = DateTime(eRaw.year, eRaw.month, eRaw.day);
+      final lo = s.isBefore(eDay) ? s : eDay;
+      final hi = s.isBefore(eDay) ? eDay : s;
+
+      final bool overlap = !newEnd.isBefore(lo) && !newStart.isAfter(hi);
+      if (overlap) {
+        return {
+          'judul':
+              (task?['judul'] ??
+                      a['judul'] ??
+                      a['tugas_judul'] ??
+                      'Tugas tanpa judul')
+                  .toString(),
+          'mulai': lo,
+          'selesai': hi,
+        };
       }
     }
-
-    return {
-      'active': active,
-      'rendah': rendah,
-      'sedang': sedang,
-      'tinggi': tinggi,
-      'monthlyTotal': rendah + sedang + tinggi,
-    };
+    return null;
   }
 
-  /// Mengembalikan alasan penolakan jika staff tidak bisa diberikan tugas baru
-  /// pada bulan & prioritas yang dipilih, atau `null` jika masih memenuhi kuota.
-  String? _cekBatasKuotaStaff(
-    String staffId, {
-    DateTime? targetMonth,
-    String? prioritasOverride,
-  }) {
-    final refDate = targetMonth ?? _tanggalMulai ?? DateTime.now();
-    final prioKey = _normPrioritas(prioritasOverride ?? _prioritas);
-    final prioLabel = _labelPrioritas(prioKey);
-    final bulanLabel = '${_namaBulanList[refDate.month - 1]} ${refDate.year}';
+  String _pesanBentrok(String staffId, Map<String, dynamic> bentrok) {
     final nama = _staffName(staffId);
-    final stats = _hitungKuotaStaff(staffId, targetMonth: refDate);
+    final judul = bentrok['judul'].toString();
+    final rentang = _rentangTanggal(
+      bentrok['mulai'] as DateTime,
+      bentrok['selesai'] as DateTime,
+    );
+    return 'Staf $nama sudah memiliki tugas "$judul" pada $rentang. '
+        'Satu staf hanya dapat mengerjakan satu tugas dalam satu hari, '
+        'termasuk tugas luar kantor.';
+  }
 
-    final int active = stats['active'] ?? 0;
-    final int monthlyTotal = stats['monthlyTotal'] ?? 0;
-    final int prioCount = stats[prioKey] ?? 0;
-
-    if (active >= _maxActiveTugas) {
-      return 'Staf $nama sedang memiliki $active/$_maxActiveTugas tugas aktif. '
-          'Selesaikan tugas aktif terlebih dahulu sebelum memberikan tugas baru.';
-    }
-    if (monthlyTotal >= _maxTotalBulanan) {
-      return 'Total tugas bulanan $nama pada $bulanLabel sudah penuh '
-          '($monthlyTotal/$_maxTotalBulanan tugas).';
-    }
-    if (prioCount >= _maxPerPrioritasBulanan) {
-      return 'Kuota prioritas $prioLabel untuk $nama pada $bulanLabel sudah mencapai batas '
-          '($prioCount/$_maxPerPrioritasBulanan tugas). Gunakan prioritas lain yang masih tersedia.';
-    }
-    return null;
+  /// Mengembalikan alasan penolakan jika jadwal staff bentrok dengan tugas lain
+  /// pada rentang tanggal [mulai] s/d [selesai], atau `null` jika jadwal kosong.
+  String? _cekBentrokStaff(
+    String staffId, {
+    required DateTime? mulai,
+    required DateTime? selesai,
+  }) {
+    final bentrok = _cariBentrokStaff(staffId, mulai: mulai, selesai: selesai);
+    return bentrok == null ? null : _pesanBentrok(staffId, bentrok);
   }
 
   Future<void> _loadTugas() async {
@@ -694,16 +647,13 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
       return;
     }
 
-    // segarkan data beban kerja terbaru sebelum validasi akhir
+    // segarkan data penugasan terbaru sebelum validasi akhir
     await _loadWorkloadData();
 
-    // Validasi batas 5 tugas aktif & kuota bulanan 15 tugas (5 Rendah, 5 Sedang, 5 Tinggi)
+    // Validasi bentrok jadwal: satu staf hanya satu tugas per hari
+    // (termasuk tugas luar kantor).
     for (final staffId in _stafDipilih) {
-      final alasan = _cekBatasKuotaStaff(
-        staffId,
-        targetMonth: mulai,
-        prioritasOverride: _prioritas,
-      );
+      final alasan = _cekBentrokStaff(staffId, mulai: mulai, selesai: selesai);
       if (alasan != null) {
         _message(alasan, error: true);
         return;
@@ -2016,10 +1966,6 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
   }
 
   Widget _kartuJadwal() {
-    final targetDate = _tanggalMulai ?? DateTime.now();
-    final bulanLabel =
-        '${_namaBulanList[targetDate.month - 1]} ${targetDate.year}';
-
     return _kartu(
       judul: 'Jadwal & Prioritas',
       icon: Icons.calendar_month_rounded,
@@ -2073,18 +2019,9 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           value: _prioritas,
           decoration: _dekorasi(hint: 'Pilih prioritas'),
           items: const [
-            DropdownMenuItem(
-              value: 'rendah',
-              child: Text('Rendah (Maks. 5/bulan per staf)'),
-            ),
-            DropdownMenuItem(
-              value: 'sedang',
-              child: Text('Sedang (Maks. 5/bulan per staf)'),
-            ),
-            DropdownMenuItem(
-              value: 'tinggi',
-              child: Text('Tinggi (Maks. 5/bulan per staf)'),
-            ),
+            DropdownMenuItem(value: 'rendah', child: Text('Rendah')),
+            DropdownMenuItem(value: 'sedang', child: Text('Sedang')),
+            DropdownMenuItem(value: 'tinggi', child: Text('Tinggi')),
           ],
           onChanged: widget.modeLihat
               ? null
@@ -2109,11 +2046,12 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
               children: [
                 const Icon(Icons.info_outline, size: 16, color: biruSedang),
                 const SizedBox(width: 8),
-                Expanded(
+                const Expanded(
                   child: Text(
-                    'Aturan kuota staf ($bulanLabel): maksimal $_maxActiveTugas tugas aktif dalam satu waktu. '
-                    'Total kuota $_maxTotalBulanan tugas/bulan (Rendah $_maxPerPrioritasBulanan, Sedang $_maxPerPrioritasBulanan, Tinggi $_maxPerPrioritasBulanan).',
-                    style: const TextStyle(
+                    'Aturan jadwal staf: satu staf hanya dapat mengerjakan satu tugas dalam satu hari, '
+                    'termasuk tugas luar kantor. Staf yang sudah memiliki tugas pada rentang tanggal '
+                    'yang dipilih tidak dapat ditugaskan.',
+                    style: TextStyle(
                       fontSize: AppTypography.caption,
                       color: biruTua,
                       height: 1.35,
@@ -2134,6 +2072,10 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
           matchesStaffSearch(staff, _staffSearchController.text);
     }).toList();
 
+    // Rentang tanggal yang dipakai untuk mengecek bentrok jadwal.
+    final DateTime? cekMulai = _tanggalMulai;
+    final DateTime? cekSelesai = _tanggalSelesai ?? _tanggalMulai;
+
     return _kartu(
       judul: 'Staf yang Bertugas',
       icon: Icons.groups_rounded,
@@ -2151,10 +2093,9 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
             spacing: 8,
             runSpacing: 8,
             children: _stafDipilih.map((uid) {
-              final err = widget.modeLihat ? null : _cekBatasKuotaStaff(uid);
-              final stats = _hitungKuotaStaff(uid);
-              final active = stats['active'] ?? 0;
-              final monthly = stats['monthlyTotal'] ?? 0;
+              final err = widget.modeLihat
+                  ? null
+                  : _cekBentrokStaff(uid, mulai: cekMulai, selesai: cekSelesai);
               return Chip(
                 backgroundColor: err != null
                     ? const Color(0xFFFFEBEE)
@@ -2163,7 +2104,9 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                     ? BorderSide(color: Colors.red.shade300)
                     : BorderSide.none,
                 label: Text(
-                  '${_staffName(uid)} (Aktif $active/$_maxActiveTugas • Bulan $monthly/$_maxTotalBulanan)',
+                  err != null
+                      ? '${_staffName(uid)} (Jadwal bentrok)'
+                      : _staffName(uid),
                   style: TextStyle(
                     fontSize: AppTypography.small,
                     fontWeight: FontWeight.w600,
@@ -2211,27 +2154,29 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                 shrinkWrap: true,
                 children: tersedia.map((staff) {
                   final staffId = staff['id'].toString();
-                  final stats = _hitungKuotaStaff(staffId);
-                  final int active = stats['active'] ?? 0;
-                  final int rendah = stats['rendah'] ?? 0;
-                  final int sedang = stats['sedang'] ?? 0;
-                  final int tinggi = stats['tinggi'] ?? 0;
-                  final int monthlyTotal = stats['monthlyTotal'] ?? 0;
-                  final String? alasanPenuh = _cekBatasKuotaStaff(staffId);
+                  final Map<String, dynamic>? bentrok = _cariBentrokStaff(
+                    staffId,
+                    mulai: cekMulai,
+                    selesai: cekSelesai,
+                  );
+                  final String? alasanPenuh = bentrok == null
+                      ? null
+                      : _pesanBentrok(staffId, bentrok);
                   final bool isFull = alasanPenuh != null;
 
-                  String badgeText = 'Tersedia';
-                  Color badgeColor = Colors.green.shade700;
-                  if (active >= _maxActiveTugas) {
-                    badgeText = 'Penuh (5 Aktif)';
-                    badgeColor = Colors.red.shade700;
-                  } else if (monthlyTotal >= _maxTotalBulanan) {
-                    badgeText = 'Penuh (15/15)';
-                    badgeColor = Colors.red.shade700;
-                  } else if (isFull) {
-                    badgeText = '${_labelPrioritas(_prioritas)} Penuh (5/5)';
-                    badgeColor = Colors.orange.shade800;
-                  }
+                  final String badgeText = isFull
+                      ? 'Jadwal Bentrok'
+                      : 'Tersedia';
+                  final Color badgeColor = isFull
+                      ? Colors.red.shade700
+                      : Colors.green.shade700;
+
+                  final String infoJadwal = bentrok != null
+                      ? 'Sudah ada tugas "${bentrok['judul']}" pada '
+                            '${_rentangTanggal(bentrok['mulai'] as DateTime, bentrok['selesai'] as DateTime)}'
+                      : (cekMulai == null
+                            ? 'Pilih tanggal tugas untuk mengecek jadwal'
+                            : 'Tidak ada tugas pada tanggal ini');
 
                   return ListTile(
                     dense: true,
@@ -2286,8 +2231,7 @@ class _DetailTugasAdminPageState extends State<DetailTugasAdminPage> {
                         if ((staff['jabatan'] ?? '').toString().isNotEmpty)
                           Text((staff['jabatan'] ?? '').toString()),
                         Text(
-                          'Aktif: $active/$_maxActiveTugas • Bulan ini: $monthlyTotal/$_maxTotalBulanan '
-                          '(T:$tinggi/5 S:$sedang/5 R:$rendah/5)',
+                          infoJadwal,
                           style: TextStyle(
                             fontSize: AppTypography.caption,
                             color: isFull

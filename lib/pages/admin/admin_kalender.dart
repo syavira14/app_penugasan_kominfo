@@ -271,23 +271,6 @@ class _AdminKalenderPageState extends State<AdminKalenderPage> {
           });
         }
 
-        if (tglDeadline != null) {
-          events.putIfAbsent(_dateKey(tglDeadline), () => []).add({
-            "penugasan_id": assignment.id,
-            "tugas_id": tugasId,
-            "title": judulTugas,
-            "time": _jam(tglDeadline),
-            "type": "Batas Selesai ($statusTampil)",
-            "is_deadline": true,
-            "status": statusTampil,
-            "raw_status": rawStatus,
-            "staff_nama": staffNama,
-            "tenggat": tenggatText,
-            "diberikan": diberikanText,
-            "diserahkan": diserahkanText,
-            "sudah_serah": sudahSerah,
-          });
-        }
       } catch (_) {}
     }
 

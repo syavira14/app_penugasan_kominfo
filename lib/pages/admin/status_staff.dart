@@ -13,8 +13,6 @@ const _navy = AppPalette.navy;
 const _blue = AppPalette.blue;
 const _sky = AppPalette.sky;
 const _bg = AppPalette.background;
-const _maxActive = 5;
-const _maxMonthlyTotal = 15;
 const _sideWidth = 360.0;
 
 const _months = [
@@ -91,7 +89,7 @@ DateTime? _parseDate(dynamic v) {
 String _fmtDate(DateTime? d) =>
     d == null ? '-' : '${d.day} ${_shortMonths[d.month - 1]} ${d.year}';
 
-/// Kuota bulanan dihitung dari bulan tugas DIBERIKAN (tanggal mulai).
+/// Total tugas dihitung dari bulan tugas DIBERIKAN (tanggal mulai).
 bool _givenIn(Map<String, dynamic> t, int month, int year) {
   final d = t['mulai'] as DateTime?;
   return d != null && d.month == month && d.year == year;
@@ -114,6 +112,26 @@ bool _overlapsMonth(Map<String, dynamic> t, int month, int year) {
 
 bool _isActive(Map<String, dynamic> t) =>
     t['status'] != 'Selesai' && t['status'] != 'Antrean';
+
+/// Apakah sebuah tugas mencakup tanggal [day]
+/// (tanggal mulai s/d tanggal selesai, inklusif).
+/// Tugas satu hari (mulai = selesai) hanya mencakup hari itu saja.
+bool _coversDay(Map<String, dynamic> t, DateTime day) {
+  final start = t['mulai'] as DateTime?;
+  final end = (t['selesai'] as DateTime?) ?? start;
+  if (start == null || end == null) return false;
+  final s = DateTime(start.year, start.month, start.day);
+  final e = DateTime(end.year, end.month, end.day);
+  final d = DateTime(day.year, day.month, day.day);
+  final lo = s.isBefore(e) ? s : e;
+  final hi = s.isBefore(e) ? e : s;
+  return !d.isBefore(lo) && !d.isAfter(hi);
+}
+
+/// Staff dianggap sibuk pada [day] bila ada tugas belum selesai
+/// yang rentang tanggalnya mencakup hari tersebut (kapasitas 1 tugas/hari).
+bool _busyOn(List<Map<String, dynamic>> tasks, DateTime day) =>
+    tasks.any((t) => _isActive(t) && _coversDay(t, day));
 
 Color _prioColor(String p) {
   if (p == 'Tinggi') return Colors.red.shade600;
@@ -309,6 +327,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
     List<Map<String, dynamic>> assignments,
   ) {
     final rows = <Map<String, dynamic>>[];
+    final today = DateTime.now();
     for (final doc in docs) {
       final staff = doc.data();
       final role = (staff['role'] ?? 'staff').toString().toLowerCase();
@@ -329,7 +348,9 @@ class _StatusStaffPageState extends State<StatusStaffPage>
         'tasks': tasks,
         'active': active,
         'current': active.isEmpty ? null : active.first,
-        'status': active.length >= _maxActive ? 'Sibuk' : 'Tersedia',
+        // Sibuk bila hari ini ada tugas belum selesai yang rentangnya
+        // mencakup hari ini (kapasitas 1 tugas per hari).
+        'status': _busyOn(tasks, today) ? 'Sibuk' : 'Tersedia',
       });
     }
     return rows;
@@ -421,7 +442,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
         );
         final side = Column(
           children: [
-            _workloadCard(),
+            _workloadCard(all),
             const SizedBox(height: 16),
             _statusInfoCard(),
           ],
@@ -671,7 +692,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             child: Row(
               children: [
                 head('Nama Karyawan', 22),
-                head('Batas Kuota', 16),
+                head('Total Tugas', 16),
                 head('Aktif', 12),
                 head('Tinggi', 12),
                 head('Sedang', 12),
@@ -693,7 +714,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
     final ts = r['tasks'] as List<Map<String, dynamic>>;
     final now = DateTime.now();
 
-    // Kuota bulan ini dihitung dari tugas yang DIBERIKAN pada bulan ini.
+    // Total tugas bulan ini dihitung dari tugas yang DIBERIKAN pada bulan ini.
     final currentMonthTasks = ts
         .where((t) => _givenIn(t, now.month, now.year))
         .length;
@@ -749,7 +770,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             Expanded(
               flex: 16,
               child: Text(
-                '$currentMonthTasks/$_maxMonthlyTotal',
+                '$currentMonthTasks',
                 style: const TextStyle(
                   fontSize: AppTypography.small,
                   fontWeight: FontWeight.bold,
@@ -760,7 +781,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             Expanded(
               flex: 12,
               child: Text(
-                '${(r['active'] as List).length}/5',
+                '${(r['active'] as List).length}',
                 style: const TextStyle(
                   fontSize: AppTypography.small,
                   fontWeight: FontWeight.w600,
@@ -770,7 +791,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             Expanded(
               flex: 12,
               child: Text(
-                '${count('Tinggi')}/5',
+                '${count('Tinggi')}',
                 style: TextStyle(
                   fontSize: AppTypography.small,
                   fontWeight: FontWeight.w600,
@@ -781,7 +802,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             Expanded(
               flex: 12,
               child: Text(
-                '${count('Sedang')}/5',
+                '${count('Sedang')}',
                 style: TextStyle(
                   fontSize: AppTypography.small,
                   fontWeight: FontWeight.w600,
@@ -792,7 +813,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             Expanded(
               flex: 12,
               child: Text(
-                '${count('Rendah')}/5',
+                '${count('Rendah')}',
                 style: TextStyle(
                   fontSize: AppTypography.small,
                   fontWeight: FontWeight.w600,
@@ -928,20 +949,20 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             const SizedBox(height: 12),
             Row(
               children: [
-                _mobileStatBox('Aktif', '${active.length}/5', _blue),
+                _mobileStatBox('Aktif', '${active.length}', _blue),
                 _mobileStatBox(
                   'Tinggi',
-                  '${count('Tinggi')}/5',
+                  '${count('Tinggi')}',
                   Colors.red.shade700,
                 ),
                 _mobileStatBox(
                   'Sedang',
-                  '${count('Sedang')}/5',
+                  '${count('Sedang')}',
                   Colors.orange.shade800,
                 ),
                 _mobileStatBox(
                   'Rendah',
-                  '${count('Rendah')}/5',
+                  '${count('Rendah')}',
                   Colors.green.shade700,
                 ),
               ],
@@ -991,9 +1012,21 @@ class _StatusStaffPageState extends State<StatusStaffPage>
     ),
   );
 
-  Widget _workloadCard() {
+  Widget _workloadCard(List<Map<String, dynamic>> rows) {
     final now = DateTime.now();
-    Widget box(String label, Color color) => Expanded(
+
+    // Jumlah tugas yang diberikan bulan ini untuk seluruh staff, per prioritas.
+    int totalBy(String p) {
+      var n = 0;
+      for (final r in rows) {
+        for (final t in (r['tasks'] as List<Map<String, dynamic>>)) {
+          if (t['prioritas'] == p && _givenIn(t, now.month, now.year)) n++;
+        }
+      }
+      return n;
+    }
+
+    Widget box(String label, Color color, int total) => Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
         decoration: BoxDecoration(
@@ -1026,9 +1059,9 @@ class _StatusStaffPageState extends State<StatusStaffPage>
               ],
             ),
             const SizedBox(height: 8),
-            const Text(
-              '5 tugas',
-              style: TextStyle(
+            Text(
+              '$total tugas',
+              style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: AppTypography.body,
                 color: _navy,
@@ -1070,11 +1103,11 @@ class _StatusStaffPageState extends State<StatusStaffPage>
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              box('Tinggi', Colors.red.shade600),
+              box('Tinggi', Colors.red.shade600, totalBy('Tinggi')),
               const SizedBox(width: 8),
-              box('Sedang', Colors.amber.shade700),
+              box('Sedang', Colors.amber.shade700, totalBy('Sedang')),
               const SizedBox(width: 8),
-              box('Rendah', Colors.green.shade600),
+              box('Rendah', Colors.green.shade600, totalBy('Rendah')),
             ],
           ),
           const SizedBox(height: 14),
@@ -1091,7 +1124,7 @@ class _StatusStaffPageState extends State<StatusStaffPage>
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Setiap karyawan mendapatkan 15 tugas per bulan (5 tinggi, 5 sedang, 5 rendah).\nMaksimal 5 tugas dapat dikerjakan secara bersamaan.',
+                    'Status karyawan ditentukan per tanggal.\nSatu karyawan mengerjakan satu tugas dalam satu hari, termasuk tugas luar kantor.',
                     style: TextStyle(
                       fontSize: AppTypography.caption,
                       color: Color(0xFF475569),
@@ -1173,16 +1206,16 @@ class _StatusStaffPageState extends State<StatusStaffPage>
             Icons.check_circle,
             Colors.green.shade700,
             'Tersedia',
-            'Jumlah tugas aktif < $_maxActive',
-            'Masih ada kapasitas untuk menerima tugas baru.',
+            'Tidak ada tugas aktif hari ini',
+            'Masih bisa menerima tugas baru pada hari ini.',
           ),
           const Divider(height: 8),
           item(
             Icons.work_rounded,
             Colors.orange.shade700,
             'Sibuk',
-            'Jumlah tugas aktif = $_maxActive',
-            'Sedang mengerjakan tugas sesuai kapasitas.',
+            'Ada tugas aktif yang berjalan hari ini',
+            'Tidak bisa diberi tugas di tanggal yang sama.',
           ),
         ],
       ),
@@ -1411,7 +1444,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
 
     final others = filteredTasks.where((t) => !_isActive(t)).toList();
 
-    // Kuota/kinerja: hanya tugas yang DIBERIKAN pada bulan terpilih.
+    // Kinerja: hanya tugas yang DIBERIKAN pada bulan terpilih.
     int count(String p) => widget.tasks
         .where(
           (t) =>
@@ -1419,7 +1452,16 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
         )
         .length;
 
-    final dynamicStatus = active.length >= _maxActive ? 'Sibuk' : 'Tersedia';
+    // Total seluruh tugas yang diberikan pada periode terpilih (semua prioritas).
+    final int totalPeriode = widget.tasks
+        .where((t) => _givenIn(t, _selectedMonth, _selectedYear))
+        .length;
+
+    // Status ditentukan per tanggal: sibuk bila hari ini ada tugas belum
+    // selesai yang rentang tanggalnya mencakup hari ini.
+    final dynamicStatus = _busyOn(widget.tasks, DateTime.now())
+        ? 'Sibuk'
+        : 'Tersedia';
 
     final phone =
         (widget.staff['no_hp'] ??
@@ -1568,7 +1610,7 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                   children: [
                     const Expanded(
                       child: Text(
-                        'Tugas aktif periode ini',
+                        'Total tugas aktif',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: _navy,
@@ -1576,31 +1618,13 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                       ),
                     ),
                     Text(
-                      '${active.length}/$_maxActive',
+                      '${active.length}',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         color: _navy,
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(
-                    value: (active.length / _maxActive).clamp(0.0, 1.0),
-                    minHeight: 10,
-                    backgroundColor: Colors.white,
-                    valueColor: const AlwaysStoppedAnimation(_blue),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Maksimal $_maxActive tugas aktif per karyawan',
-                  style: TextStyle(
-                    fontSize: AppTypography.caption,
-                    color: Colors.grey.shade600,
-                  ),
                 ),
               ],
             ),
@@ -1626,15 +1650,25 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
           const SizedBox(height: 10),
           Row(
             children: [
-              for (final p in const ['Tinggi', 'Sedang', 'Rendah']) ...[
+              for (final p in const [
+                'Total',
+                'Tinggi',
+                'Sedang',
+                'Rendah',
+              ]) ...[
                 Expanded(
                   child: Container(
                     margin: EdgeInsets.only(right: p == 'Rendah' ? 0 : 10),
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: _prioColor(p).withOpacity(.08),
+                      color: (p == 'Total' ? _blue : _prioColor(p)).withOpacity(
+                        .08,
+                      ),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: _prioColor(p).withOpacity(.2)),
+                      border: Border.all(
+                        color: (p == 'Total' ? _blue : _prioColor(p))
+                            .withOpacity(.2),
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1643,7 +1677,9 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                           children: [
                             CircleAvatar(
                               radius: 4,
-                              backgroundColor: _prioColor(p),
+                              backgroundColor: p == 'Total'
+                                  ? _blue
+                                  : _prioColor(p),
                             ),
                             const SizedBox(width: 6),
                             Text(
@@ -1657,11 +1693,11 @@ class _StatusStaffDetailPageState extends State<StatusStaffDetailPage> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          '${count(p)}',
+                          '${p == 'Total' ? totalPeriode : count(p)}',
                           style: TextStyle(
                             fontSize: AppTypography.largeHeading,
                             fontWeight: FontWeight.bold,
-                            color: _prioColor(p),
+                            color: p == 'Total' ? _blue : _prioColor(p),
                           ),
                         ),
                       ],

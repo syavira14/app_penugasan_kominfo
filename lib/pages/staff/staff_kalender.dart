@@ -201,23 +201,6 @@ class _StaffKalenderPageState extends State<StaffKalenderPage> {
             "sudah_serah": sudahSerah,
           });
         }
-
-        if (tglDeadline != null) {
-          final String keyDeadline = _dateKey(tglDeadline);
-          events.putIfAbsent(keyDeadline, () => []).add({
-            "penugasan_id": assignment.id,
-            "title": judulTugas,
-            "time": _jam(tglDeadline),
-            "type": "Batas Selesai ($statusTampil)",
-            "is_deadline": true,
-            "status": statusTampil,
-            "raw_status": rawStatus,
-            "tenggat": tenggatText,
-            "diberikan": diberikanText,
-            "diserahkan": diserahkanText,
-            "sudah_serah": sudahSerah,
-          });
-        }
       } catch (_) {}
     }
 
